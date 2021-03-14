@@ -12,8 +12,9 @@ def eval_trees(ohlcv, individual, pset, buy_fee, sell_fee):
     else:
         buy_sum, sell_sum = buys.sum(), sells.sum()
     if buy_sum == 0 or sell_sum == 0 or buy_sum > len(ohlcv) // 2 or sell_sum > len(ohlcv) // 2:
+        # print('         nnnnnnnnnnnn')
         return None, None, None
-
+    # print('yyyyyyy')
     open_idx, close_idx, values, positions, pnlcomm_rel = evalcpp.eval(ohlcv.open.values,
                                                                        ohlcv.close.values,
                                                                        buys.values,
