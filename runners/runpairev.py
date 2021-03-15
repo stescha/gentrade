@@ -1,6 +1,9 @@
+import multiprocessing
+
 from os import path
 import gentrade.util.metrics as metrics
 from gentrade.optimizers.pairev import PairStratEvo
+
 import pandas as pd
 import random
 import numpy as np
@@ -104,6 +107,7 @@ if __name__ == '__main__':
     print('benchmark_sr: ', benchmark_sr)
     benchmark_sr = 0
 
+    from gentrade.util.pset_cache import create_ta_pset as create_pset_cached
     o = PairStratEvo(
                      ngen=200,
                      mu=500,
@@ -117,8 +121,9 @@ if __name__ == '__main__':
                      # metrics_train=[metrics.SQNScaledLog(min_trades=90)],
                      # metrics_train = [metrics.SQNScaledLogKruskal(trades_per_group=30, group_count = 3, alpha=0.1)],
                      # metrics_train = [metrics.SQNScaledKruskal(trades_per_group=30, group_count = 3, alpha=0.1)],
-                     # metrics_train = [metrics.ProbabilisticSharpe(benchmark_sr=benchmark_sr, min_tradesgit merge=20)],
-                     metrics_train = [metrics.DeflatedSharpeRunning(min_trades=30)],
+                     metrics_train = [metrics.ProbabilisticSharpe(benchmark_sr=benchmark_sr, min_trades=30)],
+                     # metrics_train = [metrics.ProbabilisticSQN(benchmark_sr=benchmark_sr, min_trades=50)],
+                     # metrics_train = [metrics.DeflatedSharpeRunning(min_trades=30)],
                      # metrics_train = [metrics.DeflatedSQNRunning(min_trades=30)],
                      # metrics_train = [metrics.SQNScaledKruskal(trades_per_group=20, group_count = 5, alpha=0.1)],
                      # metrics_train=[metrics.SQNScaledKruskal(trades_per_group=10, group_count=5, alpha=0.1)],
@@ -143,7 +148,7 @@ if __name__ == '__main__':
                      treesize_max=10,
                      mut_size_min=2,
                      mut_size_max=5,
-                     pset=None,
+                     # pset=create_pset_cached(),
                      # data_provider_train=dp.RndDataProvider(batch_size=10000, batch_count=1, change_rate=3),
                      data_provider_train=None,
                      data_provider_val=None,
@@ -152,7 +157,7 @@ if __name__ == '__main__':
                      processes=14,
                      folder = 'exp2'
                      )
-    o.fit(ohlcv_train, ohlcv_val)
+    # o.fit(ohlcv_train, ohlcv_val)
 
 ## fail    ohlcv = tt.load_binance_ohlcv('BTCUSDT', start=800000, stop=1300000).ffill()
 
@@ -161,26 +166,27 @@ if __name__ == '__main__':
 
     # ohlcv = tt.load_binance_ohlcv('BTCUSDT', start=400000, stop=600000).ffill()
 
+    m = metrics.SQNScaledKruskal(trades_per_group=30, group_count=3, alpha=0.1)
+    m = metrics.SQNScaled(min_trades=0)
+    plot_opti_curve(o, ohlcv_train, ohlcv_val, ohlcv_test, metric=m)
 
-    # plot_opti_curve(o, ohlcv_train, ohlcv_val, ohlcv_test, metric=metrics.SQNScaled(min_trades=0))
-
-    ohlcv_select = ohlcv_val
+    ohlcv_select = ohlcv_train
     # winners = o.load_historical_winners()
     # sr_estimates = o.calc_fitnesses(winners, ohlcv_select, metric=metrics.Sharpe())[:, 0]
     # sr_var = np.var(sr_estimates)
     # sr_estimates = [sr_var, 10000]
     # winner_strat = o.select_winner_strat(ohlcv_select, metric=metrics.DeflatedSharpeStatic(sr_estimates=sr_estimates, min_trades=0))
 
-    # winner_strat = o.select_winner_strat(ohlcv_select, metric=metrics.SQNScaled(min_trades=0))
-    # fig, axs = plt.subplots(2, 1, figsize=(30, 20), sharex=True)
-    # o.plot_strat_results(winner_strat, axs, ohlcv_train, ohlcv_val, ohlcv_test)
-    #
-    # entry_tree, exit_tree = winner_strat
-    # from gentrade.util.misc import plot_tree
-    # fig, axs = plt.subplots(1, 2, figsize=(30, 10))
-    # plot_tree(entry_tree, ax=axs[0])
-    # plot_tree(exit_tree, ax=axs[1])
-    # plt.show()
+    winner_strat = o.select_winner_strat(ohlcv_select, metric=m)
+    fig, axs = plt.subplots(2, 1, figsize=(30, 20), sharex=True)
+    o.plot_strat_results(winner_strat, axs, ohlcv_train, ohlcv_val, ohlcv_test)
+
+    entry_tree, exit_tree = winner_strat
+    from gentrade.util.misc import plot_tree
+    fig, axs = plt.subplots(1, 2, figsize=(30, 10))
+    plot_tree(entry_tree, ax=axs[0])
+    plot_tree(exit_tree, ax=axs[1])
+    plt.show()
 
 
 
