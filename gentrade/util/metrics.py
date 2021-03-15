@@ -20,7 +20,13 @@ class LazyTradeStats:
     @property
     def returns(self):
         if self._returns is None:
-            self._returns = np.diff(self.values, prepend=0) / (1+self.values)
+
+            # self._returns = np.diff(self.values, prepend=0) / (self.values)
+
+            self._returns = np.divide(np.diff(self.values, prepend=0), self.values, out=np.zeros_like(self.values),
+                                      where= self.values != 0)
+
+            # self._returns = self._returns.replace(np.inf, 0)
         return self._returns
 
     @property
@@ -105,7 +111,7 @@ class MetricInfo():
         return self._gen_trials
 
     def set_gen_trials(self, gen_trials):
-        self._gen_trials = self.gen_trials
+        self._gen_trials = gen_trials
 
 class MetricBase:
 
@@ -181,7 +187,7 @@ def probabilistic_sharpe_ratio(observed_sr: float, benchmark_sr: float, number_o
 
 
 
-class ProbabilisticSharpe_(MetricBase):
+class ProbabilisticSharpe(MetricBase):
 
     def __init__(self, benchmark_sr, min_trades=None, start_capital=None):
         self.start_capital = start_capital
@@ -189,25 +195,33 @@ class ProbabilisticSharpe_(MetricBase):
         self.min_trades = min_trades
 
     def calc(self, stats, info):
-        returns = stats.returns
-        if self.start_capital is not None:
-            returns = ((1 + stats.values) / (self.start_capital + stats.values)) * returns
 
         if self.min_trades is not None and stats.tradecount < self.min_trades:
             return self.fail_value()
 
-        std = returns.std()
-        if std == 0:
+        # returns = 100*stats.pnlcomm_rel
+        # return_mean = stats.pnlmean
+        # return_std = stats.pnlstd
+
+        returns = stats.returns
+        if self.start_capital is not None:
+            returns = ((1 + stats.values) / (self.start_capital + stats.values)) * returns
+        return_mean = returns.mean()
+        return_std = returns.std()
+
+
+        if return_std == 0:
             return self.fail_value()
 
-        observed_sr = returns.mean() / std
+        observed_sr = return_mean / return_std
         if np.isnan(observed_sr) or np.isinf(observed_sr):
             return self.fail_value()
-        benchmark_sr = max(self.benchmark_sr, 0.5*observed_sr)
-        psr = probabilistic_sharpe_ratio(observed_sr=observed_sr, benchmark_sr=benchmark_sr,
+        # benchmark_sr = max(self.benchmark_sr, 0.5*observed_sr)
+        psr = probabilistic_sharpe_ratio(observed_sr=observed_sr, benchmark_sr=self.benchmark_sr,
                                          number_of_returns = len(returns),
                                          skewness_of_returns = scipy.stats.skew(returns),
                                          kurtosis_of_returns = scipy.stats.kurtosis(returns))
+        print(psr)
         if psr is None:
             return self.fail_value()
         if psr > 0.95:
@@ -222,7 +236,51 @@ class ProbabilisticSharpe_(MetricBase):
         return np.mean(metrics)
 
 
-class ProbabilisticSharpe(MetricBase):
+
+class ProbabilisticSQN(MetricBase):
+
+    def __init__(self, benchmark_sr, min_trades=None, start_capital=None):
+        self.start_capital = start_capital
+        self.benchmark_sr = benchmark_sr
+        self.min_trades = min_trades
+
+    def calc(self, stats, info):
+
+        if self.min_trades is not None and stats.tradecount < self.min_trades:
+            return self.fail_value()
+
+        returns = 100*stats.pnlcomm_rel
+        return_mean = stats.pnlmean
+        return_std = stats.pnlstd
+
+        if return_std == 0:
+            return self.fail_value()
+
+        observed_sr = return_mean / return_std
+        if np.isnan(observed_sr) or np.isinf(observed_sr):
+            return self.fail_value()
+        # benchmark_sr = max(self.benchmark_sr, 0.5*observed_sr)
+        psr = probabilistic_sharpe_ratio(observed_sr=observed_sr, benchmark_sr=self.benchmark_sr,
+                                         number_of_returns = len(returns),
+                                         skewness_of_returns = scipy.stats.skew(returns),
+                                         kurtosis_of_returns = scipy.stats.kurtosis(returns))
+        print(psr)
+        if psr is None:
+            return self.fail_value()
+        if psr > 0.95:
+
+            if stats.pnlstd == 0:
+                return np.sqrt(stats.tradecount / len(stats.values)) * stats.pnlmean
+            else:
+                return np.sqrt(stats.tradecount / len(stats.values)) * stats.pnlmean / stats.pnlstd
+        return self.fail_value()
+
+    def aggregate(self, metrics):
+        return np.mean(metrics)
+
+
+
+class ProbabilisticSharpe_(MetricBase):
 
     def __init__(self, benchmark_sr, min_trades=None, start_capital=None):
         self.start_capital = start_capital
@@ -232,6 +290,8 @@ class ProbabilisticSharpe(MetricBase):
     def calc(self, stats, info):
         if self.min_trades is not None and stats.tradecount < self.min_trades:
             return self.fail_value()
+
+
 
         std = stats.pnlstd
         if std == 0:
@@ -243,10 +303,10 @@ class ProbabilisticSharpe(MetricBase):
         # benchmark_sr = max(self.benchmark_sr, 0.5 * observed_sr)
 
         psr = probabilistic_sharpe_ratio(observed_sr=observed_sr, benchmark_sr=self.benchmark_sr,
-                                         number_of_returns=len(stats.values),
+                                         number_of_returns=len(stats.pnlcomm_rel),
                                          skewness_of_returns=scipy.stats.skew(stats.pnlcomm_rel),
                                          kurtosis_of_returns=scipy.stats.kurtosis(stats.pnlcomm_rel))
-
+        print(psr)
         if psr is None:
             return self.fail_value()
         if psr > 0.95:
@@ -377,6 +437,7 @@ class DeflatedSharpeRunning(MetricBase):
             return self.fail_value()
         # sr_estimates = [info.sr_est_var(), max(1, info.trials() // (500/10))]
         sr_estimates = [info.sr_est_var(), info.gen_trials() + 1 ]
+        # sr_estimates = [info.sr_est_var(), info.trials() ]
         # print(sr_estimates)
         # print(max(1, info.trials() // (500/10)))
         # sr_estimates = [info.sr_est_var(), 10]
@@ -398,7 +459,8 @@ class DeflatedSharpeRunning(MetricBase):
         if np.isnan(benchmark_sr) or np.isinf(benchmark_sr):
             return self.fail_value()
         # benchmark_sr = 0
-        deflated_sr = probabilistic_sharpe_ratio(observed_sr, benchmark_sr, number_of_returns=len(stats.values),
+        deflated_sr = probabilistic_sharpe_ratio(observed_sr, benchmark_sr,
+                                                 number_of_returns=len(stats.values),
                                                  skewness_of_returns=scipy.stats.skew(returns),
                                                  kurtosis_of_returns=scipy.stats.kurtosis(returns))
         # print(observed_sr, benchmark_sr, deflated_sr, deflated_sr > 0.95)
@@ -520,6 +582,8 @@ class DeflatedSQNRunning(MetricBase):
             return self.fail_value()
 
         # returns = ((1+stats.values)/(1000 + stats.values))*stats.returns
+
+
         returns = stats.pnlcomm_rel
         return_mean = stats.pnlmean
         return_std = stats.pnlstd
@@ -544,7 +608,8 @@ class DeflatedSQNRunning(MetricBase):
         # sr_estimates = [0.5*observed_sr, 10]
         info.update(observed_sr)
         # print('sr_est_var', info.trials())
-        sr_estimates = [info.sr_est_var(), info.trials()]
+        # sr_estimates = [info.sr_est_var(), info.trials()]
+        sr_estimates = [info.sr_est_var(), info.gen_trials() + 1 ]
         # sr_estimates = [info.sr_est_var(), 10]
         # info.sr_est_var()
         # sr_estimates = [0.1, 10]

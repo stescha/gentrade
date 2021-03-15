@@ -63,7 +63,7 @@ def eaMuPlusLambda(toolbox, mu, lambda_, cxpb, mutpb, ngen, metric_infos_train, 
 
         toolbox.change_data(gen)
         for m in metric_infos_train:
-            m.set_gen_trial(gen*lambda_)
+            m.set_gen_trials(gen)
 
         if replace_invalids:
             offspring = []

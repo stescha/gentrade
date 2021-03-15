@@ -7,6 +7,8 @@ def eval_trees(ohlcv, individual, pset, buy_fee, sell_fee):
     buy_tree, sell_tree = [gp.compile(tree, pset) for tree in individual]
     buys = buy_tree(ohlcv, ohlcv.open, ohlcv.high, ohlcv.low, ohlcv.close, ohlcv.volume)
     sells = sell_tree(ohlcv, ohlcv.open, ohlcv.high, ohlcv.low, ohlcv.close, ohlcv.volume)
+    # buys = buy_tree(ohlcv, ohlcv.open, ohlcv.high, ohlcv.low, ohlcv.close, ohlcv.volume, 'deppp')
+    # sells = sell_tree(ohlcv, ohlcv.open, ohlcv.high, ohlcv.low, ohlcv.close, ohlcv.volume, 'deppp')
     if isinstance(buys, int) or isinstance(sells, int):
         buy_sum, sell_sum = 0, 0
     else:

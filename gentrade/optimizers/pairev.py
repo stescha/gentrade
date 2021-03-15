@@ -13,6 +13,7 @@ from gentrade.util.pset import create_ta_pset
 from gentrade.util.eval import eval_trees
 import gentrade.util.dataprovider as dp
 import multiprocessing
+
 import random
 import numpy as np
 import pickle
@@ -26,6 +27,9 @@ from gentrade.util.misc import plot_tree
 from gentrade.util.metrics import MetricInfo
 from multiprocessing.managers import BaseManager
 from functools import partial
+from gentrade.util import pset_cache
+
+
 
 
 def eval_strat(individual, data_provider, metrics, metric_infos, pset, buy_fee, sell_fee):
@@ -169,6 +173,7 @@ class PairStratEvo:
             metric_infos_train = [manager.MetricInfo() for _ in self.metrics_train]
             metric_infos_val = [manager.MetricInfo() for _ in self.metrics_val]
 
+
             toolbox.register('map', pool.map)
 
         toolbox.register('change_data', self.data_provider_train.next)
@@ -183,7 +188,7 @@ class PairStratEvo:
                          pset=self.pset, buy_fee=self.buy_fee, sell_fee=self.sell_fee)
 
         if len(self.metrics_train) == 1:
-            toolbox.register('select', tools.selTournament, tournsize=3)
+            toolbox.register('select', tools.selTournament, tournsize=int(self.mu / 10))
             toolbox.register('select_best', tools.selBest, k=1)
         elif len(self.metrics_train) == 2:
             toolbox.register('select', tools.selNSGA2)
@@ -218,11 +223,11 @@ class PairStratEvo:
 
     def load_historical_winners(self, folder=None):
         folder = self.folder if folder is None else folder
-        files = glob(path.join(folder, 'pop_*.p'))
+        files = glob(path.join(folder, 'pop_*.pcl'))
         best_strats = [None]*len(files)
         toolbox, _, _ = self.create_toolbox()
         for popfile in files:
-            gen = int(popfile.split('_')[-1][:-2])
+            gen = int(popfile.split('_')[-1][:-4])
             pop = pickle.load(open(popfile, 'rb'))
             best_strats[gen - 1] = toolbox.select_best(pop)[0]
         return best_strats
@@ -283,6 +288,7 @@ class PairStratEvo:
     def select_winner_strat(self, ohlcv_val, metric):
         winners = self.load_historical_winners()
         fit_val = self.calc_fitnesses(winners, ohlcv_val, metric)
+
         return winners[np.argmax(fit_val[:,0])]
 
     def transform(self, ohlcv_val, ohlcv_test):
