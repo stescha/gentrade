@@ -94,8 +94,6 @@ import multiprocessing
 
 if __name__ == '__main__':
 
-
-
     # kruskal_test()
     # exit()
     # ohlcv = tt.load_binance_ohlcv('BTCUSDT', start=0, stop=400000).ffill() #exp7
