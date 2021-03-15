@@ -118,7 +118,7 @@ if __name__ == '__main__':
                      # metrics_train=[metrics.SQNScaledLog(min_trades=90)],
                      # metrics_train = [metrics.SQNScaledLogKruskal(trades_per_group=30, group_count = 3, alpha=0.1)],
                      # metrics_train = [metrics.SQNScaledKruskal(trades_per_group=30, group_count = 3, alpha=0.1)],
-                     # metrics_train = [metrics.ProbabilisticSharpe(benchmark_sr=benchmark_sr, min_trades=20)],
+                     # metrics_train = [metrics.ProbabilisticSharpe(benchmark_sr=benchmark_sr, min_tradesgit merge=20)],
                      metrics_train = [metrics.DeflatedSharpeRunning(min_trades=30)],
                      # metrics_train = [metrics.DeflatedSQNRunning(min_trades=30)],
                      # metrics_train = [metrics.SQNScaledKruskal(trades_per_group=20, group_count = 5, alpha=0.1)],
