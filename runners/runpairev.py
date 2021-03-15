@@ -92,6 +92,7 @@ def kruskal_test():
 
 import multiprocessing
 
+
 if __name__ == '__main__':
 
     # kruskal_test()
