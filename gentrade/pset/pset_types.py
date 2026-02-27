@@ -132,3 +132,19 @@ class ZeroHundred:
         # return float(random.choice(np.arange(-105, 105, 5)))
 
 
+class Threshold:
+    """Ephemeral constant for zigzag threshold (0.01–0.10)."""
+
+    @staticmethod
+    def sample() -> float:
+        return float(random.choice(np.arange(0.01, 0.1001, 0.005).round(3)))
+
+
+class Label:
+    """Ephemeral constant for zigzag label (-1 or 1)."""
+
+    @staticmethod
+    def sample() -> int:
+        return random.choice([-1, 1])
+
+
