@@ -146,3 +146,6 @@ cython_debug/
 
 .notes/
 sandbox/
+
+# local forks or vendored repos
+vendor/zigzag/

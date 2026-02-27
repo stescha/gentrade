@@ -22,7 +22,9 @@ dependencies = [
     "nbformat (>=4.2)",
     "mypy (>=1.19.1,<2.0.0)",
     "pytest (>=9.0.2,<10.0.0)",
-    "ruff (>=0.15.4,<0.16.0)"
+    "ruff (>=0.15.4,<0.16.0)",
+    "zigzag @ file:///home/stuff/PyProj/gentrade/vendor/zigzag",
+    "pandas-stubs (>=3.0.0.260204,<4.0.0.0)",
 ]
 
 
@@ -51,11 +53,11 @@ python_version = "3.11"
 strict = true
 warn_redundant_casts = true
 warn_unused_ignores = true
-plugins = ["pydantic.mypy"]
 exclude = ["workbench/sandbox"]
+# typing stubs
 mypy_path = [
-    "tradetools/typings",
-    "tradetools/src",
+    "vendor/zigzag",
+    "vendor/zigzag/zigzag",
 ]
 # Enable explicit package bases to correctly discover nested packages in the monorepo
 # (e.g. tradetools/src/tradetools, tradetools/tests) and avoid "Duplicate module" errors.
