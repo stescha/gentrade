@@ -23,12 +23,19 @@ Extending with new components:
 """
 
 import re
-from typing import Any, Callable, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal
 
 import pandas as pd
 from deap import gp, tools
 from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, computed_field
 
+from gentrade.backtest_fitness import (
+    CalmarRatioFitness,
+    MeanPnlFitness,
+    SharpeRatioFitness,
+    SortinoRatioFitness,
+    TotalReturnFitness,
+)
 from gentrade.classification_fitness import (
     BalancedAccuracyFitness,
     F1Fitness,
@@ -43,6 +50,9 @@ from gentrade.minimal_pset import (
     create_pset_zigzag_large,
     create_pset_zigzag_medium,
 )
+
+if TYPE_CHECKING:
+    import vectorbt as vbt  # type: ignore[import-untyped]
 
 
 # ── Helpers ────────────────────────────────────────────────
@@ -102,27 +112,35 @@ class _ComponentConfig(BaseModel):
 class FitnessConfigBase(_ComponentConfig):
     """Base for fitness configs.
 
-    - Callable interface: ``cfg.fitness(y_true, y_pred) -> float``
     - Each subclass only carries its own parameters (mutual exclusivity by
       design — no spurious fields on unrelated fitness functions).
-    - ``__call__`` is a one-line delegation to the underlying function or
-      fitness class.
+    - ``_requires_backtest``: if ``True``, ``run_evolution`` registers
+      ``evaluate_backtest`` instead of the classification ``evaluate``.
     """
 
     _type_suffix: ClassVar[str] = "FitnessConfig"
+    _requires_backtest: ClassVar[bool] = False
+
+
+class ClassificationFitnessConfigBase(FitnessConfigBase):
+    """Base for classification fitness configs.
+
+    - Callable interface: ``cfg.fitness(y_true, y_pred) -> float``
+    - All scores are in ``[0, 1]``; higher means better.
+    """
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         raise NotImplementedError
 
 
-class F1FitnessConfig(FitnessConfigBase):
+class F1FitnessConfig(ClassificationFitnessConfigBase):
     """F1 score: harmonic mean of precision and recall."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         return F1Fitness()(y_true, y_pred)
 
 
-class FBetaFitnessConfig(FitnessConfigBase):
+class FBetaFitnessConfig(ClassificationFitnessConfigBase):
     """F-beta score with configurable precision/recall trade-off.
 
     - ``beta > 1`` favours recall (missing signals is costly).
@@ -135,39 +153,92 @@ class FBetaFitnessConfig(FitnessConfigBase):
         return FBetaFitness(beta=self.beta)(y_true, y_pred)
 
 
-class MCCFitnessConfig(FitnessConfigBase):
+class MCCFitnessConfig(ClassificationFitnessConfigBase):
     """Matthews Correlation Coefficient, rescaled to ``[0, 1]``."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         return MCCFitness()(y_true, y_pred)
 
 
-class BalancedAccuracyFitnessConfig(FitnessConfigBase):
+class BalancedAccuracyFitnessConfig(ClassificationFitnessConfigBase):
     """Balanced accuracy: average of sensitivity and specificity."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         return BalancedAccuracyFitness()(y_true, y_pred)
 
 
-class PrecisionFitnessConfig(FitnessConfigBase):
+class PrecisionFitnessConfig(ClassificationFitnessConfigBase):
     """Precision: fraction of predicted positives that are correct."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         return PrecisionFitness()(y_true, y_pred)
 
 
-class RecallFitnessConfig(FitnessConfigBase):
+class RecallFitnessConfig(ClassificationFitnessConfigBase):
     """Recall: fraction of actual positives that are detected."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         return RecallFitness()(y_true, y_pred)
 
 
-class JaccardFitnessConfig(FitnessConfigBase):
+class JaccardFitnessConfig(ClassificationFitnessConfigBase):
     """Jaccard index (intersection over union)."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         return JaccardFitness()(y_true, y_pred)
+
+
+# ── Backtest fitness configs ───────────────────────────────
+
+
+class BacktestFitnessConfigBase(FitnessConfigBase):
+    """Base for vectorbt backtest fitness configs.
+
+    - Callable interface: ``cfg.fitness(portfolio) -> float``
+    - ``_requires_backtest = True`` signals the caller to run the backtest
+      evaluation path instead of the classification path.
+    - Subclasses implement one-line metric extraction from ``vbt.Portfolio``.
+    """
+
+    _requires_backtest: ClassVar[bool] = True
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        raise NotImplementedError
+
+
+class SharpeFitnessConfig(BacktestFitnessConfigBase):
+    """Sharpe ratio: risk-adjusted return (annualised mean return / std dev)."""
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        return SharpeRatioFitness()(portfolio)
+
+
+class SortinoFitnessConfig(BacktestFitnessConfigBase):
+    """Sortino ratio: downside-risk-adjusted return (penalises negative volatility only)."""  # noqa: E501
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        return SortinoRatioFitness()(portfolio)
+
+
+class CalmarFitnessConfig(BacktestFitnessConfigBase):
+    """Calmar ratio: annualised return divided by maximum drawdown."""
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        return CalmarRatioFitness()(portfolio)
+
+
+class TotalReturnFitnessConfig(BacktestFitnessConfigBase):
+    """Total return: cumulative portfolio return over the evaluation period."""
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        return TotalReturnFitness()(portfolio)
+
+
+class MeanPnlFitnessConfig(BacktestFitnessConfigBase):
+    """Mean PnL: average profit and loss per closed trade."""
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        return MeanPnlFitness()(portfolio)
 
 
 # ── Pset configs ───────────────────────────────────────────
@@ -400,6 +471,29 @@ class DataConfig(BaseModel):
     target_label: int = Field(1, description="Label to predict (1=peak, -1=valley)")
 
 
+class BacktestConfig(BaseModel):
+    """Portfolio simulation parameters for vectorbt-based fitness evaluation.
+
+    - ``tp_stop`` / ``sl_stop``: take-profit and stop-loss thresholds as
+      fractions (0.02 = 2%). These will later be evolved parameters; for
+      now they are fixed per run.
+    - ``sl_trail``: whether the stop-loss is trailing (moves with the price).
+    - ``fees``: round-trip trading fee fraction per trade.
+    - ``init_cash``: initial portfolio cash.
+    - ``min_trades``: minimum number of closed trades for a fitness score
+      to be considered valid. Below this threshold, ``(0.0,)`` is returned.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    tp_stop: float = Field(0.02, gt=0.0, le=1.0, description="Take-profit fraction")
+    sl_stop: float = Field(0.01, gt=0.0, le=1.0, description="Stop-loss fraction")
+    sl_trail: bool = Field(True, description="Use trailing stop-loss")
+    fees: float = Field(0.001, ge=0.0, description="Trading fee fraction")
+    init_cash: float = Field(100_000.0, gt=0.0, description="Initial portfolio cash")
+    min_trades: int = Field(10, ge=0, description="Minimum trades for valid fitness")
+
+
 # ── Top-level config ───────────────────────────────────────
 
 
@@ -423,6 +517,9 @@ class RunConfig(BaseModel):
     data: DataConfig = Field(default_factory=DataConfig)
     evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
     tree: TreeConfig = Field(default_factory=TreeConfig)
+    backtest: BacktestConfig | None = Field(
+        None, description="Backtest parameters; required when using a backtest fitness"
+    )
 
     # Polymorphic component configs — SerializeAsAny preserves subclass fields
     fitness: SerializeAsAny[FitnessConfigBase] = Field(
