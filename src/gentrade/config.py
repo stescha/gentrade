@@ -47,10 +47,10 @@ from gentrade.classification_fitness import (
 )
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.minimal_pset import (
+    create_pset_default_large,
+    create_pset_default_medium,
     create_pset_zigzag_large,
     create_pset_zigzag_medium,
-    create_pset_default_medium,
-    create_pset_default_large,
 )
 
 if TYPE_CHECKING:
@@ -481,7 +481,9 @@ class EvolutionConfig(BaseModel):
     hof_size: int = Field(5, ge=1, description="Hall of fame size")
     verbose: bool = Field(True, description="Print per-generation stats")
     processes: int = Field(
-        1, ge=1, description="Number of worker processes for evaluation (1 = single-process)"
+        1,
+        ge=1,
+        description="Number of worker processes for evaluation (1 = single-process)",
     )
 
 
@@ -576,12 +578,8 @@ class RunConfig(BaseModel):
     )
 
     # Polymorphic component configs — SerializeAsAny preserves subclass fields
-    fitness: SerializeAsAny[FitnessConfigBase] = Field(
-        default_factory=F1FitnessConfig
-    )
-    pset: SerializeAsAny[PsetConfigBase] = Field(
-        default_factory=ZigzagLargePsetConfig
-    )
+    fitness: SerializeAsAny[FitnessConfigBase] = Field(default_factory=F1FitnessConfig)
+    pset: SerializeAsAny[PsetConfigBase] = Field(default_factory=ZigzagLargePsetConfig)
     mutation: SerializeAsAny[MutationConfigBase] = Field(
         default_factory=UniformMutationConfig
     )

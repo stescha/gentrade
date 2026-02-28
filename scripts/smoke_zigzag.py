@@ -16,15 +16,14 @@ from deap import algorithms, base, creator, gp, tools
 from gentrade.classification_fitness import (
     ClassificationFitnessBase,
     F1Fitness,
-    FBetaFitness,
-    MCCFitness,
-    BalancedAccuracyFitness,
-    JaccardFitness,
 )
-from gentrade.growtree import genHalfAndHalf, genFull
-from gentrade.minimal_pset import create_pset_zigzag_large, create_pset_zigzag_medium, create_pset_zigzag_minimal, zigzag_pivots
 from gentrade.data import generate_synthetic_ohlcv
-
+from gentrade.growtree import genFull, genHalfAndHalf
+from gentrade.minimal_pset import (
+    create_pset_zigzag_large,
+    create_pset_zigzag_medium,
+    zigzag_pivots,
+)
 
 # --- Configurable defaults ---
 N = 5000  # Synthetic series length
@@ -44,8 +43,6 @@ TOURN_SIZE = 3
 MIN_TREE_DEPTH = 2
 MAX_TREE_DEPTH = 6
 MAX_TREE_HEIGHT = 17  # Bloat control limit
-
-
 
 
 def evaluate(
@@ -101,7 +98,7 @@ def main(fitness_fn: ClassificationFitnessBase | None = None) -> None:
     random.seed(SEED)
     np.random.seed(SEED)
 
-    print(f"=== Zigzag GP Smoke Test ===")
+    print("=== Zigzag GP Smoke Test ===")
     print(f"Fitness function: {type(fitness_fn).__name__}")
     print(f"Seed: {SEED}, N: {N}, Generations: {GENERATIONS}")
     print(f"MU: {MU}, LAMBDA: {LAMBDA_}, CXPB: {CXPB}, MUTPB: {MUTPB}")
@@ -140,7 +137,9 @@ def main(fitness_fn: ClassificationFitnessBase | None = None) -> None:
     toolbox = base.Toolbox()
 
     # Tree generation - use custom genHalfAndHalf
-    toolbox.register("expr", genHalfAndHalf, pset=pset, min_=MIN_TREE_DEPTH, max_=MAX_TREE_DEPTH)
+    toolbox.register(
+        "expr", genHalfAndHalf, pset=pset, min_=MIN_TREE_DEPTH, max_=MAX_TREE_DEPTH
+    )
     toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.expr)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
@@ -163,10 +162,12 @@ def main(fitness_fn: ClassificationFitnessBase | None = None) -> None:
 
     # Bloat control
     toolbox.decorate(
-        "mate", gp.staticLimit(key=operator.attrgetter("height"), max_value=MAX_TREE_HEIGHT)
+        "mate",
+        gp.staticLimit(key=operator.attrgetter("height"), max_value=MAX_TREE_HEIGHT),
     )
     toolbox.decorate(
-        "mutate", gp.staticLimit(key=operator.attrgetter("height"), max_value=MAX_TREE_HEIGHT)
+        "mutate",
+        gp.staticLimit(key=operator.attrgetter("height"), max_value=MAX_TREE_HEIGHT),
     )
 
     # 7. Statistics
@@ -219,12 +220,16 @@ def main(fitness_fn: ClassificationFitnessBase | None = None) -> None:
 
     print("Top 5 individuals:")
     for i, ind in enumerate(hof):
-        print(f"  {i+1}. {fitness_label}={ind.fitness.values[0]:.4f}: {str(ind)[:80]}...")
+        print(
+            f"  {i + 1}. {fitness_label}={ind.fitness.values[0]:.4f}: {str(ind)[:80]}..."
+        )
     print()
 
     print("Logbook summary (last 5 generations):")
     for record in logbook[-5:]:
-        print(f"  Gen {record['gen']}: avg={record['avg']:.4f}, max={record['max']:.4f}")
+        print(
+            f"  Gen {record['gen']}: avg={record['avg']:.4f}, max={record['max']:.4f}"
+        )
 
 
 if __name__ == "__main__":

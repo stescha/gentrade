@@ -13,6 +13,7 @@ General Python conventions for all code in this repository.
 - **No wildcards**: avoid `from module import *`.
 - Use `TYPE_CHECKING` blocks for import-only type annotations to prevent circular imports when necessary.
 
+
 ## Naming Conventions
 
 | Kind | Style | Example |

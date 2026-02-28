@@ -22,9 +22,8 @@ from gentrade.config import (
     TreeConfig,
     ZigzagMediumPsetConfig,
 )
-from gentrade.evolve import run_evolution
 from gentrade.data import prepare_data
-
+from gentrade.evolve import run_evolution
 
 # ── Example 1: Default config ─────────────────────────────
 # F1 fitness, large pset, uniform mutation, one-point crossover,
@@ -61,12 +60,7 @@ cfg_extensive = RunConfig(
     fitness=FBetaFitnessConfig(beta=3.0),
     pset=ZigzagMediumPsetConfig(),
     evolution=EvolutionConfig(
-        mu=1000,
-        lambda_=2000,
-        generations=50,
-        cxpb=0.6,
-        mutpb=0.3,
-        processes=32
+        mu=1000, lambda_=2000, generations=50, cxpb=0.6, mutpb=0.3, processes=32
     ),
     tree=TreeConfig(max_depth=8, max_height=20, tree_gen="grow"),
     crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),
@@ -80,7 +74,6 @@ cfg_bt_extensive = RunConfig(
     seed=42,
     data=DataConfig(pair="BTCUSDT", start=100000, count=10000),
     # data=DataConfig(n=100000, target_threshold=0.02),
- 
     fitness=MeanPnlFitnessConfig(),
     backtest=BacktestConfig(
         tp_stop=0.02,
@@ -91,12 +84,7 @@ cfg_bt_extensive = RunConfig(
     ),
     pset=DefaultLargePsetConfig(),
     evolution=EvolutionConfig(
-        mu=300,
-        lambda_=600,
-        generations=100,
-        cxpb=0.6,
-        mutpb=0.3,
-        processes=32
+        mu=300, lambda_=600, generations=100, cxpb=0.6, mutpb=0.3, processes=32
     ),
     tree=TreeConfig(max_depth=8, max_height=20, tree_gen="grow"),
     crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),
@@ -118,7 +106,6 @@ cfg_conservative = RunConfig(
         lambda_=200,
         generations=20,
     ),
- 
     tree=TreeConfig(tree_gen="full"),
     mutation=NodeReplacementMutationConfig(),
     data=DataConfig(n=3000, target_threshold=0.05),

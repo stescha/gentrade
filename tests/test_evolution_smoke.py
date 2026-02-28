@@ -11,8 +11,8 @@ via tree size comparisons rather than fitness values.
 import pytest
 
 from gentrade.config import RunConfig
-from gentrade.evolve import run_evolution
 from gentrade.data import generate_synthetic_ohlcv
+from gentrade.evolve import run_evolution
 
 # Skip entire module if zigzag is not installed
 zigzag = pytest.importorskip("zigzag")
@@ -69,4 +69,3 @@ class TestEvolutionSmoke:
         _, logbook, _ = run_evolution(cfg_e2e_quick, df)
 
         assert logbook[-1]["max"] >= logbook[0]["max"]
-

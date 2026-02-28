@@ -1,6 +1,7 @@
 """Shared fixtures for gentrade test suite."""
 
 import pytest
+
 from gentrade.config import (
     BacktestConfig,
     DataConfig,
@@ -16,8 +17,6 @@ from gentrade.config import (
     TreeConfig,
     UniformMutationConfig,
     ZigzagMediumPsetConfig,
-    DefaultMediumPsetConfig,
-    DefaultLargePsetConfig,
 )
 
 
@@ -31,7 +30,9 @@ def cfg_test_default() -> RunConfig:
         seed=42,
         data=DataConfig(n=100, target_threshold=0.03, target_label=1),
         evolution=EvolutionConfig(mu=10, lambda_=20, generations=2, verbose=False),
-        tree=TreeConfig(tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17),
+        tree=TreeConfig(
+            tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
+        ),
         fitness=F1FitnessConfig(),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
@@ -50,7 +51,9 @@ def cfg_e2e_quick() -> RunConfig:
         seed=42,
         data=DataConfig(n=1000, target_threshold=0.03, target_label=1),
         evolution=EvolutionConfig(mu=50, lambda_=100, generations=10, verbose=False),
-        tree=TreeConfig(tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17),
+        tree=TreeConfig(
+            tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
+        ),
         fitness=F1FitnessConfig(),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
@@ -90,7 +93,9 @@ def cfg_backtest_unit() -> RunConfig:
         seed=42,
         data=DataConfig(n=200, target_threshold=0.03, target_label=1),
         evolution=EvolutionConfig(mu=10, lambda_=20, generations=2, verbose=False),
-        tree=TreeConfig(tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17),
+        tree=TreeConfig(
+            tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
+        ),
         fitness=SharpeFitnessConfig(),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),

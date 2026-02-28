@@ -4,6 +4,12 @@ applyTo: "tests/**/*.py"
 
 # Testing Guidelines for Gentrade
 
+**Note on imports**: the code lives in `src/gentrade` and the project is installed in editable mode via 
+Poetry. Test can use normal imports like `import gentrade` or `from gentrade import ...`. 
+No `sys.path` manipulation to fix imports is allowed in code or tests.
+
+
+
 Follow these guidelines when writing tests for the `gentrade` repository.
 
 ## General Principles

@@ -8,6 +8,11 @@ These instructions cover the domain, architecture, and conventions specific to t
 
 ## Project Goal
 
+**Note on imports**: the repository uses the **src layout**. All Python
+imports should be performed as `import gentrade` (or `from gentrade import …`) from outside the gentrade src directory. Internal imports within the src should be relative (e.g., `from . import module`).
+No `sys.path` manipulation to fix imports is allowed in code or tests.
+
+
 Evolve trading strategies using genetic programming (GP) on historical OHLCV cryptocurrency data. This is an **experimentation project** — the algorithm, fitness function, and strategy representation are under active research. Favour simple, working solutions over elaborate abstractions.
 
 

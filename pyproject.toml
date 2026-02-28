@@ -33,6 +33,11 @@ dependencies = [
 requires = ["poetry-core>=1.0.0", "pybind11>=2.10.0"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.poetry]
+packages = [
+    { include = "gentrade", from = "src" }
+]
+
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
 
@@ -62,11 +67,12 @@ python_version = "3.11"
 strict = true
 warn_redundant_casts = true
 warn_unused_ignores = true
-exclude = ["workbench/sandbox"]
+exclude = ["sandbox"]
 # typing stubs
 mypy_path = [
     "vendor/zigzag",
     "vendor/zigzag/zigzag",
+    "src",
 ]
 # Enable explicit package bases to correctly discover nested packages in the monorepo
 # (e.g. tradetools/src/tradetools, tradetools/tests) and avoid "Duplicate module" errors.
