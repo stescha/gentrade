@@ -20,7 +20,8 @@ import numpy as np
 import pandas as pd
 from deap import algorithms, base, creator, gp, tools
 
-from gentrade.config import TREE_GEN_FUNCS, RunConfig
+from gentrade.backtest_fitness import run_vbt_backtest
+from gentrade.config import TREE_GEN_FUNCS, BacktestConfig, RunConfig
 from gentrade.growtree import genFull
 from gentrade.minimal_pset import zigzag_pivots
 
@@ -61,6 +62,31 @@ def generate_synthetic_ohlcv(n: int, seed: int) -> pd.DataFrame:
     )
 
 
+def _compile_tree_to_signals(
+    individual: gp.PrimitiveTree,
+    pset: gp.PrimitiveSetTyped,
+    df: pd.DataFrame,
+) -> pd.Series:
+    """Compile a GP tree and execute it on OHLCV data to produce buy signals.
+
+    Handles degenerate trees that return a scalar (bool/int/float) by
+    broadcasting the scalar to a full-length boolean Series.
+
+    Args:
+        individual: GP tree to compile and execute.
+        pset: Primitive set for compilation.
+        df: OHLCV DataFrame; must have open, high, low, close, volume columns.
+
+    Returns:
+        Boolean Series of entry signals, same length and index as ``df``.
+    """
+    func = gp.compile(individual, pset)
+    result = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
+    if isinstance(result, (bool, int, float, np.bool_)):
+        result = pd.Series([bool(result)] * len(df), index=df.index)
+    return result.astype(bool)
+
+
 def evaluate(
     individual: gp.PrimitiveTree,
     pset: gp.PrimitiveSetTyped,
@@ -82,15 +108,57 @@ def evaluate(
         Single-element tuple with the fitness score (DEAP convention).
     """
     try:
-        func = gp.compile(individual, pset)
-        y_pred = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
-
-        # Handle scalar/bool returns from degenerate trees
-        if isinstance(y_pred, (bool, int, float, np.bool_)):
-            y_pred = pd.Series([bool(y_pred)] * len(df), index=df.index)
-
-        y_pred = y_pred.astype(bool)
+        y_pred = _compile_tree_to_signals(individual, pset, df)
         return (fitness_fn(y_true, y_pred),)
+    except Exception:
+        return (0.0,)
+
+
+def evaluate_backtest(
+    individual: gp.PrimitiveTree,
+    pset: gp.PrimitiveSetTyped,
+    df: pd.DataFrame,
+    backtest_cfg: BacktestConfig,
+    fitness_fn: Any,
+) -> tuple[float]:
+    """Evaluate an individual's fitness using vectorbt portfolio simulation.
+
+    Compiles the tree to a boolean entry signal, runs a vectorbt backtest
+    with TP/SL exits, then extracts a single metric via ``fitness_fn``.
+
+    Guards (all return ``(0.0,)``):
+    - Fewer than ``backtest_cfg.min_trades`` closed trades.
+    - Non-finite metric value (NaN or Inf).
+    - Any exception during compilation, simulation, or metric extraction.
+
+    Args:
+        individual: GP tree to evaluate.
+        pset: Primitive set for compilation.
+        df: OHLCV DataFrame.
+        backtest_cfg: Portfolio simulation parameters.
+        fitness_fn: Callable ``(vbt.Portfolio) -> float``. Typically a
+            ``BacktestFitnessConfigBase`` subclass instance.
+
+    Returns:
+        Single-element tuple with the fitness score (DEAP convention).
+    """
+    try:
+        entries = _compile_tree_to_signals(individual, pset, df)
+        pf = run_vbt_backtest(
+            ohlcv=df,
+            entries=entries,
+            tp_stop=backtest_cfg.tp_stop,
+            sl_stop=backtest_cfg.sl_stop,
+            sl_trail=backtest_cfg.sl_trail,
+            fees=backtest_cfg.fees,
+            init_cash=backtest_cfg.init_cash,
+        )
+        if pf.trades.count() < backtest_cfg.min_trades:
+            return (0.0,)
+        metric = fitness_fn(pf)
+        if not np.isfinite(metric):
+            return (0.0,)
+        return (metric,)
     except Exception:
         return (0.0,)
 
@@ -207,36 +275,52 @@ def run_evolution(
     df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
     print(f"Generated synthetic OHLCV data: {len(df)} rows")
 
-    # ── 4. Ground truth labels ─────────────────────────────
-    y_true = zigzag_pivots(
-        df["close"], cfg.data.target_threshold, cfg.data.target_label
-    )
-    pivot_count = int(y_true.sum())
-    pivot_density = pivot_count / len(df)
-    print(
-        f"Ground truth pivots (label={cfg.data.target_label}, "
-        f"threshold={cfg.data.target_threshold}):"
-    )
-    print(f"  Count: {pivot_count}, Density: {pivot_density:.4f}")
-    print()
-
-    if pivot_count == 0:
-        print("WARNING: No pivots found in synthetic data. Adjust parameters.")
-        return [], tools.Logbook(), tools.HallOfFame(1)
-
-    # ── 5. Build pset ──────────────────────────────────────
+    # ── 4. Build pset ──────────────────────────────────────
     pset = cfg.pset.func()
     print(f"Created pset with {len(pset.primitives)} primitive types")
     print()
 
-    # ── 6. DEAP toolbox ────────────────────────────────────
+    # ── 5. DEAP toolbox ────────────────────────────────────
     toolbox = create_toolbox(cfg, pset)
 
-    # Evaluation — fitness config is callable, passed directly as the function
-    toolbox.register(
-        "evaluate",
-        partial(evaluate, pset=pset, df=df, y_true=y_true, fitness_fn=cfg.fitness),
-    )
+    # ── 6. Evaluation — dispatch based on fitness type ─────
+    if cfg.fitness._requires_backtest:
+        if cfg.backtest is None:
+            raise ValueError(
+                "RunConfig.backtest must be set when using a backtest fitness. "
+                "Add backtest=BacktestConfig() to your RunConfig."
+            )
+        toolbox.register(
+            "evaluate",
+            partial(
+                evaluate_backtest,
+                pset=pset,
+                df=df,
+                backtest_cfg=cfg.backtest,
+                fitness_fn=cfg.fitness,
+            ),
+        )
+    else:
+        y_true = zigzag_pivots(
+            df["close"], cfg.data.target_threshold, cfg.data.target_label
+        )
+        pivot_count = int(y_true.sum())
+        pivot_density = pivot_count / len(df)
+        print(
+            f"Ground truth pivots (label={cfg.data.target_label}, "
+            f"threshold={cfg.data.target_threshold}):"
+        )
+        print(f"  Count: {pivot_count}, Density: {pivot_density:.4f}")
+        print()
+
+        if pivot_count == 0:
+            print("WARNING: No pivots found in synthetic data. Adjust parameters.")
+            return [], tools.Logbook(), tools.HallOfFame(1)
+
+        toolbox.register(
+            "evaluate",
+            partial(evaluate, pset=pset, df=df, y_true=y_true, fitness_fn=cfg.fitness),
+        )
 
     # ── 6b. Multiprocessing ────────────────────────────────
     pool = None
@@ -295,7 +379,7 @@ def run_evolution(
     print()
 
     zigzag_in_hof = any("zigzag_pivots" in str(ind) for ind in hof)
-    print(f"zigzag_pivots i n top-{cfg.evolution.hof_size} HoF: {zigzag_in_hof}")
+    print(f"zigzag_pivots in top-{cfg.evolution.hof_size} HoF: {zigzag_in_hof}")
     print()
 
     print(f"Top {cfg.evolution.hof_size} individuals:")

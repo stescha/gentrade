@@ -1,18 +1,19 @@
 """Shared fixtures for gentrade test suite."""
 
 import pytest
-
 from gentrade.config import (
+    BacktestConfig,
     DataConfig,
+    DoubleTournamentSelectionConfig,
     EvolutionConfig,
     F1FitnessConfig,
     FBetaFitnessConfig,
     OnePointCrossoverConfig,
     OnePointLeafBiasedCrossoverConfig,
-    DoubleTournamentSelectionConfig,
     RunConfig,
-    TreeConfig,
+    SharpeFitnessConfig,
     TournamentSelectionConfig,
+    TreeConfig,
     UniformMutationConfig,
     ZigzagMediumPsetConfig,
 )
@@ -68,4 +69,30 @@ def cfg_e2e_fbeta(cfg_e2e_quick: RunConfig) -> RunConfig:
                 fitness_size=5, parsimony_size=1.4
             ),
         }
+    )
+
+
+@pytest.fixture
+def backtest_cfg_default() -> BacktestConfig:
+    """Default BacktestConfig for unit tests."""
+    return BacktestConfig()
+
+
+@pytest.fixture
+def cfg_backtest_unit() -> RunConfig:
+    """Minimal RunConfig with Sharpe backtest fitness for unit-level tests.
+
+    Small data (n=200), tiny population (mu=10, gen=2). Fast.
+    """
+    return RunConfig(
+        seed=42,
+        data=DataConfig(n=200, target_threshold=0.03, target_label=1),
+        evolution=EvolutionConfig(mu=10, lambda_=20, generations=2, verbose=False),
+        tree=TreeConfig(tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17),
+        fitness=SharpeFitnessConfig(),
+        pset=ZigzagMediumPsetConfig(),
+        mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
+        crossover=OnePointCrossoverConfig(),
+        selection=TournamentSelectionConfig(tournsize=3),
+        backtest=BacktestConfig(),
     )
