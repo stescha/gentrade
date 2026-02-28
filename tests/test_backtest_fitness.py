@@ -321,10 +321,10 @@ class TestEvaluateBacktest:
         df = generate_synthetic_ohlcv(500, seed=42)
         backtest_cfg = BacktestConfig(min_trades=0)
 
-        # fitness_fn that always returns NaN
-        nan_fitness_fn = lambda pf: float("nan")  # noqa: E731
+        def _nan_fitness_fn(pf: object) -> float:
+            return float("nan")
 
-        result = evaluate_backtest(individual, pset, df, backtest_cfg, nan_fitness_fn)
+        result = evaluate_backtest(individual, pset, df, backtest_cfg, _nan_fitness_fn)
         assert result == (0.0,)
 
 

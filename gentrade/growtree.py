@@ -84,12 +84,12 @@ def add_terminal(pset, type_, expr):
     try:
         term = random.choice(pset.terminals[type_])
     except IndexError:
-        _, _, traceback = sys.exc_info()
+        _, _, tb = sys.exc_info()
         raise IndexError(
             "The gp.generate function tried to add "
             "a terminal of type '%s', but there is "
             "none available." % (type_,)
-        ).with_traceback(traceback)
+        ).with_traceback(tb)
     if type(term) is gp.MetaEphemeral:
         term = term()
     expr.append(term)

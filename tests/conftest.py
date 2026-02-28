@@ -39,7 +39,7 @@ def ohlcv():
 @pytest.fixture(scope='package')
 def pset_ta():
     if not _LEGACY_DEPS_AVAILABLE:
-        pytest.skip('tradetools not available')
+        pytest.skip("tradetools not available")
     return _create_ta_pset()
 
 
@@ -77,7 +77,7 @@ def ohlcv_ref(result_bt):
 @pytest.fixture(scope='package')
 def result_eval(ohlcv_ref, signals_ref, fee_ref):
     if not _LEGACY_DEPS_AVAILABLE:
-        pytest.skip('tradetools not available')
+        pytest.skip("tradetools not available")
     return _evalcpp.eval(
         ohlcv_ref.open.values,
         ohlcv_ref.close.values,

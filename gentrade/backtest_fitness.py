@@ -9,10 +9,9 @@ Design notes:
   object's accessor method.
 - ``run_vbt_backtest`` is the sole entry point for the simulation. All
   callers (e.g. ``evaluate_backtest`` in ``evolve.py``) go through this
-  function to ensure consistent portfolio construction.
-- No ``freq=`` is passed to ``Portfolio.from_signals`` because the synthetic
-  data in ``evolve.py`` uses a ``RangeIndex``, not a ``DatetimeIndex``,
-  and the metrics used here do not require a frequency annotation.
+  function to ensure consistent portfolio construction. ``freq=1`` is passed
+  to support annualized ratio metrics (Sharpe, Sortino, Calmar) when the
+  OHLCV data uses a ``RangeIndex`` instead of a ``DatetimeIndex``.
 """
 
 import pandas as pd
@@ -135,5 +134,5 @@ def run_vbt_backtest(
         accumulate=False,
         fees=fees,
         init_cash=init_cash,
-        freq=1,
+        freq=1,  # Required for ratio metrics (Sharpe/Sortino/Calmar) when using RangeIndex
     )
