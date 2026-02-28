@@ -10,6 +10,7 @@ mutation, the ``_requires_pset`` and ``_requires_expr`` ClassVar flags
 drive how the operator is wired without any isinstance checks.
 """
 
+import multiprocessing
 import operator
 import random
 from functools import partial
@@ -21,7 +22,7 @@ from deap import algorithms, base, creator, gp, tools
 
 from gentrade.config import TREE_GEN_FUNCS, RunConfig
 from gentrade.growtree import genFull
-from gentrade.minimal_pset import create_pset_default_large, zigzag_pivots
+from gentrade.minimal_pset import zigzag_pivots
 
 
 def generate_synthetic_ohlcv(n: int, seed: int) -> pd.DataFrame:
@@ -192,7 +193,7 @@ def run_evolution(
     print(
         f"Evolution: mu={cfg.evolution.mu}, λ={cfg.evolution.lambda_}, "
         f"gen={cfg.evolution.generations}, cxpb={cfg.evolution.cxpb}, "
-        f"mutpb={cfg.evolution.mutpb}"
+        f"mutpb={cfg.evolution.mutpb}, processes={cfg.evolution.processes}"
     )
     print(f"Tree: depth=[{cfg.tree.min_depth}, {cfg.tree.max_depth}], max_height={cfg.tree.max_height}")
     print(f"Pset: {cfg.pset.type}")
@@ -237,6 +238,15 @@ def run_evolution(
         partial(evaluate, pset=pset, df=df, y_true=y_true, fitness_fn=cfg.fitness),
     )
 
+    # ── 6b. Multiprocessing ────────────────────────────────
+    pool = None
+    if cfg.evolution.processes > 1:
+        pool = multiprocessing.Pool(processes=cfg.evolution.processes)
+        toolbox.register("map", pool.map)
+        print(f"Using multiprocessing with {cfg.evolution.processes} workers")
+    else:
+        print("Using single-process evaluation")
+
     # ── 7. Statistics ──────────────────────────────────────
     stats = tools.Statistics(lambda ind: ind.fitness.values)
     stats.register("avg", np.mean)
@@ -254,18 +264,23 @@ def run_evolution(
     print("Starting evolution...")
     print("-" * 60)
 
-    pop, logbook = algorithms.eaMuPlusLambda(
-        pop,
-        toolbox,
-        mu=cfg.evolution.mu,
-        lambda_=cfg.evolution.lambda_,
-        cxpb=cfg.evolution.cxpb,
-        mutpb=cfg.evolution.mutpb,
-        ngen=cfg.evolution.generations,
-        stats=stats,
-        halloffame=hof,
-        verbose=cfg.evolution.verbose,
-    )
+    try:
+        pop, logbook = algorithms.eaMuPlusLambda(
+            pop,
+            toolbox,
+            mu=cfg.evolution.mu,
+            lambda_=cfg.evolution.lambda_,
+            cxpb=cfg.evolution.cxpb,
+            mutpb=cfg.evolution.mutpb,
+            ngen=cfg.evolution.generations,
+            stats=stats,
+            halloffame=hof,
+            verbose=cfg.evolution.verbose,
+        )
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
 
     print("-" * 60)
     print()

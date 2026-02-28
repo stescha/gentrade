@@ -53,7 +53,7 @@ cfg_recall = RunConfig(
 
 cfg_extensive = RunConfig(
     seed=42,
-    data=DataConfig(n=10000, target_threshold=0.02),
+    data=DataConfig(n=100000, target_threshold=0.02),
     fitness=FBetaFitnessConfig(beta=3.0),
     pset=ZigzagMediumPsetConfig(),
     evolution=EvolutionConfig(
@@ -62,6 +62,7 @@ cfg_extensive = RunConfig(
         generations=50,
         cxpb=0.6,
         mutpb=0.3,
+        processes=32
     ),
     tree=TreeConfig(max_depth=8, max_height=20, tree_gen="grow"),
     crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),

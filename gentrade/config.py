@@ -385,6 +385,9 @@ class EvolutionConfig(BaseModel):
     mutpb: float = Field(0.2, ge=0.0, le=1.0, description="Mutation probability")
     hof_size: int = Field(5, ge=1, description="Hall of fame size")
     verbose: bool = Field(True, description="Print per-generation stats")
+    processes: int = Field(
+        1, ge=1, description="Number of worker processes for evaluation (1 = single-process)"
+    )
 
 
 class DataConfig(BaseModel):
