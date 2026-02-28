@@ -104,8 +104,8 @@ class MetricInfo():
     def gen_trials(self):
         return self._gen_trials
 
-    def set_gen_trials(self, gen_trials):
-        self._gen_trials = self.gen_trials
+    def set_gen_trial(self, gen_trials):
+        self._gen_trials = gen_trials
 
 class MetricBase:
 
@@ -251,6 +251,40 @@ class ProbabilisticSharpe(MetricBase):
             return self.fail_value()
         if psr > 0.95:
             return observed_sr
+
+        return self.fail_value()
+
+    def aggregate(self, metrics):
+        return np.mean(metrics)
+
+
+class ProbabilisticSQN(MetricBase):
+
+    def __init__(self, benchmark_sr, min_trades=None):
+        self.benchmark_sr = benchmark_sr
+        self.min_trades = min_trades
+
+    def calc(self, stats, info):
+        if self.min_trades is not None and stats.tradecount < self.min_trades:
+            return self.fail_value()
+
+        std = stats.pnlstd
+        if std == 0:
+            return self.fail_value()
+
+        observed_sr = stats.pnlmean / std
+        if np.isnan(observed_sr) or np.isinf(observed_sr):
+            return self.fail_value()
+
+        psr = probabilistic_sharpe_ratio(observed_sr=observed_sr, benchmark_sr=self.benchmark_sr,
+                                         number_of_returns=stats.tradecount,
+                                         skewness_of_returns=scipy.stats.skew(stats.pnlcomm_rel),
+                                         kurtosis_of_returns=scipy.stats.kurtosis(stats.pnlcomm_rel))
+
+        if psr is None:
+            return self.fail_value()
+        if psr > 0.95:
+            return np.sqrt(stats.tradecount) * observed_sr
 
         return self.fail_value()
 
@@ -596,6 +630,37 @@ class PnlRelMean(MetricBase):
 
     def aggregate(self, metrics):
         return np.mean(metrics)
+
+    def aggregate(self, metrics):
+        return np.mean(metrics)
+
+
+class PnlRelMeanKruskal(MetricBase):
+
+    def __init__(self, trades_per_group, group_count, alpha=0.05):
+        self.trades_per_group = trades_per_group
+        self.group_count = group_count
+        self.alpha = alpha
+
+    def calc(self, stats, info):
+        if stats.tradecount < self.group_count * self.trades_per_group:
+            return self.fail_value()
+        else:
+            group_len = len(stats.values) // self.group_count
+            group = stats.open_idx // group_len
+
+            pnl_log = stats.pnl_log
+            groups = np.split(pnl_log, np.unique(group, return_index=True)[1])[1:]
+
+            for g in groups:
+                if len(g) < self.trades_per_group:
+                    return self.fail_value()
+
+            if len(groups) == self.group_count:
+                k = kruskal(*groups)
+                if k.pvalue > self.alpha:
+                    return stats.pnlcomm_rel.mean()
+        return self.fail_value()
 
     def aggregate(self, metrics):
         return np.mean(metrics)
