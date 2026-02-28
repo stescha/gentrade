@@ -25,6 +25,7 @@ dependencies = [
     "ruff (>=0.15.4,<0.16.0)",
     "zigzag @ file:///home/stuff/PyProj/gentrade/vendor/zigzag",
     "pandas-stubs (>=3.0.0.260204,<4.0.0.0)",
+    "pydantic (>=2.12.5,<3.0.0)",
 ]
 
 
@@ -47,6 +48,13 @@ line-length = 88
 # C4 = flake8-comprehensions
 # B = flake8-bugbear
 select = ["E", "W", "F", "I", "C4", "B"]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: fast, isolated tests with no evolution (toolbox wiring, config assertions)",
+    "e2e: full evolution pipeline tests (slow, seed-controlled)",
+    "smoke: lightweight sanity checks for core components",
+]
 
 [tool.mypy]
 python_version = "3.11"
