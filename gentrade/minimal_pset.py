@@ -265,3 +265,17 @@ def create_pset_zigzag_large(name: str = "zigzag_large") -> gp.PrimitiveSetTyped
     add_zigzag_cheat(pset)
     add_features_large(pset)
     return pset
+
+
+def create_pset_default_medium(name: str = "default_medium") -> gp.PrimitiveSetTyped:
+    """Create medium sized pset with default features."""
+    pset = create_pset_core(name)
+    add_features_medium(pset)
+    return pset
+
+
+def create_pset_default_large(name: str = "default_large") -> gp.PrimitiveSetTyped:
+    """Create large pset with default features."""
+    pset = create_pset_core(name)
+    add_features_large(pset)
+    return pset

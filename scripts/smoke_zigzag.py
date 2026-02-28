@@ -26,7 +26,7 @@ from gentrade.minimal_pset import create_pset_zigzag_large, create_pset_zigzag_m
 
 
 # --- Configurable defaults ---
-N = 200000  # Synthetic series length
+N = 5000  # Synthetic series length
 SEED = 1997  # Random seed for reproducibility
 TARGET_THRESHOLD = 0.03  # Threshold used to generate ground-truth labels
 TARGET_LABEL = 1  # Label to predict (1 = peak, -1 = valley)
