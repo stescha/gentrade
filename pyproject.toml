@@ -1,0 +1,23 @@
+[project]
+name = "gentrade"
+version = "0.1.0"
+description = ""
+requires-python = "~=3.11"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: fast, isolated tests with no evolution (toolbox wiring, config assertions)",
+    "integration: integration tests combining multiple components",
+    "e2e: full evolution pipeline tests (slow, seed-controlled)",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "C4", "B"]
