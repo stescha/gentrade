@@ -32,8 +32,8 @@ from gentrade.config import (  # noqa: E402
 from gentrade.evolve import (  # noqa: E402
     _compile_tree_to_signals,
     evaluate_backtest,
-    generate_synthetic_ohlcv,
 )
+from gentrade.data import generate_synthetic_ohlcv
 from gentrade.minimal_pset import create_pset_zigzag_medium  # noqa: E402
 
 # ── Module-level helpers ───────────────────────────────────

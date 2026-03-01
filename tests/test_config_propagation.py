@@ -38,6 +38,7 @@ from gentrade.config import (
     DefaultLargePsetConfig,
 )
 from gentrade.evolve import create_toolbox
+from gentrade.data import prepare_data
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 
 
@@ -209,20 +210,26 @@ class TestDataConfig:
     """Verify synthetic vs. real data selection logic in RunConfig/run_evolution."""
 
     def test_data_config_defaults(self) -> None:
-        """Default RunConfig uses synthetic parameters and no pair."""
+        """Default RunConfig uses synthetic parameters and no pair.
+
+        ``prepare_data`` should honour ``n`` and return that many rows.
+        """
         cfg = RunConfig()
         assert cfg.data.pair is None
         assert cfg.data.n > 0
+        df = prepare_data(cfg)
+        assert len(df) == cfg.data.n
 
     def test_real_data_branch_monkeypatched(
         self, cfg_test_default: RunConfig, monkeypatch, capsys
     ) -> None:
-        """When ``pair`` is set, ``run_evolution`` loads via load_binance_ohlcv."""
+        """When ``pair`` is set, :func:`prepare_data` uses
+        ``load_binance_ohlcv`` and prints a message.
+        """
         import pandas as pd
-        # monkeypatch the actual tradetools loader since run_evolution imports
-        # it locally inside the function
+        # monkeypatch the actual tradetools loader since prepare_data
+        # imports it locally inside the function
         import gentrade.tradetools as tt
-        from gentrade import evolve
 
         def fake_load(pair, start=None, stop=None, count=None):
             # simple one-row DataFrame
@@ -238,14 +245,13 @@ class TestDataConfig:
                     pair="BTCUSDT",
                     start=100,
                     count=1,
-                    n=10,  # should be ignored
+                    n=10,  # synthetic size should be ignored
                 ),
                 "evolution": EvolutionConfig(mu=1, lambda_=1, generations=1),
             }
         )
-        pop, logbook, hof = evolve.run_evolution(cfg)
+        df = prepare_data(cfg)
         captured = capsys.readouterr()
         assert "Loaded real OHLCV data for BTCUSDT" in captured.out
-        # evolution should complete and return a list (may be empty if
-        # ground-truth pivots were missing in our fake data).
-        assert isinstance(pop, list)
+        assert isinstance(df, pd.DataFrame)
+        assert df.iloc[0]["open"] == 1

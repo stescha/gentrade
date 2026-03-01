@@ -23,6 +23,7 @@ from gentrade.classification_fitness import (
 )
 from gentrade.growtree import genHalfAndHalf, genFull
 from gentrade.minimal_pset import create_pset_zigzag_large, create_pset_zigzag_medium, create_pset_zigzag_minimal, zigzag_pivots
+from gentrade.data import generate_synthetic_ohlcv
 
 
 # --- Configurable defaults ---
@@ -45,42 +46,6 @@ MAX_TREE_DEPTH = 6
 MAX_TREE_HEIGHT = 17  # Bloat control limit
 
 
-def generate_synthetic_ohlcv(n: int, seed: int) -> pd.DataFrame:
-    """Generate synthetic OHLCV data with realistic price movements.
-
-    Args:
-        n: Number of rows to generate.
-        seed: Random seed for reproducibility.
-
-    Returns:
-        DataFrame with open, high, low, close, volume columns.
-    """
-    rng = np.random.default_rng(seed)
-
-    # Generate close prices via cumulative sum of returns
-    returns = rng.normal(0, 0.02, n)
-    close = 100 * np.exp(np.cumsum(returns))
-
-    # Derive OHLC from close with small perturbations
-    noise = rng.uniform(0.001, 0.01, n)
-    high = close * (1 + noise)
-    low = close * (1 - noise)
-    open_ = close * (1 + rng.uniform(-0.005, 0.005, n))
-
-    # Ensure high >= open, close and low <= open, close
-    high = np.maximum(high, np.maximum(open_, close))
-    low = np.minimum(low, np.minimum(open_, close))
-
-    # Random volume
-    volume = rng.uniform(1000, 10000, n)
-
-    return pd.DataFrame({
-        "open": open_,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
 
 
 def evaluate(

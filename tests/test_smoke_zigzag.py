@@ -12,6 +12,7 @@ import pytest
 
 from gentrade.config import RunConfig
 from gentrade.evolve import run_evolution
+from gentrade.data import generate_synthetic_ohlcv
 
 # Skip entire module if zigzag is not installed
 zigzag = pytest.importorskip("zigzag")
@@ -30,7 +31,8 @@ class TestZigzagIntegration:
         cfg = cfg_e2e_quick
         assert "zigzag" in cfg.pset.type
 
-        pop, logbook, hof = run_evolution(cfg)
+        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
+        pop, logbook, hof = run_evolution(cfg, df)
 
         zigzag_found = any("zigzag_pivots" in str(ind) for ind in hof)
 

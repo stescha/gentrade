@@ -25,41 +25,8 @@ from gentrade.config import TREE_GEN_FUNCS, BacktestConfig, RunConfig
 from gentrade.growtree import genFull
 from gentrade.minimal_pset import zigzag_pivots
 
-
-def generate_synthetic_ohlcv(n: int, seed: int) -> pd.DataFrame:
-    """Generate synthetic OHLCV data with realistic price movements.
-
-    Args:
-        n: Number of rows to generate.
-        seed: Random seed for reproducibility.
-
-    Returns:
-        DataFrame with open, high, low, close, volume columns.
-    """
-    rng = np.random.default_rng(seed)
-
-    returns = rng.normal(0, 0.02, n)
-    close = 100 * np.exp(np.cumsum(returns))
-
-    noise = rng.uniform(0.001, 0.01, n)
-    high = close * (1 + noise)
-    low = close * (1 - noise)
-    open_ = close * (1 + rng.uniform(-0.005, 0.005, n))
-
-    high = np.maximum(high, np.maximum(open_, close))
-    low = np.minimum(low, np.minimum(open_, close))
-
-    volume = rng.uniform(1000, 10000, n)
-
-    return pd.DataFrame(
-        {
-            "open": open_,
-            "high": high,
-            "low": low,
-            "close": close,
-            "volume": volume,
-        }
-    )
+# moved to data module to centralise data helpers
+from gentrade.data import generate_synthetic_ohlcv, prepare_data
 
 
 def _compile_tree_to_signals(
@@ -67,24 +34,32 @@ def _compile_tree_to_signals(
     pset: gp.PrimitiveSetTyped,
     df: pd.DataFrame,
 ) -> pd.Series:
-    """Compile a GP tree and execute it on OHLCV data to produce buy signals.
+    """Compile a GP tree and evaluate it on OHLCV data.
 
-    Handles degenerate trees that return a scalar (bool/int/float) by
-    broadcasting the scalar to a full-length boolean Series.
+    This helper centralises the logic used by both ``evaluate`` and
+    ``evaluate_backtest``. It handles the usual DEAP ``gp.compile`` call
+    and coerces the result into a boolean ``pd.Series`` of the same length as
+    ``df``. Scalar outputs (``True``/``False`` or numeric) are broadcast across
+    the entire series, matching the behaviour used in the old
+    ``smoke_zigzag`` script.
 
     Args:
-        individual: GP tree to compile and execute.
+        individual: GP tree to compile.
         pset: Primitive set for compilation.
-        df: OHLCV DataFrame; must have open, high, low, close, volume columns.
+        df: OHLCV DataFrame providing the input arrays.
 
     Returns:
-        Boolean Series of entry signals, same length and index as ``df``.
+        Boolean ``pd.Series`` indexed like ``df``.
     """
     func = gp.compile(individual, pset)
-    result = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
-    if isinstance(result, (bool, int, float, np.bool_)):
-        result = pd.Series([bool(result)] * len(df), index=df.index)
-    return result.astype(bool)
+    y_pred = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
+
+    # Single-value trees return a scalar; broadcast to full length
+    if isinstance(y_pred, (bool, int, float, np.bool_)):
+        return pd.Series([bool(y_pred)] * len(df), index=df.index)
+
+    series = pd.Series(y_pred, index=df.index)
+    return series.astype(bool)
 
 
 def evaluate(
@@ -237,15 +212,21 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
 
 def run_evolution(
     cfg: RunConfig,
+    df: pd.DataFrame,
 ) -> tuple[list[Any], tools.Logbook, tools.HallOfFame]:
-    """Run GP evolution with the given configuration.
+    """Run GP evolution with the given configuration and data.
 
-    Performs the full pipeline: seed → data generation → pset construction →
-    DEAP toolbox setup → evolution → result reporting. All behaviour is
-    determined by ``cfg``.
+    The caller is responsible for providing a pre-loaded OHLCV DataFrame;
+    data loading/generation is **not** performed here. This makes the core
+    evolution logic easier to test and reuse with arbitrary datasets.
+
+    Performs the full pipeline: seed → pset construction → DEAP toolbox setup
+    → evolution → result reporting. All behaviour is determined by ``cfg``.
 
     Args:
         cfg: Complete run configuration.
+        df: OHLCV data used for fitness evaluation. Must have ``open``,
+            ``high``, ``low``, ``close`` and ``volume`` columns.
 
     Returns:
         Tuple of ``(final_population, logbook, hall_of_fame)``.
@@ -269,26 +250,10 @@ def run_evolution(
     print(f"Crossover: {cfg.crossover.type}")
     print(f"Selection: {cfg.selection.type}")
     print(f"Tree gen: {cfg.tree.tree_gen}")
+    print(f"Data rows: {len(df)}")
     print()
 
-    # ── 3. Load or generate OHLCV data ─────────────────────
-    if cfg.data.pair is not None:
-        # real historical data requested
-        from gentrade.tradetools import load_binance_ohlcv
-
-        df = load_binance_ohlcv(
-            cfg.data.pair,
-            cfg.data.start,
-            cfg.data.stop,
-            cfg.data.count,
-        )
-        print(f"Loaded real OHLCV data for {cfg.data.pair}: {len(df)} rows")
-    else:
-        # fall back to synthetic generation
-        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        print(f"Generated synthetic OHLCV data: {len(df)} rows")
-
-    # ── 4. Build pset ──────────────────────────────────────
+    # ── 3. Build pset ──────────────────────────────────────
     pset = cfg.pset.func()
     print(f"Created pset with {len(pset.primitives)} primitive types")
     print()

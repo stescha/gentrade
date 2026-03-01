@@ -34,13 +34,16 @@ Follow these guidelines when writing tests for the `gentrade` repository.
 ```python
 import pytest
 from gentrade.evolve import run_evolution
+from gentrade.data import generate_synthetic_ohlcv
 
 @pytest.mark.e2e
 class TestEvolutionStructure:
     """Verifies evolution pipeline adherence to config."""
 
     def test_run_completes_structure(self, cfg_e2e_quick):
-        pop, logbook, hof = run_evolution(cfg_e2e_quick)
+        # generate data once and pass it to the API
+        df = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
+        pop, logbook, hof = run_evolution(cfg_e2e_quick, df)
         # Structural assertions are robust
         assert len(pop) == cfg_e2e_quick.evolution.mu
         assert len(logbook) == cfg_e2e_quick.evolution.generations + 1

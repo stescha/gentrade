@@ -23,6 +23,7 @@ from gentrade.config import (
     ZigzagMediumPsetConfig,
 )
 from gentrade.evolve import run_evolution
+from gentrade.data import prepare_data
 
 
 # ── Example 1: Default config ─────────────────────────────
@@ -125,9 +126,13 @@ cfg_conservative = RunConfig(
 
 
 if __name__ == "__main__":
-    # Choose one:
-   
-    # run_evolution(cfg_default)
-    # run_evolution(cfg_recall)
-    # run_evolution(cfg_conservative)
-    run_evolution(cfg_bt_extensive)
+    # Choose one configuration and make sure data is provided
+
+    # cfg = cfg_default
+    # cfg = cfg_recall
+    # cfg = cfg_conservative
+    cfg = cfg_bt_extensive
+
+    # prepare_df covers both synthetic and real-pair cases
+    df = prepare_data(cfg)
+    run_evolution(cfg, df)

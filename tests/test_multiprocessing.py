@@ -18,6 +18,7 @@ from gentrade.config import (
     ZigzagMediumPsetConfig,
 )
 from gentrade.evolve import run_evolution
+from gentrade.data import generate_synthetic_ohlcv
 
 zigzag = pytest.importorskip("zigzag")
 
@@ -46,7 +47,8 @@ class TestMultiprocessingEvolution:
     def test_multiprocessing_completes(self) -> None:
         """Evolution with processes=2 runs to completion with correct structure."""
         cfg = _make_cfg(processes=2)
-        pop, logbook, hof = run_evolution(cfg)
+        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
+        pop, logbook, hof = run_evolution(cfg, df)
 
         assert len(pop) == cfg.evolution.mu
         assert len(logbook) == cfg.evolution.generations + 1
@@ -55,7 +57,8 @@ class TestMultiprocessingEvolution:
     def test_single_process_still_works(self) -> None:
         """Evolution with processes=1 (default) still works correctly."""
         cfg = _make_cfg(processes=1)
-        pop, logbook, hof = run_evolution(cfg)
+        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
+        pop, logbook, hof = run_evolution(cfg, df)
 
         assert len(pop) == cfg.evolution.mu
         assert len(logbook) == cfg.evolution.generations + 1
