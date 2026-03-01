@@ -26,6 +26,8 @@ from gentrade.config import (
     OnePointCrossoverConfig,
     OnePointLeafBiasedCrossoverConfig,
     RunConfig,
+    DataConfig,
+    EvolutionConfig,
     ShrinkMutationConfig,
     TournamentSelectionConfig,
     TreeConfig,
@@ -200,3 +202,50 @@ class TestPsetWiring:
     def test_pset_func_matches_classvar(self, cfg_test_default: RunConfig) -> None:
         """cfg.pset.func is the same function as the ClassVar on the config class."""
         assert cfg_test_default.pset.func is ZigzagMediumPsetConfig.func
+
+
+@pytest.mark.unit
+class TestDataConfig:
+    """Verify synthetic vs. real data selection logic in RunConfig/run_evolution."""
+
+    def test_data_config_defaults(self) -> None:
+        """Default RunConfig uses synthetic parameters and no pair."""
+        cfg = RunConfig()
+        assert cfg.data.pair is None
+        assert cfg.data.n > 0
+
+    def test_real_data_branch_monkeypatched(
+        self, cfg_test_default: RunConfig, monkeypatch, capsys
+    ) -> None:
+        """When ``pair`` is set, ``run_evolution`` loads via load_binance_ohlcv."""
+        import pandas as pd
+        # monkeypatch the actual tradetools loader since run_evolution imports
+        # it locally inside the function
+        import gentrade.tradetools as tt
+        from gentrade import evolve
+
+        def fake_load(pair, start=None, stop=None, count=None):
+            # simple one-row DataFrame
+            return pd.DataFrame(
+                {"open": [1], "high": [1], "low": [1], "close": [1], "volume": [1]}
+            )
+
+        monkeypatch.setattr(tt, 'load_binance_ohlcv', fake_load)
+        # configure small evolution for speed
+        cfg = cfg_test_default.model_copy(
+            update={
+                "data": DataConfig(
+                    pair="BTCUSDT",
+                    start=100,
+                    count=1,
+                    n=10,  # should be ignored
+                ),
+                "evolution": EvolutionConfig(mu=1, lambda_=1, generations=1),
+            }
+        )
+        pop, logbook, hof = evolve.run_evolution(cfg)
+        captured = capsys.readouterr()
+        assert "Loaded real OHLCV data for BTCUSDT" in captured.out
+        # evolution should complete and return a list (may be empty if
+        # ground-truth pivots were missing in our fake data).
+        assert isinstance(pop, list)

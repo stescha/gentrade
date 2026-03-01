@@ -486,13 +486,43 @@ class EvolutionConfig(BaseModel):
 
 
 class DataConfig(BaseModel):
-    """Synthetic data generation parameters for zigzag smoke testing."""
+    """Data configuration.
+
+    By default synthetic OHLCV data is generated using ``n`` and ``seed``.
+    When ``pair`` is set, real historical data is loaded via
+    :func:`gentrade.tradetools.load_binance_ohlcv`; the synthetic parameters
+    are ignored in that case.
+
+    Real-data parameters mirror the arguments of ``load_binance_ohlcv``.
+    Only ``pair`` is required to trigger loading; ``start``/``stop``/``count``
+    can be used to slice the file.
+    """
 
     model_config = ConfigDict(frozen=True)
 
+    # synthetic dataset configuration
     n: int = Field(5000, gt=0, description="Synthetic series length")
     target_threshold: float = Field(0.03, gt=0.0, description="Zigzag pivot threshold")
     target_label: int = Field(1, description="Label to predict (1=peak, -1=valley)")
+
+    # real data configuration
+    pair: str | None = Field(
+        None,
+        description="Symbol to load from Binance OHLCV dataset."
+        "If set, synthetic generation is skipped.",
+    )
+    start: int | None = Field(
+        None,
+        description="Start index or timestamp passed to ``load_binance_ohlcv``.",
+    )
+    stop: int | None = Field(
+        None,
+        description="Stop index or timestamp passed to ``load_binance_ohlcv``.",
+    )
+    count: int | None = Field(
+        None,
+        description="Row count passed to ``load_binance_ohlcv``.",
+    )
 
 
 class BacktestConfig(BaseModel):

@@ -271,9 +271,22 @@ def run_evolution(
     print(f"Tree gen: {cfg.tree.tree_gen}")
     print()
 
-    # ── 3. Generate synthetic data ─────────────────────────
-    df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-    print(f"Generated synthetic OHLCV data: {len(df)} rows")
+    # ── 3. Load or generate OHLCV data ─────────────────────
+    if cfg.data.pair is not None:
+        # real historical data requested
+        from gentrade.tradetools import load_binance_ohlcv
+
+        df = load_binance_ohlcv(
+            cfg.data.pair,
+            cfg.data.start,
+            cfg.data.stop,
+            cfg.data.count,
+        )
+        print(f"Loaded real OHLCV data for {cfg.data.pair}: {len(df)} rows")
+    else:
+        # fall back to synthetic generation
+        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
+        print(f"Generated synthetic OHLCV data: {len(df)} rows")
 
     # ── 4. Build pset ──────────────────────────────────────
     pset = cfg.pset.func()

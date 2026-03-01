@@ -10,6 +10,7 @@ Run with: poetry run python scripts/run_zigzag.py
 from gentrade.config import (
     BacktestConfig,
     DataConfig,
+    DefaultLargePsetConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
     FBetaFitnessConfig,
@@ -76,7 +77,9 @@ cfg_extensive = RunConfig(
 
 cfg_bt_extensive = RunConfig(
     seed=42,
-    data=DataConfig(n=100000, target_threshold=0.02),
+    data=DataConfig(pair="BTCUSDT", start=100000, count=10000),
+    # data=DataConfig(n=100000, target_threshold=0.02),
+ 
     fitness=MeanPnlFitnessConfig(),
     backtest=BacktestConfig(
         tp_stop=0.02,
@@ -85,11 +88,11 @@ cfg_bt_extensive = RunConfig(
         fees=0.001,
         init_cash=100_000.0,
     ),
-    pset=ZigzagMediumPsetConfig(),
+    pset=DefaultLargePsetConfig(),
     evolution=EvolutionConfig(
         mu=300,
         lambda_=600,
-        generations=10,
+        generations=100,
         cxpb=0.6,
         mutpb=0.3,
         processes=32
@@ -114,6 +117,7 @@ cfg_conservative = RunConfig(
         lambda_=200,
         generations=20,
     ),
+ 
     tree=TreeConfig(tree_gen="full"),
     mutation=NodeReplacementMutationConfig(),
     data=DataConfig(n=3000, target_threshold=0.05),
@@ -122,6 +126,7 @@ cfg_conservative = RunConfig(
 
 if __name__ == "__main__":
     # Choose one:
+   
     # run_evolution(cfg_default)
     # run_evolution(cfg_recall)
     # run_evolution(cfg_conservative)
