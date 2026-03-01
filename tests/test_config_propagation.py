@@ -32,6 +32,8 @@ from gentrade.config import (
     UniformMutationConfig,
     ZigzagLargePsetConfig,
     ZigzagMediumPsetConfig,
+    DefaultMediumPsetConfig,
+    DefaultLargePsetConfig,
 )
 from gentrade.evolve import create_toolbox
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
@@ -185,6 +187,8 @@ class TestPsetWiring:
         [
             ZigzagMediumPsetConfig(),
             ZigzagLargePsetConfig(),
+            DefaultMediumPsetConfig(),
+            DefaultLargePsetConfig(),
         ],
     )
     def test_pset_func_creates_valid_pset(self, pset_cfg: object) -> None:

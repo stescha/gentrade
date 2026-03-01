@@ -49,6 +49,8 @@ from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.minimal_pset import (
     create_pset_zigzag_large,
     create_pset_zigzag_medium,
+    create_pset_default_medium,
+    create_pset_default_large,
 )
 
 if TYPE_CHECKING:
@@ -272,6 +274,28 @@ class ZigzagLargePsetConfig(PsetConfigBase):
 
     func: ClassVar[Callable[[], gp.PrimitiveSetTyped]] = staticmethod(
         create_pset_zigzag_large
+    )
+
+
+class DefaultMediumPsetConfig(PsetConfigBase):
+    """Medium pset: ~20 TA-Lib indicators without zigzag cheat.
+
+    Uses ``create_pset_default_medium`` from :mod:`gentrade.minimal_pset`.
+    """
+
+    func: ClassVar[Callable[[], gp.PrimitiveSetTyped]] = staticmethod(
+        create_pset_default_medium
+    )
+
+
+class DefaultLargePsetConfig(PsetConfigBase):
+    """Large pset: all available TA-Lib indicators without zigzag cheat.
+
+    Uses ``create_pset_default_large`` from :mod:`gentrade.minimal_pset`.
+    """
+
+    func: ClassVar[Callable[[], gp.PrimitiveSetTyped]] = staticmethod(
+        create_pset_default_large
     )
 
 

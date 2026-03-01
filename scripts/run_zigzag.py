@@ -8,11 +8,13 @@ Run with: poetry run python scripts/run_zigzag.py
 """
 
 from gentrade.config import (
+    BacktestConfig,
     DataConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
     FBetaFitnessConfig,
     MCCFitnessConfig,
+    MeanPnlFitnessConfig,
     NodeReplacementMutationConfig,
     OnePointLeafBiasedCrossoverConfig,
     RunConfig,
@@ -72,6 +74,33 @@ cfg_extensive = RunConfig(
     ),
 )
 
+cfg_bt_extensive = RunConfig(
+    seed=42,
+    data=DataConfig(n=100000, target_threshold=0.02),
+    fitness=MeanPnlFitnessConfig(),
+    backtest=BacktestConfig(
+        tp_stop=0.02,
+        sl_stop=0.01,
+        sl_trail=True,
+        fees=0.001,
+        init_cash=100_000.0,
+    ),
+    pset=ZigzagMediumPsetConfig(),
+    evolution=EvolutionConfig(
+        mu=300,
+        lambda_=600,
+        generations=10,
+        cxpb=0.6,
+        mutpb=0.3,
+        processes=32
+    ),
+    tree=TreeConfig(max_depth=8, max_height=20, tree_gen="grow"),
+    crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),
+    selection=DoubleTournamentSelectionConfig(
+        fitness_size=5,
+        parsimony_size=1.2,
+    ),
+)
 
 # ── Example 3: Conservative MCC with minimal pset ─────────
 # MCC handles class imbalance well. Small pset + small population
@@ -96,4 +125,4 @@ if __name__ == "__main__":
     # run_evolution(cfg_default)
     # run_evolution(cfg_recall)
     # run_evolution(cfg_conservative)
-    run_evolution(cfg_extensive)
+    run_evolution(cfg_bt_extensive)

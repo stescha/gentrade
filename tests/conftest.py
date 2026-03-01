@@ -16,6 +16,8 @@ from gentrade.config import (
     TreeConfig,
     UniformMutationConfig,
     ZigzagMediumPsetConfig,
+    DefaultMediumPsetConfig,
+    DefaultLargePsetConfig,
 )
 
 
