@@ -23,7 +23,7 @@ Extending with new components:
 """
 
 import re
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Self, cast
 
 import pandas as pd
 from deap import gp, tools
@@ -54,7 +54,7 @@ from gentrade.minimal_pset import (
 )
 
 if TYPE_CHECKING:
-    import vectorbt as vbt  # type: ignore[import-untyped]
+    import vectorbt as vbt
 
 
 # ── Helpers ────────────────────────────────────────────────
@@ -122,6 +122,15 @@ class FitnessConfigBase(_ComponentConfig):
 
     _type_suffix: ClassVar[str] = "FitnessConfig"
     _requires_backtest: ClassVar[bool] = False
+
+    def __call__(self, *args: Any, **kwargs: Any) -> float:
+        """Generic callable interface for fitness configs.
+
+        Subclasses override this with more specific signatures. Having this
+        stub allows instances of :class:`FitnessConfigBase` to be treated as
+        ``Callable`` by the type checker.
+        """
+        raise NotImplementedError
 
 
 class ClassificationFitnessConfigBase(FitnessConfigBase):
@@ -258,22 +267,22 @@ class PsetConfigBase(_ComponentConfig):
     """
 
     _type_suffix: ClassVar[str] = "PsetConfig"
-    func: ClassVar[Callable[[], gp.PrimitiveSetTyped]]
+    func: ClassVar[Callable[[Self], gp.PrimitiveSetTyped]]
 
 
 class ZigzagMediumPsetConfig(PsetConfigBase):
     """Medium pset: ~20 TA-Lib indicators + zigzag cheat primitive."""
 
-    func: ClassVar[Callable[[], gp.PrimitiveSetTyped]] = staticmethod(
-        create_pset_zigzag_medium
+    func: ClassVar[Callable[[Self], gp.PrimitiveSetTyped]] = lambda self: (
+        create_pset_zigzag_medium()
     )
 
 
 class ZigzagLargePsetConfig(PsetConfigBase):
     """Large pset: all available TA-Lib indicators + zigzag cheat primitive."""
 
-    func: ClassVar[Callable[[], gp.PrimitiveSetTyped]] = staticmethod(
-        create_pset_zigzag_large
+    func: ClassVar[Callable[[Self], gp.PrimitiveSetTyped]] = lambda self: (
+        create_pset_zigzag_large()
     )
 
 
@@ -283,8 +292,8 @@ class DefaultMediumPsetConfig(PsetConfigBase):
     Uses ``create_pset_default_medium`` from :mod:`gentrade.minimal_pset`.
     """
 
-    func: ClassVar[Callable[[], gp.PrimitiveSetTyped]] = staticmethod(
-        create_pset_default_medium
+    func: ClassVar[Callable[[Self], gp.PrimitiveSetTyped]] = lambda self: (
+        create_pset_default_medium()
     )
 
 
@@ -294,8 +303,8 @@ class DefaultLargePsetConfig(PsetConfigBase):
     Uses ``create_pset_default_large`` from :mod:`gentrade.minimal_pset`.
     """
 
-    func: ClassVar[Callable[[], gp.PrimitiveSetTyped]] = staticmethod(
-        create_pset_default_large
+    func: ClassVar[Callable[[Self], gp.PrimitiveSetTyped]] = lambda self: (
+        create_pset_default_large()
     )
 
 
@@ -320,15 +329,20 @@ class MutationConfigBase(_ComponentConfig):
     """
 
     _type_suffix: ClassVar[str] = "MutationConfig"
-    func: ClassVar[Callable]
+    func: ClassVar[Callable[..., Any]]
     _requires_pset: ClassVar[bool] = False
     _requires_expr: ClassVar[bool] = False
+
+    # Optional fields for expr-based mutations (only used by UniformMutationConfig)
+    # Declared here for type compatibility with callers that access them conditionally
+    expr_min_depth: int = Field(default=0, ge=0)
+    expr_max_depth: int = Field(default=2, ge=0)
 
 
 class UniformMutationConfig(MutationConfigBase):
     """Uniform mutation: replace a random subtree with a freshly generated one."""
 
-    func: ClassVar[Callable] = staticmethod(gp.mutUniform)
+    func: ClassVar[Callable[..., Any]] = staticmethod(gp.mutUniform)
     _requires_pset: ClassVar[bool] = True
     _requires_expr: ClassVar[bool] = True
 
@@ -339,20 +353,20 @@ class UniformMutationConfig(MutationConfigBase):
 class NodeReplacementMutationConfig(MutationConfigBase):
     """Node replacement: swap a single node with a type-compatible one."""
 
-    func: ClassVar[Callable] = staticmethod(gp.mutNodeReplacement)
+    func: ClassVar[Callable[..., Any]] = staticmethod(gp.mutNodeReplacement)
     _requires_pset: ClassVar[bool] = True
 
 
 class ShrinkMutationConfig(MutationConfigBase):
     """Shrink mutation: replace a subtree with one of its arguments."""
 
-    func: ClassVar[Callable] = staticmethod(gp.mutShrink)
+    func: ClassVar[Callable[..., Any]] = staticmethod(gp.mutShrink)
 
 
 class InsertMutationConfig(MutationConfigBase):
     """Insert mutation: insert a new primitive node above an existing subtree."""
 
-    func: ClassVar[Callable] = staticmethod(gp.mutInsert)
+    func: ClassVar[Callable[..., Any]] = staticmethod(gp.mutInsert)
     _requires_pset: ClassVar[bool] = True
 
 
@@ -363,7 +377,7 @@ class EphemeralMutationConfig(MutationConfigBase):
     - ``mode="all"``: re-sample all ephemeral constants in the tree.
     """
 
-    func: ClassVar[Callable] = staticmethod(gp.mutEphemeral)
+    func: ClassVar[Callable[..., Any]] = staticmethod(gp.mutEphemeral)
 
     mode: str = Field("one", pattern=r"^(one|all)$")
 
@@ -379,13 +393,13 @@ class CrossoverConfigBase(_ComponentConfig):
     """
 
     _type_suffix: ClassVar[str] = "CrossoverConfig"
-    func: ClassVar[Callable]
+    func: ClassVar[Callable[..., Any]]
 
 
 class OnePointCrossoverConfig(CrossoverConfigBase):
     """Standard GP one-point crossover."""
 
-    func: ClassVar[Callable] = staticmethod(gp.cxOnePoint)
+    func: ClassVar[Callable[..., Any]] = staticmethod(gp.cxOnePoint)
 
 
 class OnePointLeafBiasedCrossoverConfig(CrossoverConfigBase):
@@ -395,7 +409,7 @@ class OnePointLeafBiasedCrossoverConfig(CrossoverConfigBase):
     which tends to produce smaller offspring.
     """
 
-    func: ClassVar[Callable] = staticmethod(gp.cxOnePointLeafBiased)
+    func: ClassVar[Callable[..., Any]] = staticmethod(gp.cxOnePointLeafBiased)
 
     termpb: float = Field(0.1, ge=0.0, le=1.0)
 
@@ -411,13 +425,13 @@ class SelectionConfigBase(_ComponentConfig):
     """
 
     _type_suffix: ClassVar[str] = "SelectionConfig"
-    func: ClassVar[Callable]
+    func: ClassVar[Callable[..., Any]]
 
 
 class TournamentSelectionConfig(SelectionConfigBase):
     """Tournament selection: pick the best out of ``tournsize`` candidates."""
 
-    func: ClassVar[Callable] = staticmethod(tools.selTournament)
+    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selTournament)
 
     tournsize: int = Field(3, ge=2)
 
@@ -428,7 +442,7 @@ class DoubleTournamentSelectionConfig(SelectionConfigBase):
     Penalises large trees, encouraging compact solutions.
     """
 
-    func: ClassVar[Callable] = staticmethod(tools.selDoubleTournament)
+    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selDoubleTournament)
 
     fitness_size: int = Field(3, ge=2)
     parsimony_size: float = Field(1.4, gt=1.0)
@@ -438,7 +452,7 @@ class DoubleTournamentSelectionConfig(SelectionConfigBase):
 class BestSelectionConfig(SelectionConfigBase):
     """Elitist selection: always select the best k individuals."""
 
-    func: ClassVar[Callable] = staticmethod(tools.selBest)
+    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selBest)
 
 
 # ── Plain data configs ─────────────────────────────────────
@@ -448,7 +462,7 @@ class BestSelectionConfig(SelectionConfigBase):
 # field inside TreeConfig rather than as separate config subclasses.
 # The caller resolves the method name to the actual function via TREE_GEN_FUNCS.
 
-TREE_GEN_FUNCS: dict[str, Callable] = {
+TREE_GEN_FUNCS: dict[str, Callable[..., Any]] = {
     "half_and_half": genHalfAndHalf,
     "full": genFull,
     "grow": genGrow,
@@ -570,22 +584,30 @@ class RunConfig(BaseModel):
     seed: int = Field(1997, description="Random seed for reproducibility")
 
     # Plain data configs
-    data: DataConfig = Field(default_factory=DataConfig)
-    evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
-    tree: TreeConfig = Field(default_factory=TreeConfig)
+    data: DataConfig = Field(default_factory=cast(Callable[[], DataConfig], DataConfig))
+    evolution: EvolutionConfig = Field(
+        default_factory=cast(Callable[[], EvolutionConfig], EvolutionConfig)
+    )
+    tree: TreeConfig = Field(default_factory=cast(Callable[[], TreeConfig], TreeConfig))
     backtest: BacktestConfig | None = Field(
         None, description="Backtest parameters; required when using a backtest fitness"
     )
 
     # Polymorphic component configs — SerializeAsAny preserves subclass fields
-    fitness: SerializeAsAny[FitnessConfigBase] = Field(default_factory=F1FitnessConfig)
-    pset: SerializeAsAny[PsetConfigBase] = Field(default_factory=ZigzagLargePsetConfig)
+    fitness: SerializeAsAny[FitnessConfigBase] = Field(
+        default_factory=cast(Callable[[], FitnessConfigBase], F1FitnessConfig)
+    )
+    pset: SerializeAsAny[PsetConfigBase] = Field(
+        default_factory=cast(Callable[[], PsetConfigBase], ZigzagLargePsetConfig)
+    )
     mutation: SerializeAsAny[MutationConfigBase] = Field(
-        default_factory=UniformMutationConfig
+        default_factory=cast(Callable[[], MutationConfigBase], UniformMutationConfig)
     )
     crossover: SerializeAsAny[CrossoverConfigBase] = Field(
-        default_factory=OnePointCrossoverConfig
+        default_factory=cast(Callable[[], CrossoverConfigBase], OnePointCrossoverConfig)
     )
     selection: SerializeAsAny[SelectionConfigBase] = Field(
-        default_factory=TournamentSelectionConfig
+        default_factory=cast(
+            Callable[[], SelectionConfigBase], TournamentSelectionConfig
+        )
     )

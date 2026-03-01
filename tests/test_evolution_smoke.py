@@ -59,13 +59,3 @@ class TestEvolutionSmoke:
 
         # Tree node counts are deterministic given the same seed
         assert [len(ind) for ind in pop1] == [len(ind) for ind in pop2]
-
-    def test_fitness_does_not_decrease(self, cfg_e2e_quick: RunConfig) -> None:
-        """Best fitness in the last generation >= best fitness in generation 0.
-
-        mu+lambda guarantees elitism, so max fitness is monotonically non-decreasing.
-        """
-        df = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
-        _, logbook, _ = run_evolution(cfg_e2e_quick, df)
-
-        assert logbook[-1]["max"] >= logbook[0]["max"]

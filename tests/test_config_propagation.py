@@ -11,34 +11,58 @@ TODO (Phase 2 — MagicMock):
 - Assert bloat control max_height value (baked into staticLimit closure).
 """
 
+import functools
 import inspect
+from typing import Any, Callable, Literal
+
+
+def _unwrap_op(op: Callable[..., Any]) -> Any:
+    """Return the original (un-decorated) function stored in a toolbox alias.
+
+    DEAP stores operators as ``functools.partial`` objects which wrap the real
+    callable; additionally ``toolbox.decorate`` may wrap the underlying
+    function with decorators such as ``gp.staticLimit``.  This helper extracts
+    the ``.func`` from the partial and then uses :func:`inspect.unwrap` to
+    peel off any decorators, returning the base implementation so identity
+    comparisons work reliably.
+    """
+    if isinstance(op, functools.partial):
+        # ``op.func`` is itself a callable
+        op = op.func
+    # ``inspect.unwrap`` expects a Callable; runtime guarantee holds
+    # ``inspect.unwrap`` may return Any; callers expect a callable but we
+    # don't enforce it statically.
+    return inspect.unwrap(op)
+
 
 import pytest
 from deap import base, gp, tools
+from pytest import CaptureFixture, MonkeyPatch
 
 from gentrade.config import (
     TREE_GEN_FUNCS,
     BestSelectionConfig,
+    DataConfig,
+    DefaultLargePsetConfig,
+    DefaultMediumPsetConfig,
     DoubleTournamentSelectionConfig,
     EphemeralMutationConfig,
+    EvolutionConfig,
     InsertMutationConfig,
     NodeReplacementMutationConfig,
     OnePointCrossoverConfig,
     OnePointLeafBiasedCrossoverConfig,
+    PsetConfigBase,
     RunConfig,
-    DataConfig,
-    EvolutionConfig,
     ShrinkMutationConfig,
     TournamentSelectionConfig,
     TreeConfig,
     UniformMutationConfig,
     ZigzagLargePsetConfig,
     ZigzagMediumPsetConfig,
-    DefaultMediumPsetConfig,
-    DefaultLargePsetConfig,
 )
-from gentrade.evolve import create_toolbox
 from gentrade.data import prepare_data
+from gentrade.evolve import create_toolbox
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 
 
@@ -55,16 +79,28 @@ class TestOperatorPresence:
     def test_required_operators_present(self, cfg_test_default: RunConfig) -> None:
         """Every mandatory toolbox operator is registered."""
         toolbox = _make_toolbox(cfg_test_default)
-        for op in ("select", "mate", "mutate", "expr", "individual", "population", "compile"):
+        for op in (
+            "select",
+            "mate",
+            "mutate",
+            "expr",
+            "individual",
+            "population",
+            "compile",
+        ):
             assert hasattr(toolbox, op), f"toolbox missing operator: {op}"
 
-    def test_expr_mut_registered_when_required(self, cfg_test_default: RunConfig) -> None:
+    def test_expr_mut_registered_when_required(
+        self, cfg_test_default: RunConfig
+    ) -> None:
         """When _requires_expr is True, expr_mut must be registered."""
         assert cfg_test_default.mutation._requires_expr is True
         toolbox = _make_toolbox(cfg_test_default)
         assert hasattr(toolbox, "expr_mut")
 
-    def test_expr_mut_absent_when_not_required(self, cfg_test_default: RunConfig) -> None:
+    def test_expr_mut_absent_when_not_required(
+        self, cfg_test_default: RunConfig
+    ) -> None:
         """When _requires_expr is False, expr_mut must NOT be registered."""
         cfg = cfg_test_default.model_copy(
             update={"mutation": NodeReplacementMutationConfig()}
@@ -98,9 +134,10 @@ class TestSelectionWiring:
         """cfg.selection.func is wired into toolbox.select."""
         cfg = cfg_test_default.model_copy(update={"selection": selection_cfg})
         toolbox = _make_toolbox(cfg)
-        # toolbox.select is a plain functools.partial (no staticLimit decoration);
-        # use .func to get the underlying function.
-        assert toolbox.select.func is expected_func
+        # Assert on the unwrapped underlying function so we don't depend on
+        # partial wrappers or bloat-control decorations applied later.
+        # the ``func`` attribute without typing errors.
+        assert _unwrap_op(toolbox.select) is expected_func
 
 
 @pytest.mark.unit
@@ -123,7 +160,7 @@ class TestCrossoverWiring:
         """cfg.crossover.func is wired into toolbox.mate."""
         cfg = cfg_test_default.model_copy(update={"crossover": crossover_cfg})
         toolbox = _make_toolbox(cfg)
-        assert inspect.unwrap(toolbox.mate) is expected_func
+        assert _unwrap_op(toolbox.mate) is expected_func
 
 
 @pytest.mark.unit
@@ -149,7 +186,7 @@ class TestMutationWiring:
         """cfg.mutation.func is wired into toolbox.mutate."""
         cfg = cfg_test_default.model_copy(update={"mutation": mutation_cfg})
         toolbox = _make_toolbox(cfg)
-        assert inspect.unwrap(toolbox.mutate) is expected_func
+        assert _unwrap_op(toolbox.mutate) is expected_func
 
 
 @pytest.mark.unit
@@ -167,18 +204,17 @@ class TestTreeGenWiring:
     def test_tree_gen_func_registered(
         self,
         cfg_test_default: RunConfig,
-        tree_gen_str: str,
+        tree_gen_str: Literal["half_and_half", "full", "grow"],
         expected_func: object,
     ) -> None:
         """TREE_GEN_FUNCS[tree_gen] is wired into toolbox.expr."""
         cfg = cfg_test_default.model_copy(
-            update={"tree": TreeConfig(tree_gen=tree_gen_str)}  # type: ignore[arg-type]
+            update={"tree": TreeConfig(tree_gen=tree_gen_str)}
         )
         toolbox = _make_toolbox(cfg)
         assert TREE_GEN_FUNCS[tree_gen_str] is expected_func
-        # toolbox.expr is a plain functools.partial (no staticLimit decoration);
-        # use .func to get the underlying function.
-        assert toolbox.expr.func is expected_func
+        # Tree generator is also registered as a partial; unwrap it.
+        assert _unwrap_op(toolbox.expr) is expected_func
 
 
 @pytest.mark.unit
@@ -194,15 +230,17 @@ class TestPsetWiring:
             DefaultLargePsetConfig(),
         ],
     )
-    def test_pset_func_creates_valid_pset(self, pset_cfg: object) -> None:
+    def test_pset_func_creates_valid_pset(self, pset_cfg: PsetConfigBase) -> None:
         """cfg.pset.func() returns a non-empty PrimitiveSetTyped."""
-        pset = pset_cfg.func()  # type: ignore[union-attr]
+        pset = pset_cfg.func()
         assert isinstance(pset, gp.PrimitiveSetTyped)
         assert len(pset.primitives) > 0
 
     def test_pset_func_matches_classvar(self, cfg_test_default: RunConfig) -> None:
         """cfg.pset.func is the same function as the ClassVar on the config class."""
-        assert cfg_test_default.pset.func is ZigzagMediumPsetConfig.func
+        # access via the type to avoid bound-method vs unbound-function
+        # mismatch that confuses mypy's identity check
+        assert type(cfg_test_default.pset).func is ZigzagMediumPsetConfig.func
 
 
 @pytest.mark.unit
@@ -221,23 +259,32 @@ class TestDataConfig:
         assert len(df) == cfg.data.n
 
     def test_real_data_branch_monkeypatched(
-        self, cfg_test_default: RunConfig, monkeypatch, capsys
+        self,
+        cfg_test_default: RunConfig,
+        monkeypatch: MonkeyPatch,
+        capsys: CaptureFixture[str],
     ) -> None:
         """When ``pair`` is set, :func:`prepare_data` uses
         ``load_binance_ohlcv`` and prints a message.
         """
         import pandas as pd
+
         # monkeypatch the actual tradetools loader since prepare_data
         # imports it locally inside the function
         import gentrade.tradetools as tt
 
-        def fake_load(pair, start=None, stop=None, count=None):
+        def fake_load(
+            pair: str,
+            start: int | None = None,
+            stop: int | None = None,
+            count: int | None = None,
+        ) -> pd.DataFrame:
             # simple one-row DataFrame
             return pd.DataFrame(
                 {"open": [1], "high": [1], "low": [1], "close": [1], "volume": [1]}
             )
 
-        monkeypatch.setattr(tt, 'load_binance_ohlcv', fake_load)
+        monkeypatch.setattr(tt, "load_binance_ohlcv", fake_load)
         # configure small evolution for speed
         cfg = cfg_test_default.model_copy(
             update={

@@ -1,6 +1,6 @@
 import random
 
-from . import tools
+from deap import tools
 
 
 def varOr(population, toolbox, lambda_, cxpb, mutpb):
@@ -38,29 +38,40 @@ def varOr(population, toolbox, lambda_, cxpb, mutpb):
     """
     assert (cxpb + mutpb) <= 1.0, (
         "The sum of the crossover and mutation probabilities must be smaller "
-        "or equal to 1.0.")
+        "or equal to 1.0."
+    )
 
     offspring = []
     for _ in range(lambda_):
         op_choice = random.random()
-        if op_choice < cxpb:            # Apply crossover
+        if op_choice < cxpb:  # Apply crossover
             ind1, ind2 = [toolbox.clone(i) for i in random.sample(population, 2)]
             ind1, ind2 = toolbox.mate(ind1, ind2)
             del ind1.fitness.values
             offspring.append(ind1)
         elif op_choice < cxpb + mutpb:  # Apply mutation
             ind = toolbox.clone(random.choice(population))
-            ind, = toolbox.mutate(ind)
+            (ind,) = toolbox.mutate(ind)
             del ind.fitness.values
             offspring.append(ind)
-        else:                           # Apply reproduction
+        else:  # Apply reproduction
             offspring.append(random.choice(population))
 
     return offspring
 
 
-def eaMuPlusLambdaGentrade(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
-                   stats=None, halloffame=None, verbose=__debug__):
+def eaMuPlusLambdaGentrade(
+    population,
+    toolbox,
+    mu,
+    lambda_,
+    cxpb,
+    mutpb,
+    ngen,
+    stats=None,
+    halloffame=None,
+    verbose=__debug__,
+):
     r"""This is the :math:`(\mu + \lambda)` evolutionary algorithm.
 
     :param population: A list of individuals.
@@ -108,7 +119,7 @@ def eaMuPlusLambdaGentrade(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
     variation.
     """
     logbook = tools.Logbook()
-    logbook.header = ['gen', 'nevals'] + (stats.fields if stats else [])
+    logbook.header = ["gen", "nevals"] + (stats.fields if stats else [])
 
     # Evaluate the individuals with an invalid fitness
     invalid_ind = [ind for ind in population if not ind.fitness.valid]
@@ -149,4 +160,3 @@ def eaMuPlusLambdaGentrade(population, toolbox, mu, lambda_, cxpb, mutpb, ngen,
             print(logbook.stream)
 
     return population, logbook
-

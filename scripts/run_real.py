@@ -8,11 +8,14 @@ Run with: poetry run python scripts/run_zigzag.py
 """
 
 from gentrade.config import (
+    BacktestConfig,
     DataConfig,
+    DefaultLargePsetConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
     FBetaFitnessConfig,
     MCCFitnessConfig,
+    MeanPnlFitnessConfig,
     NodeReplacementMutationConfig,
     OnePointLeafBiasedCrossoverConfig,
     RunConfig,
@@ -53,7 +56,7 @@ cfg_recall = RunConfig(
 
 cfg_extensive = RunConfig(
     seed=42,
-    data=DataConfig(n=100000, target_threshold=0.02),
+    data=DataConfig(n=10000, target_threshold=0.02),
     fitness=FBetaFitnessConfig(beta=3.0),
     pset=ZigzagMediumPsetConfig(),
     evolution=EvolutionConfig(
@@ -67,6 +70,29 @@ cfg_extensive = RunConfig(
     ),
 )
 
+cfg_bt_extensive = RunConfig(
+    seed=42,
+    data=DataConfig(pair="BTCUSDT", start=100000, count=10000),
+    # data=DataConfig(n=100000, target_threshold=0.02),
+    fitness=MeanPnlFitnessConfig(),
+    backtest=BacktestConfig(
+        tp_stop=0.02,
+        sl_stop=0.01,
+        sl_trail=True,
+        fees=0.001,
+        init_cash=100_000.0,
+    ),
+    pset=DefaultLargePsetConfig(),
+    evolution=EvolutionConfig(
+        mu=300, lambda_=600, generations=100, cxpb=0.6, mutpb=0.3, processes=32
+    ),
+    tree=TreeConfig(max_depth=8, max_height=20, tree_gen="grow"),
+    crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),
+    selection=DoubleTournamentSelectionConfig(
+        fitness_size=5,
+        parsimony_size=1.2,
+    ),
+)
 
 # ── Example 3: Conservative MCC with minimal pset ─────────
 # MCC handles class imbalance well. Small pset + small population
@@ -89,10 +115,10 @@ cfg_conservative = RunConfig(
 if __name__ == "__main__":
     # Choose one configuration and make sure data is provided
 
-    cfg = cfg_default
+    # cfg = cfg_default
     # cfg = cfg_recall
     # cfg = cfg_conservative
-    # cfg = cfg_extensive
+    cfg = cfg_bt_extensive
 
     # prepare_df covers both synthetic and real-pair cases
     df = prepare_data(cfg)

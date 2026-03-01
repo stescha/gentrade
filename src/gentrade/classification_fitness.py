@@ -16,6 +16,7 @@ Design notes:
 
 import numpy as np
 import pandas as pd
+from typing import cast
 
 
 class ClassificationFitnessBase:
@@ -115,7 +116,7 @@ class MCCFitness(ClassificationFitnessBase):
         if denom_sq == 0:
             # Undefined (e.g., all predictions are constant) — treat as neutral
             return 0.5
-        mcc = (tp * tn - fp * fn) / np.sqrt(float(denom_sq))
+        mcc = cast(float, (tp * tn - fp * fn) / np.sqrt(float(denom_sq)))
         # Rescale [-1, 1] → [0, 1] for DEAP maximization
         return (mcc + 1.0) / 2.0
 

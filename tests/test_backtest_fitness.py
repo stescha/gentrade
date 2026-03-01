@@ -8,7 +8,7 @@ zigzag = pytest.importorskip("zigzag")  # noqa: E402
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-import vectorbt as vbt  # type: ignore[import-untyped]  # noqa: E402
+import vectorbt as vbt  # noqa: E402
 from deap import gp as deap_gp  # noqa: E402
 from gentrade.backtest_fitness import (  # noqa: E402
     BacktestFitnessBase,
@@ -21,6 +21,7 @@ from gentrade.backtest_fitness import (  # noqa: E402
 )
 from gentrade.config import (  # noqa: E402
     BacktestConfig,
+    BacktestFitnessConfigBase,
     CalmarFitnessConfig,
     F1FitnessConfig,
     MCCFitnessConfig,
@@ -33,13 +34,14 @@ from gentrade.evolve import (  # noqa: E402
     _compile_tree_to_signals,
     evaluate_backtest,
 )
+from gentrade.pset.pset import tree_from_string  # noqa: E402
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.minimal_pset import create_pset_zigzag_medium  # noqa: E402
 
 # ── Module-level helpers ───────────────────────────────────
 
 
-def _make_portfolio(n: int = 500, seed: int = 42) -> vbt.Portfolio:  # type: ignore[name-defined]
+def _make_portfolio(n: int = 500, seed: int = 42) -> "vbt.Portfolio":  # noqa: F821
     """Build a test portfolio from synthetic OHLCV data with random entry signals.
 
     Args:
@@ -68,7 +70,7 @@ class TestRunVbtBacktest:
         rng = np.random.default_rng(42)
         entries = pd.Series(rng.random(500) < 0.05, dtype=bool)
         result = run_vbt_backtest(df, entries, tp_stop=0.02, sl_stop=0.01)
-        assert isinstance(result, vbt.Portfolio)  # type: ignore[attr-defined]
+        assert isinstance(result, vbt.Portfolio)  # noqa: F821
 
     def test_portfolio_has_trades_attribute(self) -> None:
         """Returned portfolio has accessible .trades attribute."""
@@ -80,7 +82,7 @@ class TestRunVbtBacktest:
         df = generate_synthetic_ohlcv(200, 0)
         entries = pd.Series([False] * 200, dtype=bool)
         pf = run_vbt_backtest(df, entries, tp_stop=0.02, sl_stop=0.01)
-        assert isinstance(pf, vbt.Portfolio)  # type: ignore[attr-defined]
+        assert isinstance(pf, vbt.Portfolio)  # noqa: F821
         assert pf.trades.count() == 0
 
 
@@ -123,7 +125,7 @@ class TestBacktestFitnessComputation:
     def test_base_raises_not_implemented(self) -> None:
         """BacktestFitnessBase raises NotImplementedError when called."""
         with pytest.raises(NotImplementedError):
-            BacktestFitnessBase()(None)  # type: ignore[arg-type]
+            BacktestFitnessBase()(None)
 
 
 @pytest.mark.unit
@@ -244,7 +246,7 @@ class TestEvaluateBacktest:
     def _make_individual(self) -> deap_gp.PrimitiveTree:
         """Build a minimal always-false GP tree for testing."""
         pset = create_pset_zigzag_medium()
-        return deap_gp.PrimitiveTree.from_string("gt(close, close)", pset)
+        return tree_from_string("gt(close, close)", pset)
 
     def _make_df(self) -> pd.DataFrame:
         return generate_synthetic_ohlcv(500, 42)
@@ -299,7 +301,7 @@ class TestEvaluateBacktest:
     def test_nonfinite_guard_returns_zero(self) -> None:
         """evaluate_backtest returns (0.0,) when fitness_fn returns NaN."""
 
-        class _NanFitness:
+        class _NanFitness(BacktestFitnessConfigBase):  # subclass to satisfy FitnessConfigBase
             def __call__(self, pf: object) -> float:
                 return float("nan")
 
@@ -326,7 +328,7 @@ class TestCompileTreeToSignals:
     def test_returns_bool_series_same_length(self) -> None:
         """Result is a boolean Series with the same length as the DataFrame."""
         pset = self._make_pset()
-        individual = deap_gp.PrimitiveTree.from_string("gt(close, close)", pset)
+        individual = tree_from_string("gt(close, close)", pset)
         df = generate_synthetic_ohlcv(300, 42)
         result = _compile_tree_to_signals(individual, pset, df)
         assert result.dtype == bool
@@ -336,7 +338,7 @@ class TestCompileTreeToSignals:
         """A tree returning a scalar True is broadcast to a full Series."""
         pset = self._make_pset()
         # ge(close, close) is always True (>= is always satisfied for equal values)
-        individual = deap_gp.PrimitiveTree.from_string("ge(close, close)", pset)
+        individual = tree_from_string("ge(close, close)", pset)
         df = generate_synthetic_ohlcv(100, 42)
         result = _compile_tree_to_signals(individual, pset, df)
         assert len(result) == len(df)

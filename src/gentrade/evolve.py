@@ -14,19 +14,21 @@ import multiprocessing
 import operator
 import random
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 from deap import algorithms, base, creator, gp, tools
 
 from gentrade.backtest_fitness import run_vbt_backtest
-from gentrade.config import TREE_GEN_FUNCS, BacktestConfig, RunConfig
+from gentrade.config import TREE_GEN_FUNCS, BacktestConfig, FitnessConfigBase, RunConfig
 from gentrade.growtree import genFull
 from gentrade.minimal_pset import zigzag_pivots
 
+if TYPE_CHECKING:
+    pass
+
 # moved to data module to centralise data helpers
-from gentrade.data import generate_synthetic_ohlcv, prepare_data
 
 
 def _compile_tree_to_signals(
@@ -67,7 +69,7 @@ def evaluate(
     pset: gp.PrimitiveSetTyped,
     df: pd.DataFrame,
     y_true: pd.Series,
-    fitness_fn: Any,
+    fitness_fn: FitnessConfigBase,
 ) -> tuple[float]:
     """Evaluate an individual's fitness using the supplied fitness function.
 
@@ -94,7 +96,7 @@ def evaluate_backtest(
     pset: gp.PrimitiveSetTyped,
     df: pd.DataFrame,
     backtest_cfg: BacktestConfig,
-    fitness_fn: Any,
+    fitness_fn: FitnessConfigBase,
 ) -> tuple[float]:
     """Evaluate an individual's fitness using vectorbt portfolio simulation.
 
@@ -187,8 +189,8 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
             "expr_mut",
             genFull,
             pset=pset,
-            min_=mut.expr_min_depth,  # type: ignore[attr-defined]
-            max_=mut.expr_max_depth,  # type: ignore[attr-defined]
+            min_=mut.expr_min_depth,
+            max_=mut.expr_max_depth,
         )
         toolbox.register("mutate", mut.func, expr=toolbox.expr_mut, pset=pset)
     elif mut._requires_pset:
@@ -200,11 +202,15 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
     # Bloat control
     toolbox.decorate(
         "mate",
-        gp.staticLimit(key=operator.attrgetter("height"), max_value=cfg.tree.max_height),
+        gp.staticLimit(
+            key=operator.attrgetter("height"), max_value=cfg.tree.max_height
+        ),
     )
     toolbox.decorate(
         "mutate",
-        gp.staticLimit(key=operator.attrgetter("height"), max_value=cfg.tree.max_height),
+        gp.staticLimit(
+            key=operator.attrgetter("height"), max_value=cfg.tree.max_height
+        ),
     )
 
     return toolbox
@@ -213,7 +219,7 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
 def run_evolution(
     cfg: RunConfig,
     df: pd.DataFrame,
-) -> tuple[list[Any], tools.Logbook, tools.HallOfFame]:
+) -> tuple[list[gp.PrimitiveTree], tools.Logbook, tools.HallOfFame]:
     """Run GP evolution with the given configuration and data.
 
     The caller is responsible for providing a pre-loaded OHLCV DataFrame;
@@ -244,7 +250,9 @@ def run_evolution(
         f"gen={cfg.evolution.generations}, cxpb={cfg.evolution.cxpb}, "
         f"mutpb={cfg.evolution.mutpb}, processes={cfg.evolution.processes}"
     )
-    print(f"Tree: depth=[{cfg.tree.min_depth}, {cfg.tree.max_depth}], max_height={cfg.tree.max_height}")
+    print(
+        f"Tree: depth=[{cfg.tree.min_depth}, {cfg.tree.max_depth}], max_height={cfg.tree.max_height}"
+    )
     print(f"Pset: {cfg.pset.type}")
     print(f"Mutation: {cfg.mutation.type}")
     print(f"Crossover: {cfg.crossover.type}")
@@ -362,12 +370,16 @@ def run_evolution(
 
     print(f"Top {cfg.evolution.hof_size} individuals:")
     for i, ind in enumerate(hof):
-        print(f"  {i + 1}. {cfg.fitness.type}={ind.fitness.values[0]:.4f}: {str(ind)[:80]}...")
+        print(
+            f"  {i + 1}. {cfg.fitness.type}={ind.fitness.values[0]:.4f}: {str(ind)[:80]}..."
+        )
     print()
 
     print("Logbook summary (last 5 generations):")
     for record in logbook[-5:]:
-        print(f"  Gen {record['gen']}: avg={record['avg']:.4f}, max={record['max']:.4f}")
+        print(
+            f"  Gen {record['gen']}: avg={record['avg']:.4f}, max={record['max']:.4f}"
+        )
 
     # ── 12. Log full config dump ───────────────────────────
     print()

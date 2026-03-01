@@ -11,7 +11,7 @@ vectorbt ``Portfolio`` object ready for metric extraction.
 """
 
 import pandas as pd
-import vectorbt as vbt  # type: ignore[import-untyped]
+import vectorbt as vbt
 
 
 class BacktestFitnessBase:
@@ -22,7 +22,7 @@ class BacktestFitnessBase:
     Scores should be maximized (higher is better) for DEAP compatibility.
     """
 
-    def __call__(self, portfolio: vbt.Portfolio) -> float:  # type: ignore[name-defined]
+    def __call__(self, portfolio: vbt.Portfolio) -> float:
         """Compute fitness score from a backtest portfolio.
 
         Args:
@@ -37,28 +37,28 @@ class BacktestFitnessBase:
 class SharpeRatioFitness(BacktestFitnessBase):
     """Sharpe ratio: risk-adjusted return (mean return / return std deviation)."""
 
-    def __call__(self, portfolio: vbt.Portfolio) -> float:  # type: ignore[name-defined]
+    def __call__(self, portfolio: vbt.Portfolio) -> float:
         return float(portfolio.sharpe_ratio())
 
 
 class SortinoRatioFitness(BacktestFitnessBase):
     """Sortino ratio: downside risk-adjusted return."""
 
-    def __call__(self, portfolio: vbt.Portfolio) -> float:  # type: ignore[name-defined]
+    def __call__(self, portfolio: vbt.Portfolio) -> float:
         return float(portfolio.sortino_ratio())
 
 
 class CalmarRatioFitness(BacktestFitnessBase):
     """Calmar ratio: annualised return divided by maximum drawdown."""
 
-    def __call__(self, portfolio: vbt.Portfolio) -> float:  # type: ignore[name-defined]
+    def __call__(self, portfolio: vbt.Portfolio) -> float:
         return float(portfolio.calmar_ratio())
 
 
 class TotalReturnFitness(BacktestFitnessBase):
     """Total return: cumulative portfolio return over the evaluation period."""
 
-    def __call__(self, portfolio: vbt.Portfolio) -> float:  # type: ignore[name-defined]
+    def __call__(self, portfolio: vbt.Portfolio) -> float:
         return float(portfolio.total_return())
 
 
@@ -68,7 +68,7 @@ class MeanPnlFitness(BacktestFitnessBase):
     Returns ``0.0`` when there are no trades to avoid division-by-zero errors.
     """
 
-    def __call__(self, portfolio: vbt.Portfolio) -> float:  # type: ignore[name-defined]
+    def __call__(self, portfolio: vbt.Portfolio) -> float:
         trades = portfolio.trades.records_readable
         return float(trades["PnL"].mean()) if len(trades) > 0 else 0.0
 
@@ -81,7 +81,7 @@ def run_vbt_backtest(
     sl_trail: bool = True,
     fees: float = 0.001,
     init_cash: float = 100_000.0,
-) -> vbt.Portfolio:  # type: ignore[name-defined]
+) -> vbt.Portfolio:
     """Run a vectorbt backtest from entry signals and stop parameters.
 
     Args:
@@ -97,7 +97,7 @@ def run_vbt_backtest(
         VectorBT Portfolio object.
     """
     entries.index = ohlcv.index
-    return vbt.Portfolio.from_signals(  # type: ignore[attr-defined]
+    return vbt.Portfolio.from_signals(
         close=ohlcv["close"],
         open=ohlcv["open"],
         high=ohlcv["high"],

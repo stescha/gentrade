@@ -67,15 +67,36 @@ python_version = "3.11"
 strict = true
 warn_redundant_casts = true
 warn_unused_ignores = true
-exclude = ["sandbox"]
-# typing stubs
+exclude = ["sandbox", "vendor"]
+plugins = ["pydantic.mypy"]
+# typing stubs - include our local stubs and vendor packages
 mypy_path = [
     "vendor/zigzag",
     "vendor/zigzag/zigzag",
     "src",
+    "stubs",
 ]
 # Enable explicit package bases to correctly discover nested packages in the monorepo
 # (e.g. tradetools/src/tradetools, tradetools/tests) and avoid "Duplicate module" errors.
 # Only works in combination with `mypy_path = ["tradetools/src"]` 
 explicit_package_bases = true
+# Allow vectorbt to have missing imports throughout (untyped library)
+[[tool.mypy.overrides]]
+module = "vectorbt.*"
+ignore_missing_imports = true
+
+# Internal helper/utility modules with incomplete typing can use standard (not strict) mode
+[[tool.mypy.overrides]]
+module = [
+    "gentrade.growtree",
+    "gentrade.pset.pset_types",
+    "gentrade.pset.pset",
+    "gentrade.pset.talib_primitives",
+    "gentrade.minimal_pset",
+    "gentrade.algorithms",
+    "gentrade.backtest_fitness",
+]
+ignore_missing_imports = true
+disallow_untyped_defs = false
+disallow_untyped_calls = false
 
