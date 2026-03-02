@@ -4,17 +4,5 @@
 ---
 ## DevTask Overview
 <!-- Concise description of the development task -->
-- **Label**: empty-devtask
-- **Description**: ...
-
-<!-- Optional scope with optional keys  -->
-## Scope
-- **Files**: ...
-- **Focus**: ...
-
-<!-- Optional Notes providing additional context or considerations -->
-## Notes
-- ...
-- ...
-
-
+- **Label**: add-validation-metrics
+- **Description**: Implement support for additional validation metrics in the evolutionary algorithm framework.
