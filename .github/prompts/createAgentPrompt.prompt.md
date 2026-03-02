@@ -1,4 +1,3 @@
-```prompt
 ---
 description: 'Generate a self-contained implementation prompt for an AI coding agent from a finalized implementation plan.'
 agent: 'agent'
@@ -240,4 +239,3 @@ This is the exception, not the norm. Default to a single self-contained prompt.
   - The checklist includes targeted test commands (not the full suite).
   - No instruction from `.github/instructions/` is contradicted.
   - All required reading files are listed and existence-checked.
-```
