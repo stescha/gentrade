@@ -11,8 +11,8 @@ import warnings
 import pytest
 
 from gentrade.config import RunConfig
-from gentrade.evolve import run_evolution
 from gentrade.data import generate_synthetic_ohlcv
+from gentrade.evolve import run_evolution
 from gentrade.minimal_pset import zigzag_pivots
 
 # Skip entire module if zigzag is not installed
@@ -25,7 +25,7 @@ class TestZigzagIntegration:
 
     def test_zigzag_in_hof(self, cfg_e2e_quick: RunConfig) -> None:
         """Soft check: warn if zigzag_pivots not in HallOfFame during evolution.
-        
+
         Uses a slightly longer run to increase probability of finding useful primitives.
         """
         # modify config for a slightly improved chance (optional, but keep it simple)
@@ -33,8 +33,10 @@ class TestZigzagIntegration:
         assert "zigzag" in cfg.pset.type
 
         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(df["close"], cfg.data.target_threshold, cfg.data.target_label)
-        pop, logbook, hof, _ = run_evolution(df, None, labels, None, cfg)
+        labels = zigzag_pivots(
+            df["close"], cfg.data.target_threshold, cfg.data.target_label
+        )
+        pop, logbook, hof = run_evolution(df, labels, None, None, cfg)
 
         zigzag_found = any("zigzag_pivots" in str(ind) for ind in hof)
 

@@ -12,13 +12,13 @@ from gentrade.config import (
     F1FitnessConfig,
     OnePointCrossoverConfig,
     RunConfig,
-    TreeConfig,
     TournamentSelectionConfig,
+    TreeConfig,
     UniformMutationConfig,
     ZigzagMediumPsetConfig,
 )
-from gentrade.evolve import run_evolution
 from gentrade.data import generate_synthetic_ohlcv
+from gentrade.evolve import run_evolution
 from gentrade.minimal_pset import zigzag_pivots
 
 zigzag = pytest.importorskip("zigzag")
@@ -32,7 +32,9 @@ def _make_cfg(processes: int) -> RunConfig:
         evolution=EvolutionConfig(
             mu=10, lambda_=20, generations=2, verbose=False, processes=processes
         ),
-        tree=TreeConfig(tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17),
+        tree=TreeConfig(
+            tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
+        ),
         fitness=F1FitnessConfig(),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
@@ -49,8 +51,10 @@ class TestMultiprocessingEvolution:
         """Evolution with processes=2 runs to completion with correct structure."""
         cfg = _make_cfg(processes=2)
         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(df["close"], cfg.data.target_threshold, cfg.data.target_label)
-        pop, logbook, hof, _ = run_evolution(df, None, labels, None, cfg)
+        labels = zigzag_pivots(
+            df["close"], cfg.data.target_threshold, cfg.data.target_label
+        )
+        pop, logbook, _ = run_evolution(df, labels, None, None, cfg)
 
         assert len(pop) == cfg.evolution.mu
         assert len(logbook) == cfg.evolution.generations + 1
@@ -60,8 +64,10 @@ class TestMultiprocessingEvolution:
         """Evolution with processes=1 (default) still works correctly."""
         cfg = _make_cfg(processes=1)
         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(df["close"], cfg.data.target_threshold, cfg.data.target_label)
-        pop, logbook, hof, _ = run_evolution(df, None, labels, None, cfg)
+        labels = zigzag_pivots(
+            df["close"], cfg.data.target_threshold, cfg.data.target_label
+        )
+        pop, logbook, _ = run_evolution(df, labels, None, None, cfg)
 
         assert len(pop) == cfg.evolution.mu
         assert len(logbook) == cfg.evolution.generations + 1

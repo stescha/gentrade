@@ -1,7 +1,8 @@
 import random
 from collections.abc import Callable
+from typing import Any
 
-from deap import tools
+from deap import base, tools
 
 
 def varOr(population, toolbox, lambda_, cxpb, mutpb):
@@ -62,18 +63,18 @@ def varOr(population, toolbox, lambda_, cxpb, mutpb):
 
 
 def eaMuPlusLambdaGentrade(
-    population,
-    toolbox,
-    mu,
-    lambda_,
-    cxpb,
-    mutpb,
-    ngen,
-    stats=None,
-    halloffame=None,
-    verbose=__debug__,
-    val_callback: Callable[[int, int, list], None] | None = None,
-):
+    population: list[Any],
+    toolbox: base.Toolbox,
+    mu: int,
+    lambda_: int,
+    cxpb: float,
+    mutpb: float,
+    ngen: int,
+    stats: tools.Statistics | None = None,
+    halloffame: tools.HallOfFame | None = None,
+    verbose: bool = __debug__,
+    val_callback: Callable[[int, int, list[Any]], None] | None = None,
+) -> tuple[list[Any], tools.Logbook]:
     r"""This is the :math:`(\mu + \lambda)` evolutionary algorithm.
 
     :param population: A list of individuals.
