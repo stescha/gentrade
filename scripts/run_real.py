@@ -122,4 +122,4 @@ if __name__ == "__main__":
 
     # prepare_df covers both synthetic and real-pair cases
     df = prepare_data(cfg)
-    run_evolution(cfg, df)
+    run_evolution(df, None, None, None, cfg)

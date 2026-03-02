@@ -19,6 +19,7 @@ from gentrade.config import (
 )
 from gentrade.evolve import run_evolution
 from gentrade.data import generate_synthetic_ohlcv
+from gentrade.minimal_pset import zigzag_pivots
 
 zigzag = pytest.importorskip("zigzag")
 
@@ -48,7 +49,8 @@ class TestMultiprocessingEvolution:
         """Evolution with processes=2 runs to completion with correct structure."""
         cfg = _make_cfg(processes=2)
         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        pop, logbook, hof = run_evolution(cfg, df)
+        labels = zigzag_pivots(df["close"], cfg.data.target_threshold, cfg.data.target_label)
+        pop, logbook, hof, _ = run_evolution(df, None, labels, None, cfg)
 
         assert len(pop) == cfg.evolution.mu
         assert len(logbook) == cfg.evolution.generations + 1
@@ -58,7 +60,8 @@ class TestMultiprocessingEvolution:
         """Evolution with processes=1 (default) still works correctly."""
         cfg = _make_cfg(processes=1)
         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        pop, logbook, hof = run_evolution(cfg, df)
+        labels = zigzag_pivots(df["close"], cfg.data.target_threshold, cfg.data.target_label)
+        pop, logbook, hof, _ = run_evolution(df, None, labels, None, cfg)
 
         assert len(pop) == cfg.evolution.mu
         assert len(logbook) == cfg.evolution.generations + 1

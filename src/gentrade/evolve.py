@@ -24,7 +24,6 @@ from gentrade.algorithms import eaMuPlusLambdaGentrade
 from gentrade.backtest_fitness import run_vbt_backtest
 from gentrade.config import TREE_GEN_FUNCS, BacktestConfig, FitnessConfigBase, RunConfig
 from gentrade.growtree import genFull
-from gentrade.minimal_pset import zigzag_pivots
 
 if TYPE_CHECKING:
     pass
@@ -178,6 +177,10 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
     # Selection — func + params (e.g. tournsize)
     toolbox.register("select", cfg.selection.func, **cfg.selection.params)
 
+    # sel_best — selects the single best individual; used by the validation phase.
+    # k=1 is enforced here per design; the selection function comes from cfg.select_best.
+    toolbox.register("sel_best", cfg.select_best.func, k=1)
+
     # Crossover — func + params (e.g. termpb for leaf-biased)
     toolbox.register("mate", cfg.crossover.func, **cfg.crossover.params)
 
@@ -219,29 +222,72 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
 
 
 def run_evolution(
+    train_data: pd.DataFrame,
+    val_data: pd.DataFrame | None,
+    train_labels: pd.Series | None,
+    val_labels: pd.Series | None,
     cfg: RunConfig,
-    df: pd.DataFrame,
-) -> tuple[list[gp.PrimitiveTree], tools.Logbook, tools.HallOfFame]:
+) -> tuple[list[gp.PrimitiveTree], tools.Logbook, tools.HallOfFame, tools.Logbook | None]:
     """Run GP evolution with the given configuration and data.
 
-    The caller is responsible for providing a pre-loaded OHLCV DataFrame;
-    data loading/generation is **not** performed here. This makes the core
-    evolution logic easier to test and reuse with arbitrary datasets.
+    The caller is responsible for providing pre-loaded OHLCV DataFrames and,
+    for classification fitness functions, pre-computed label Series. Data
+    loading/generation is **not** performed here.
 
-    Performs the full pipeline: seed → pset construction → DEAP toolbox setup
-    → evolution → result reporting. All behaviour is determined by ``cfg``.
+    Performs the full pipeline: seed → input validation → pset construction →
+    DEAP toolbox setup → evolution → result reporting. All behaviour is
+    determined by ``cfg``.
 
     Args:
+        train_data: OHLCV DataFrame used for training fitness evaluation. Must
+            have ``open``, ``high``, ``low``, ``close`` and ``volume`` columns.
+        val_data: Optional OHLCV DataFrame for validation evaluation. When
+            provided, ``cfg.fitness_val`` must also be set.
+        train_labels: Ground-truth boolean ``pd.Series`` for the training set.
+            Required when ``cfg.fitness`` is a classification fitness
+            (``_requires_backtest = False``).
+        val_labels: Ground-truth boolean ``pd.Series`` for the validation set.
+            Required when ``val_data`` is provided and ``cfg.fitness_val`` is a
+            classification fitness.
         cfg: Complete run configuration.
-        df: OHLCV data used for fitness evaluation. Must have ``open``,
-            ``high``, ``low``, ``close`` and ``volume`` columns.
 
     Returns:
-        Tuple of ``(final_population, logbook, hall_of_fame)``.
+        Tuple of ``(final_population, train_logbook, hall_of_fame, val_logbook)``
+        where ``val_logbook`` is ``None`` when no validation data was provided.
+
+    Raises:
+        ValueError: If ``cfg.fitness`` is classification-based and
+            ``train_labels`` is ``None``.
+        ValueError: If ``val_data`` is provided but ``cfg.fitness_val`` is
+            ``None``.
+        ValueError: If ``val_data`` is provided, ``cfg.fitness_val`` is
+            classification-based, and ``val_labels`` is ``None``.
     """
     # ── 1. Seed ────────────────────────────────────────────
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
+
+    # ── 1b. Validate data / config consistency ─────────────────
+    if not cfg.fitness._requires_backtest and train_labels is None:
+        raise ValueError(
+            "train_labels must be provided when using a classification fitness. "
+            "Compute labels outside run_evolution and pass them in."
+        )
+    if val_data is not None and cfg.fitness_val is None:
+        raise ValueError(
+            "cfg.fitness_val must be set in RunConfig when val_data is provided. "
+            "Add fitness_val=<FitnessConfig> to your RunConfig."
+        )
+    if (
+        val_data is not None
+        and cfg.fitness_val is not None
+        and not cfg.fitness_val._requires_backtest
+        and val_labels is None
+    ):
+        raise ValueError(
+            "val_labels must be provided when val_data is used with a classification "
+            "fitness_val. Compute labels outside run_evolution and pass them in."
+        )
 
     # ── 2. Print config summary ────────────────────────────
     print("=== GP Evolution Run ===")
@@ -260,7 +306,7 @@ def run_evolution(
     print(f"Crossover: {cfg.crossover.type}")
     print(f"Selection: {cfg.selection.type}")
     print(f"Tree gen: {cfg.tree.tree_gen}")
-    print(f"Data rows: {len(df)}")
+    print(f"Data rows: {len(train_data)}")
     print()
 
     # ── 3. Build pset ──────────────────────────────────────
@@ -283,32 +329,36 @@ def run_evolution(
             partial(
                 evaluate_backtest,
                 pset=pset,
-                df=df,
+                df=train_data,
                 backtest_cfg=cfg.backtest,
                 fitness_fn=cfg.fitness,
             ),
         )
     else:
-        y_true = zigzag_pivots(
-            df["close"], cfg.data.target_threshold, cfg.data.target_label
-        )
-        pivot_count = int(y_true.sum())
-        pivot_density = pivot_count / len(df)
-        print(
-            f"Ground truth pivots (label={cfg.data.target_label}, "
-            f"threshold={cfg.data.target_threshold}):"
-        )
-        print(f"  Count: {pivot_count}, Density: {pivot_density:.4f}")
-        print()
-
-        if pivot_count == 0:
-            print("WARNING: No pivots found in synthetic data. Adjust parameters.")
-            return [], tools.Logbook(), tools.HallOfFame(1)
-
         toolbox.register(
             "evaluate",
-            partial(evaluate, pset=pset, df=df, y_true=y_true, fitness_fn=cfg.fitness),
+            partial(evaluate, pset=pset, df=train_data, y_true=train_labels, fitness_fn=cfg.fitness),
         )
+
+    # ── 6c. Validation evaluate ────────────────────────────────
+    _evaluate_val = None
+    if val_data is not None:
+        if cfg.fitness_val._requires_backtest:  # type: ignore[union-attr]
+            _evaluate_val = partial(
+                evaluate_backtest,
+                pset=pset,
+                df=val_data,
+                backtest_cfg=cfg.backtest,
+                fitness_fn=cfg.fitness_val,
+            )
+        else:
+            _evaluate_val = partial(
+                evaluate,
+                pset=pset,
+                df=val_data,
+                y_true=val_labels,
+                fitness_fn=cfg.fitness_val,
+            )
 
     # ── 6b. Multiprocessing ────────────────────────────────
     pool = None
@@ -326,6 +376,23 @@ def run_evolution(
     stats.register("min", np.min)
 
     hof = tools.HallOfFame(cfg.evolution.hof_size)
+
+    # ── 7b. Validation logbook ─────────────────────────────────
+    val_logbook: tools.Logbook | None = None
+    if val_data is not None:
+        val_logbook = tools.Logbook()
+        val_logbook.header = ["gen", "val"]
+
+        def _val_callback(gen: int, ngen: int, population: list) -> None:
+            interval = cfg.evolution.validation_interval
+            # Run at gen 1 (first), every Nth, and always at the last generation
+            if (gen - 1) % interval != 0 and gen != ngen:
+                return
+            best_ind = toolbox.sel_best(population)[0]
+            val_score = _evaluate_val(best_ind)  # type: ignore[misc]
+            val_logbook.record(gen=gen, val=val_score[0])  # type: ignore[union-attr]
+            if cfg.evolution.verbose:
+                print(val_logbook.stream)  # type: ignore[union-attr]
 
     # ── 9. Initial population ──────────────────────────────
     pop = toolbox.population(n=cfg.evolution.mu)
@@ -348,6 +415,7 @@ def run_evolution(
             stats=stats,
             halloffame=hof,
             verbose=cfg.evolution.verbose,
+            val_callback=_val_callback if val_data is not None else None,
         )
     finally:
         if pool is not None:
@@ -383,9 +451,15 @@ def run_evolution(
             f"  Gen {record['gen']}: avg={record['avg']:.4f}, max={record['max']:.4f}"
         )
 
+    if val_logbook is not None and len(val_logbook) > 0:
+        print("Validation logbook summary (last 5 validation runs):")
+        for record in val_logbook[-5:]:
+            print(f"  Gen {record['gen']}: val={record['val']:.4f}")
+        print()
+
     # ── 12. Log full config dump ───────────────────────────
     print()
     print("=== Config dump ===")
     print(cfg.model_dump_json(indent=2))
 
-    return pop, logbook, hof
+    return pop, logbook, hof, val_logbook

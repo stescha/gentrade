@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Self, cast
 
 import pandas as pd
 from deap import gp, tools
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, computed_field
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, computed_field, model_validator
 
 from gentrade.backtest_fitness import (
     CalmarRatioFitness,
@@ -499,6 +499,14 @@ class EvolutionConfig(BaseModel):
         ge=1,
         description="Number of worker processes for evaluation (1 = single-process)",
     )
+    validation_interval: int = Field(
+        1,
+        ge=1,
+        description=(
+            "Run validation every N-th generation and always at the last generation. "
+            "1 = every generation."
+        ),
+    )
 
 
 class DataConfig(BaseModel):
@@ -611,3 +619,29 @@ class RunConfig(BaseModel):
             Callable[[], SelectionConfigBase], TournamentSelectionConfig
         )
     )
+    fitness_val: SerializeAsAny[FitnessConfigBase] | None = Field(
+        None,
+        description=(
+            "Fitness function for the validation phase. Required when val_data is "
+            "passed to run_evolution. Must match the mode of fitness (both backtest "
+            "or both classification)."
+        ),
+    )
+    select_best: SerializeAsAny[SelectionConfigBase] = Field(
+        default_factory=cast(Callable[[], SelectionConfigBase], BestSelectionConfig),
+        description=(
+            "Selection operator used to pick the single best individual for the "
+            "validation phase. Registered on the toolbox as sel_best with k=1."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_fitness_val_mode(self) -> "RunConfig":
+        """Ensure fitness and fitness_val share the same evaluation mode."""
+        if self.fitness_val is not None:
+            if self.fitness._requires_backtest != self.fitness_val._requires_backtest:
+                raise ValueError(
+                    "fitness and fitness_val must both be backtest-based or both be "
+                    "classification-based. Mixed modes are not supported."
+                )
+        return self

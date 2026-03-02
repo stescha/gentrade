@@ -1,4 +1,5 @@
 import random
+from collections.abc import Callable
 
 from deap import tools
 
@@ -71,6 +72,7 @@ def eaMuPlusLambdaGentrade(
     stats=None,
     halloffame=None,
     verbose=__debug__,
+    val_callback: Callable[[int, int, list], None] | None = None,
 ):
     r"""This is the :math:`(\mu + \lambda)` evolutionary algorithm.
 
@@ -87,6 +89,11 @@ def eaMuPlusLambdaGentrade(
     :param halloffame: A :class:`~deap.tools.HallOfFame` object that will
                        contain the best individuals, optional.
     :param verbose: Whether or not to log the statistics.
+    :param val_callback: Optional callable invoked after each generation's
+                         stats are logged. Receives ``(gen, ngen, population)``
+                         where ``gen`` is the current generation (1-indexed),
+                         ``ngen`` is the total number of generations, and
+                         ``population`` is the current population list.
     :returns: The final population
     :returns: A class:`~deap.tools.Logbook` with the statistics of the
               evolution.
@@ -158,5 +165,8 @@ def eaMuPlusLambdaGentrade(
         logbook.record(gen=gen, nevals=len(invalid_ind), **record)
         if verbose:
             print(logbook.stream)
+
+        if val_callback is not None:
+            val_callback(gen, ngen, population)
 
     return population, logbook
