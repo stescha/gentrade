@@ -27,7 +27,14 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Self, cast
 
 import pandas as pd
 from deap import gp, tools
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, computed_field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    computed_field,
+    model_validator,
+)
 
 from gentrade.backtest_fitness import (
     CalmarRatioFitness,
@@ -589,7 +596,7 @@ class RunConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    seed: int = Field(1997, description="Random seed for reproducibility")
+    seed: int | None = Field(None, description="Random seed for reproducibility")
 
     # Plain data configs
     data: DataConfig = Field(default_factory=cast(Callable[[], DataConfig], DataConfig))

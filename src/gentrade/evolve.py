@@ -273,8 +273,9 @@ def run_evolution(
         cfg = RunConfig()
 
     # ── 1. Seed ────────────────────────────────────────────
-    random.seed(cfg.seed)
-    np.random.seed(cfg.seed)
+    if cfg.seed is not None:
+        random.seed(cfg.seed)
+        np.random.seed(cfg.seed)
 
     # ── 1b. Validate data / config consistency ─────────────────
     if not cfg.fitness._requires_backtest and train_labels is None:
