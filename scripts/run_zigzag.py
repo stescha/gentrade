@@ -96,4 +96,9 @@ if __name__ == "__main__":
 
     # prepare_df covers both synthetic and real-pair cases
     df = prepare_data(cfg)
-    run_evolution(cfg, df)
+    from gentrade.minimal_pset import zigzag_pivots
+
+    labels = zigzag_pivots(
+        df["close"], cfg.data.target_threshold, cfg.data.target_label
+    )
+    run_evolution(df, labels, None, None, cfg)

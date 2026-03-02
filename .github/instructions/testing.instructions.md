@@ -49,7 +49,11 @@ class TestEvolutionStructure:
     def test_run_completes_structure(self, cfg_e2e_quick):
         # generate data once and pass it to the API
         df = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
-        pop, logbook, hof = run_evolution(cfg_e2e_quick, df)
+        # note the new argument order: data first, optional val_data, then
+        # train_labels/val_labels, followed by the configuration object.
+        pop, logbook, hof = run_evolution(df, None, None, None, cfg_e2e_quick)
+        # the config argument may be omitted entirely to use all defaults:
+        # pop, logbook, hof = run_evolution(df)
         # Structural assertions are robust
         assert len(pop) == cfg_e2e_quick.evolution.mu
         assert len(logbook) == cfg_e2e_quick.evolution.generations + 1

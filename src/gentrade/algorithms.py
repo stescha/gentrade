@@ -1,6 +1,8 @@
 import random
+from collections.abc import Callable
+from typing import Any
 
-from deap import tools
+from deap import base, tools
 
 
 def varOr(population, toolbox, lambda_, cxpb, mutpb):
@@ -61,17 +63,18 @@ def varOr(population, toolbox, lambda_, cxpb, mutpb):
 
 
 def eaMuPlusLambdaGentrade(
-    population,
-    toolbox,
-    mu,
-    lambda_,
-    cxpb,
-    mutpb,
-    ngen,
-    stats=None,
-    halloffame=None,
-    verbose=__debug__,
-):
+    population: list[Any],
+    toolbox: base.Toolbox,
+    mu: int,
+    lambda_: int,
+    cxpb: float,
+    mutpb: float,
+    ngen: int,
+    stats: tools.Statistics | None = None,
+    halloffame: tools.HallOfFame | None = None,
+    verbose: bool = __debug__,
+    val_callback: Callable[[int, int, list[Any]], None] | None = None,
+) -> tuple[list[Any], tools.Logbook]:
     r"""This is the :math:`(\mu + \lambda)` evolutionary algorithm.
 
     :param population: A list of individuals.
@@ -87,6 +90,11 @@ def eaMuPlusLambdaGentrade(
     :param halloffame: A :class:`~deap.tools.HallOfFame` object that will
                        contain the best individuals, optional.
     :param verbose: Whether or not to log the statistics.
+    :param val_callback: Optional callable invoked after each generation's
+                         stats are logged. Receives ``(gen, ngen, population)``
+                         where ``gen`` is the current generation (1-indexed),
+                         ``ngen`` is the total number of generations, and
+                         ``population`` is the current population list.
     :returns: The final population
     :returns: A class:`~deap.tools.Logbook` with the statistics of the
               evolution.
@@ -158,5 +166,8 @@ def eaMuPlusLambdaGentrade(
         logbook.record(gen=gen, nevals=len(invalid_ind), **record)
         if verbose:
             print(logbook.stream)
+
+        if val_callback is not None:
+            val_callback(gen, ngen, population)
 
     return population, logbook

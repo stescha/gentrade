@@ -35,6 +35,7 @@ def _unwrap_op(op: Callable[..., Any]) -> Any:
     return inspect.unwrap(op)
 
 
+import pandas as pd
 import pytest
 from deap import base, gp, tools
 from pytest import CaptureFixture, MonkeyPatch
@@ -48,12 +49,14 @@ from gentrade.config import (
     DoubleTournamentSelectionConfig,
     EphemeralMutationConfig,
     EvolutionConfig,
+    F1FitnessConfig,
     InsertMutationConfig,
     NodeReplacementMutationConfig,
     OnePointCrossoverConfig,
     OnePointLeafBiasedCrossoverConfig,
     PsetConfigBase,
     RunConfig,
+    SharpeFitnessConfig,
     ShrinkMutationConfig,
     TournamentSelectionConfig,
     TreeConfig,
@@ -61,9 +64,10 @@ from gentrade.config import (
     ZigzagLargePsetConfig,
     ZigzagMediumPsetConfig,
 )
-from gentrade.data import prepare_data
-from gentrade.evolve import create_toolbox
+from gentrade.data import generate_synthetic_ohlcv, prepare_data
+from gentrade.evolve import create_toolbox, run_evolution
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
+from gentrade.minimal_pset import zigzag_pivots
 
 
 def _make_toolbox(cfg: RunConfig) -> base.Toolbox:
@@ -81,6 +85,7 @@ class TestOperatorPresence:
         toolbox = _make_toolbox(cfg_test_default)
         for op in (
             "select",
+            "sel_best",
             "mate",
             "mutate",
             "expr",
@@ -267,7 +272,6 @@ class TestDataConfig:
         """When ``pair`` is set, :func:`prepare_data` uses
         ``load_binance_ohlcv`` and prints a message.
         """
-        import pandas as pd
 
         # monkeypatch the actual tradetools loader since prepare_data
         # imports it locally inside the function
@@ -302,3 +306,64 @@ class TestDataConfig:
         assert "Loaded real OHLCV data for BTCUSDT" in captured.out
         assert isinstance(df, pd.DataFrame)
         assert df.iloc[0]["open"] == 1
+
+
+@pytest.mark.unit
+class TestRunConfigValidation:
+    """Pydantic validator and input validation in run_evolution."""
+
+    def test_mixed_mode_fitness_raises(self, cfg_test_default: RunConfig) -> None:
+        """RunConfig rejects mixed backtest/classification fitness_val."""
+        # ``model_copy`` does not trigger the post-validator, so construct a
+        # fresh instance instead.  The error is raised during initialization.
+        with pytest.raises(ValueError, match="Mixed modes are not supported"):
+            RunConfig(
+                fitness=F1FitnessConfig(),
+                fitness_val=SharpeFitnessConfig(),
+                backtest=None,
+            )
+
+    def test_missing_train_labels_classification_raises(
+        self, cfg_test_default: RunConfig
+    ) -> None:
+        """run_evolution raises when classification fitness used without train_labels."""
+        df = generate_synthetic_ohlcv(cfg_test_default.data.n, cfg_test_default.seed)
+        with pytest.raises(ValueError, match="train_labels must be provided"):
+            # omit cfg to exercise default-initialisation branch
+            run_evolution(df, None, None, None, None)
+
+    def test_val_data_without_fitness_val_raises(
+        self, cfg_test_default: RunConfig
+    ) -> None:
+        """run_evolution raises when val_data is given but cfg.fitness_val is None."""
+        df = generate_synthetic_ohlcv(cfg_test_default.data.n, cfg_test_default.seed)
+        labels = zigzag_pivots(
+            df["close"],
+            cfg_test_default.data.target_threshold,
+            cfg_test_default.data.target_label,
+        )
+        split = int(len(df) * 0.8)
+        train_df, val_df = df.iloc[:split], df.iloc[split:]
+        train_labels = labels.iloc[:split]
+
+        # cfg_test_default has fitness_val=None by default
+        assert cfg_test_default.fitness_val is None
+        with pytest.raises(ValueError, match="cfg.fitness_val must be set"):
+            # use default config which has fitness_val=None
+            run_evolution(train_df, train_labels, val_df, None, None)
+
+    def test_val_labels_missing_classification_raises(
+        self, cfg_test_default: RunConfig
+    ) -> None:
+        """run_evolution raises when classification fitness_val used without val_labels."""
+        cfg = cfg_test_default.model_copy(update={"fitness_val": F1FitnessConfig()})
+        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
+        labels = zigzag_pivots(
+            df["close"], cfg.data.target_threshold, cfg.data.target_label
+        )
+        split = int(len(df) * 0.8)
+        train_df, val_df = df.iloc[:split], df.iloc[split:]
+        train_labels = labels.iloc[:split]
+
+        with pytest.raises(ValueError, match="val_labels must be provided"):
+            run_evolution(train_df, train_labels, val_df, None, cfg)

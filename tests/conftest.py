@@ -103,3 +103,18 @@ def cfg_backtest_unit() -> RunConfig:
         selection=TournamentSelectionConfig(tournsize=3),
         backtest=BacktestConfig(),
     )
+
+
+@pytest.fixture
+def cfg_e2e_quick_with_val(cfg_e2e_quick: RunConfig) -> RunConfig:
+    """E2E variant: F1 fitness for both training and validation phases.
+
+    Extends ``cfg_e2e_quick`` with ``fitness_val=F1FitnessConfig()`` and
+    default ``select_best``. Use this fixture when testing validation-set
+    support in :func:`run_evolution`.
+    """
+    return cfg_e2e_quick.model_copy(
+        update={
+            "fitness_val": F1FitnessConfig(),
+        }
+    )
