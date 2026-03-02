@@ -5,33 +5,31 @@ and TA-Lib indicators.
 """
 
 import operator
-import random
 
-import numpy as np
 import pandas as pd
 import talib
 from deap import gp
-from zigzag import peak_valley_pivots
+from zigzag import peak_valley_pivots  # type: ignore[import-untyped]
 
 from gentrade.pset.pset_types import (
+    Acceleration,
     BooleanSeries,
     Close,
+    FastLimit,
     High,
     Label,
     Low,
     MAType,
+    Maximum,
     NBDev,
     NumericSeries,
     Open,
     PriceSeries,
+    SlowLimit,
     Threshold,
     Timeperiod,
-    Volume,
-    Acceleration,
-    FastLimit,
-    Maximum,
-    SlowLimit,
     VFactor,
+    Volume,
 )
 from gentrade.pset.talib_primitives import (
     BBANDS_lowerband,
@@ -41,7 +39,6 @@ from gentrade.pset.talib_primitives import (
     MACD_macdsignal,
     STOCH_slowd,
     STOCH_slowk,
-    add_talib_indicators,
 )
 
 
@@ -88,7 +85,9 @@ def create_pset_core(name: str = "core") -> gp.PrimitiveSetTyped:
     pset.addEphemeralConstant("Label", Label.sample, Label)
 
     # Rename arguments
-    pset.renameArguments(ARG0="open", ARG1="high", ARG2="low", ARG3="close", ARG4="volume")
+    pset.renameArguments(
+        ARG0="open", ARG1="high", ARG2="low", ARG3="close", ARG4="volume"
+    )
 
     return pset
 
@@ -115,7 +114,9 @@ def add_features_minimal(pset: gp.PrimitiveSetTyped) -> None:
         BBANDS_upperband, [PriceSeries, Timeperiod, NBDev, NBDev, MAType], NumericSeries
     )
     pset.addPrimitive(
-        BBANDS_middleband, [PriceSeries, Timeperiod, NBDev, NBDev, MAType], NumericSeries
+        BBANDS_middleband,
+        [PriceSeries, Timeperiod, NBDev, NBDev, MAType],
+        NumericSeries,
     )
     pset.addPrimitive(
         BBANDS_lowerband, [PriceSeries, Timeperiod, NBDev, NBDev, MAType], NumericSeries
@@ -139,7 +140,9 @@ def add_features_medium(pset: gp.PrimitiveSetTyped) -> None:
         MACD_macd, [PriceSeries, Timeperiod, Timeperiod, Timeperiod], NumericSeries
     )
     pset.addPrimitive(
-        MACD_macdsignal, [PriceSeries, Timeperiod, Timeperiod, Timeperiod], NumericSeries
+        MACD_macdsignal,
+        [PriceSeries, Timeperiod, Timeperiod, Timeperiod],
+        NumericSeries,
     )
 
     # CCI

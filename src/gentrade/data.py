@@ -1,19 +1,10 @@
-import multiprocessing
-import operator
-import random
-from functools import partial
-from typing import Any
-
 import numpy as np
 import pandas as pd
-from deap import algorithms, base, creator, gp, tools
 
-from gentrade.backtest_fitness import run_vbt_backtest
-from gentrade.config import BacktestConfig, RunConfig
-from gentrade.growtree import genFull
-from gentrade.minimal_pset import zigzag_pivots
+from gentrade.config import RunConfig
 
-def generate_synthetic_ohlcv(n: int, seed: int) -> pd.DataFrame:
+
+def generate_synthetic_ohlcv(n: int, seed: None | int = None) -> pd.DataFrame:
     """Generate synthetic OHLCV data with realistic price movements.
 
     Args:
@@ -47,8 +38,6 @@ def generate_synthetic_ohlcv(n: int, seed: int) -> pd.DataFrame:
             "volume": volume,
         }
     )
-
-
 
 
 def prepare_data(cfg: RunConfig) -> pd.DataFrame:
