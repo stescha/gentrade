@@ -215,10 +215,21 @@ class BacktestFitnessConfigBase(FitnessConfigBase):
     - Callable interface: ``cfg.fitness(portfolio) -> float``
     - ``_requires_backtest = True`` signals the caller to run the backtest
       evaluation path instead of the classification path.
+    - ``min_trades`` stored here (default 0) is passed through to the
+      underlying :class:`BacktestFitnessBase` instance. A value of zero
+      effectively disables the guard.
     - Subclasses implement one-line metric extraction from ``vbt.Portfolio``.
     """
 
     _requires_backtest: ClassVar[bool] = True
+
+    # default 0 so that existing configs stay inactive unless explicitly set
+    min_trades: int = Field(
+        0,
+        ge=0,
+        description="Minimum number of closed trades required by the fitness "
+        "function; 0 disables the check.",
+    )
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
         raise NotImplementedError
@@ -228,35 +239,35 @@ class SharpeFitnessConfig(BacktestFitnessConfigBase):
     """Sharpe ratio: risk-adjusted return (annualised mean return / std dev)."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return SharpeRatioFitness()(portfolio)
+        return SharpeRatioFitness(min_trades=self.min_trades)(portfolio)
 
 
 class SortinoFitnessConfig(BacktestFitnessConfigBase):
     """Sortino ratio: downside-risk-adjusted return (penalises negative volatility only)."""  # noqa: E501
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return SortinoRatioFitness()(portfolio)
+        return SortinoRatioFitness(min_trades=self.min_trades)(portfolio)
 
 
 class CalmarFitnessConfig(BacktestFitnessConfigBase):
     """Calmar ratio: annualised return divided by maximum drawdown."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return CalmarRatioFitness()(portfolio)
+        return CalmarRatioFitness(min_trades=self.min_trades)(portfolio)
 
 
 class TotalReturnFitnessConfig(BacktestFitnessConfigBase):
     """Total return: cumulative portfolio return over the evaluation period."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return TotalReturnFitness()(portfolio)
+        return TotalReturnFitness(min_trades=self.min_trades)(portfolio)
 
 
 class MeanPnlFitnessConfig(BacktestFitnessConfigBase):
     """Mean PnL: average profit and loss per closed trade."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return MeanPnlFitness()(portfolio)
+        return MeanPnlFitness(min_trades=self.min_trades)(portfolio)
 
 
 # ── Pset configs ───────────────────────────────────────────
@@ -565,8 +576,6 @@ class BacktestConfig(BaseModel):
     - ``sl_trail``: whether the stop-loss is trailing (moves with the price).
     - ``fees``: round-trip trading fee fraction per trade.
     - ``init_cash``: initial portfolio cash.
-    - ``min_trades``: minimum number of closed trades for a fitness score
-      to be considered valid. Below this threshold, ``(0.0,)`` is returned.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -576,7 +585,6 @@ class BacktestConfig(BaseModel):
     sl_trail: bool = Field(True, description="Use trailing stop-loss")
     fees: float = Field(0.001, ge=0.0, description="Trading fee fraction")
     init_cash: float = Field(100_000.0, gt=0.0, description="Initial portfolio cash")
-    min_trades: int = Field(10, ge=0, description="Minimum trades for valid fitness")
 
 
 # ── Top-level config ───────────────────────────────────────

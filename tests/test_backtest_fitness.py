@@ -10,6 +10,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import vectorbt as vbt  # noqa: E402
 from deap import gp as deap_gp  # noqa: E402
+
 from gentrade.backtest_fitness import (  # noqa: E402
     BacktestFitnessBase,
     CalmarRatioFitness,
@@ -30,13 +31,13 @@ from gentrade.config import (  # noqa: E402
     SortinoFitnessConfig,
     TotalReturnFitnessConfig,
 )
+from gentrade.data import generate_synthetic_ohlcv
 from gentrade.evolve import (  # noqa: E402
     _compile_tree_to_signals,
     evaluate_backtest,
 )
-from gentrade.pset.pset import tree_from_string  # noqa: E402
-from gentrade.data import generate_synthetic_ohlcv
 from gentrade.minimal_pset import create_pset_zigzag_medium  # noqa: E402
+from gentrade.pset.pset import tree_from_string  # noqa: E402
 
 # ── Module-level helpers ───────────────────────────────────
 
@@ -122,6 +123,22 @@ class TestBacktestFitnessComputation:
         result = MeanPnlFitness()(pf)
         assert result == 0.0
 
+    def test_min_trades_guard_blocks(self) -> None:
+        """Fitness objects respect their ``min_trades`` attribute."""
+        pf = _make_portfolio()
+        # choose a threshold higher than whatever trades we got
+        threshold = pf.trades.count() + 1
+        assert threshold > 0
+        assert SharpeRatioFitness(min_trades=threshold)(pf) == 0.0
+        assert MeanPnlFitness(min_trades=threshold)(pf) == 0.0
+
+    def test_min_trades_guard_inactive_when_zero(self) -> None:
+        """A zero ``min_trades`` should not alter normal behaviour."""
+        pf = _make_portfolio()
+        normal = SharpeRatioFitness()(pf)
+        assert SharpeRatioFitness(min_trades=0)(pf) == normal
+        assert MeanPnlFitness(min_trades=0)(pf) == MeanPnlFitness()(pf)
+
     def test_base_raises_not_implemented(self) -> None:
         """BacktestFitnessBase raises NotImplementedError when called."""
         with pytest.raises(NotImplementedError):
@@ -184,25 +201,39 @@ class TestBacktestFitnessConfig:
         """Each backtest config has the correct auto-derived type tag."""
         assert config_cls().type == expected_type
 
+    def test_min_trades_field_defaults_and_dump(self) -> None:
+        """Backtest fitness configs expose min_trades with default 0 in dump."""
+        cfg = SharpeFitnessConfig()
+        assert cfg.min_trades == 0
+        dump = cfg.model_dump()
+        assert dump.get("min_trades") == 0
+
+    def test_min_trades_passes_to_underlying(self) -> None:
+        """Config value is forwarded to the fitness object returned by __call__."""
+        pf = _make_portfolio()
+        cfg = SharpeFitnessConfig(min_trades=3)
+        assert cfg(pf) == SharpeRatioFitness(min_trades=3)(pf)
+
 
 @pytest.mark.unit
 class TestBacktestConfig:
     """BacktestConfig validates fields and defaults correctly."""
 
     def test_defaults(self) -> None:
-        """BacktestConfig() has the expected default values."""
+        """BacktestConfig() has the expected default values (no min_trades)."""
         cfg = BacktestConfig()
         assert cfg.tp_stop == 0.02
         assert cfg.sl_stop == 0.01
         assert cfg.sl_trail is True
         assert cfg.fees == 0.001
         assert cfg.init_cash == 100_000.0
-        assert cfg.min_trades == 10
+        # the configuration object should not carry a min_trades attribute
+        assert not hasattr(cfg, "min_trades")
 
     def test_model_dump_all_fields_present(self) -> None:
-        """model_dump() contains all 6 field names."""
+        """model_dump() contains all expected field names (no min_trades)."""
         dump = BacktestConfig().model_dump()
-        fields = ("tp_stop", "sl_stop", "sl_trail", "fees", "init_cash", "min_trades")
+        fields = ("tp_stop", "sl_stop", "sl_trail", "fees", "init_cash")
         for field in fields:
             assert field in dump
 
@@ -224,11 +255,6 @@ class TestBacktestConfig:
         """BacktestConfig(fees=0.0) does not raise."""
         cfg = BacktestConfig(fees=0.0)
         assert cfg.fees == 0.0
-
-    def test_min_trades_zero_allowed(self) -> None:
-        """BacktestConfig(min_trades=0) does not raise."""
-        cfg = BacktestConfig(min_trades=0)
-        assert cfg.min_trades == 0
 
     def test_frozen(self) -> None:
         """BacktestConfig is immutable (frozen pydantic model)."""
@@ -263,15 +289,15 @@ class TestEvaluateBacktest:
             individual,
             pset=pset,
             df=df,
-            backtest_cfg=BacktestConfig(min_trades=0),
-            fitness_fn=SharpeFitnessConfig(),
+            backtest_cfg=BacktestConfig(),
+            fitness_fn=SharpeFitnessConfig(min_trades=0),
         )
         assert isinstance(result, tuple)
         assert len(result) == 1
         assert isinstance(result[0], float)
 
     def test_min_trades_guard_returns_zero(self) -> None:
-        """evaluate_backtest returns (0.0,) when min_trades is unreachably high."""
+        """evaluate_backtest returns (0.0,) when the fitness applies a high threshold."""
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
@@ -279,8 +305,8 @@ class TestEvaluateBacktest:
             individual,
             pset=pset,
             df=df,
-            backtest_cfg=BacktestConfig(min_trades=999999),
-            fitness_fn=SharpeFitnessConfig(),
+            backtest_cfg=BacktestConfig(),
+            fitness_fn=SharpeFitnessConfig(min_trades=999999),
         )
         assert result == (0.0,)
 
@@ -301,7 +327,9 @@ class TestEvaluateBacktest:
     def test_nonfinite_guard_returns_zero(self) -> None:
         """evaluate_backtest returns (0.0,) when fitness_fn returns NaN."""
 
-        class _NanFitness(BacktestFitnessConfigBase):  # subclass to satisfy FitnessConfigBase
+        class _NanFitness(
+            BacktestFitnessConfigBase
+        ):  # subclass to satisfy FitnessConfigBase
             def __call__(self, pf: object) -> float:
                 return float("nan")
 
@@ -312,7 +340,7 @@ class TestEvaluateBacktest:
             individual,
             pset=pset,
             df=df,
-            backtest_cfg=BacktestConfig(min_trades=0),
+            backtest_cfg=BacktestConfig(),
             fitness_fn=_NanFitness(),
         )
         assert result == (0.0,)

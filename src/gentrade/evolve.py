@@ -104,7 +104,8 @@ def evaluate_backtest(
     with TP/SL exits, then extracts a single metric via ``fitness_fn``.
 
     Guards (all return ``(0.0,)``):
-    - Fewer than ``backtest_cfg.min_trades`` closed trades.
+    - Fitness function itself applies a minimum-trades guard based on its
+      ``min_trades`` attribute.
     - Non-finite metric value (NaN or Inf).
     - Any exception during compilation, simulation, or metric extraction.
 
@@ -130,8 +131,6 @@ def evaluate_backtest(
             fees=backtest_cfg.fees,
             init_cash=backtest_cfg.init_cash,
         )
-        if pf.trades.count() < backtest_cfg.min_trades:
-            return (0.0,)
         metric = fitness_fn(pf)
         if not np.isfinite(metric):
             return (0.0,)

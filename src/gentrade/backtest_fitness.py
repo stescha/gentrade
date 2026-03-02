@@ -20,7 +20,24 @@ class BacktestFitnessBase:
     Callable interface: ``fitness_fn(portfolio) -> float``.
     Subclasses implement metric extraction from a vectorbt Portfolio.
     Scores should be maximized (higher is better) for DEAP compatibility.
+
+    Parameters
+    ----------
+    min_trades: int
+        Minimum number of closed trades required for a nonzero score. A value
+        of zero disables the guard; when the portfolio has fewer closed trades
+        than this threshold the fitness returns ``0.0`` immediately.
     """
+
+    def __init__(self, min_trades: int = 0) -> None:
+        self.min_trades = min_trades
+
+    def _fails_min_trades(self, portfolio: vbt.Portfolio) -> bool:
+        """Return ``True`` if the portfolio does not meet the minimum trades.
+
+        A zero ``min_trades`` value disables the check (always ``False``).
+        """
+        return self.min_trades > 0 and portfolio.trades.count() < self.min_trades
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
         """Compute fitness score from a backtest portfolio.
@@ -38,6 +55,8 @@ class SharpeRatioFitness(BacktestFitnessBase):
     """Sharpe ratio: risk-adjusted return (mean return / return std deviation)."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
+        if self._fails_min_trades(portfolio):
+            return 0.0
         return float(portfolio.sharpe_ratio())
 
 
@@ -45,6 +64,8 @@ class SortinoRatioFitness(BacktestFitnessBase):
     """Sortino ratio: downside risk-adjusted return."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
+        if self._fails_min_trades(portfolio):
+            return 0.0
         return float(portfolio.sortino_ratio())
 
 
@@ -52,6 +73,8 @@ class CalmarRatioFitness(BacktestFitnessBase):
     """Calmar ratio: annualised return divided by maximum drawdown."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
+        if self._fails_min_trades(portfolio):
+            return 0.0
         return float(portfolio.calmar_ratio())
 
 
@@ -59,6 +82,8 @@ class TotalReturnFitness(BacktestFitnessBase):
     """Total return: cumulative portfolio return over the evaluation period."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
+        if self._fails_min_trades(portfolio):
+            return 0.0
         return float(portfolio.total_return())
 
 
@@ -69,6 +94,8 @@ class MeanPnlFitness(BacktestFitnessBase):
     """
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
+        if self._fails_min_trades(portfolio):
+            return 0.0
         trades = portfolio.trades.records_readable
         return float(trades["PnL"].mean()) if len(trades) > 0 else 0.0
 
