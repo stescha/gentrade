@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-from deap import algorithms, base, creator, gp, tools
+from deap import base, creator, gp, tools
 
+from gentrade.algorithms import eaMuPlusLambdaGentrade
 from gentrade.backtest_fitness import run_vbt_backtest
 from gentrade.config import TREE_GEN_FUNCS, BacktestConfig, FitnessConfigBase, RunConfig
 from gentrade.growtree import genFull
@@ -157,6 +158,7 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
     Returns:
         Configured DEAP toolbox without an evaluate operator.
     """
+
     if not hasattr(creator, "FitnessMax"):
         creator.create("FitnessMax", base.Fitness, weights=(1.0,))
     if not hasattr(creator, "Individual"):
@@ -335,7 +337,7 @@ def run_evolution(
     print("-" * 60)
 
     try:
-        pop, logbook = algorithms.eaMuPlusLambda(
+        pop, logbook = eaMuPlusLambdaGentrade(
             pop,
             toolbox,
             mu=cfg.evolution.mu,
