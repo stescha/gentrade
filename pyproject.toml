@@ -1,0 +1,64 @@
+[project]
+name = "gentrade"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Your Name",email = "you@example.com"}
+]
+readme = "README.md"
+requires-python = "~3.11"
+dependencies = [
+    "pandas (>=2.2.3,<3.0.0)",
+    "deap (>=1.4.2,<2.0.0)",
+    "numpy (>=2.2.4,<3.0.0)",
+    "pybind11 (>=2.13.6,<3.0.0)",
+    "ta-lib (>=0.6.3,<0.7.0)",
+    "tables (>=3.10.2,<4.0.0)",
+    "scipy (>=1.15.2,<2.0.0)",
+    "matplotlib (>=3.10.1,<4.0.0)",
+    "networkx (>=3.4.2,<4.0.0)",
+    "vectorbt (>=0.27.2,<0.28.0)",
+    "ipython (<8.0)",
+    "nbformat (>=4.2)",
+    "mypy (>=1.19.1,<2.0.0)",
+    "pytest (>=9.0.2,<10.0.0)",
+    "ruff (>=0.15.4,<0.16.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "pybind11>=2.10.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+# A good starting set of rules:
+# E = pycodestyle errors
+# W = pycodestyle warnings
+# F = Pyflakes
+# I = isort (import sorting)
+# C4 = flake8-comprehensions
+# B = flake8-bugbear
+select = ["E", "W", "F", "I", "C4", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+exclude = ["workbench/sandbox"]
+mypy_path = [
+    "tradetools/typings",
+    "tradetools/src",
+]
+# Enable explicit package bases to correctly discover nested packages in the monorepo
+# (e.g. tradetools/src/tradetools, tradetools/tests) and avoid "Duplicate module" errors.
+# Only works in combination with `mypy_path = ["tradetools/src"]` 
+explicit_package_bases = true
+
