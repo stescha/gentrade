@@ -10,7 +10,12 @@ via tree size comparisons rather than fitness values.
 
 import pytest
 
-from gentrade.config import RunConfig
+from gentrade.config import (
+    NSGA2SelectionConfig,
+    PrecisionMetricConfig,
+    RecallMetricConfig,
+    RunConfig,
+)
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.evolve import run_evolution
 from gentrade.minimal_pset import zigzag_pivots
@@ -85,3 +90,30 @@ class TestEvolutionSmoke:
 
         # Tree node counts are deterministic given the same seed
         assert [len(ind) for ind in pop1] == [len(ind) for ind in pop2]
+
+
+@pytest.mark.e2e
+class TestMultiObjectiveEvolution:
+    """Two-metric NSGA2 evolution produces valid multi-element fitness tuples."""
+
+    def test_two_metrics_fitness_tuple_length(self, cfg_e2e_quick: RunConfig) -> None:
+        """All individuals have 2-element fitness tuples with NSGA2 + 2 metrics."""
+        cfg = cfg_e2e_quick.model_copy(
+            update={
+                "metrics": (
+                    PrecisionMetricConfig(weight=1.0),
+                    RecallMetricConfig(weight=1.0),
+                ),
+                "selection": NSGA2SelectionConfig(),
+            }
+        )
+        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
+        labels = zigzag_pivots(
+            df["close"], cfg.data.target_threshold, cfg.data.target_label
+        )
+        pop, logbook, hof = run_evolution(df, labels, None, None, cfg)
+
+        assert len(pop) == cfg.evolution.mu
+        assert all(ind.fitness.valid for ind in pop)
+        assert all(len(ind.fitness.values) == 2 for ind in pop)
+        assert all(isinstance(v, float) for ind in pop for v in ind.fitness.values)

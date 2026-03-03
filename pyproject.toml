@@ -94,7 +94,8 @@ module = [
     "gentrade.pset.talib_primitives",
     "gentrade.minimal_pset",
     "gentrade.algorithms",
-    "gentrade.backtest_fitness",
+    "gentrade.backtest_metrics",
+    "gentrade.evaluators",
 ]
 ignore_missing_imports = true
 disallow_untyped_defs = false

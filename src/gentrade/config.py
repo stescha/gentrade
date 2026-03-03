@@ -3,8 +3,11 @@
 Pydantic-based configuration hierarchy. Design principles:
 
 - **Config classes are thin data containers.** They carry parameters only.
-- **Fitness configs** are callable via ``__call__``, which is a one-line
-  delegation to the underlying function.
+- **Evaluator configs** describe *which* evaluation pipeline to use
+  (classification vs. backtest). The actual logic lives in
+  ``gentrade.evaluators``, constructed from these configs in ``evolve.py``.
+- **Metric configs** are callable via ``__call__``, which is a one-line
+  delegation to the underlying metric class.
 - **Operator configs** (pset, mutation, crossover, selection) expose the DEAP
   function as a ``ClassVar[func]`` attribute. The ``func`` attribute is
   invisible to pydantic (``ClassVar`` is excluded from schema and
@@ -15,11 +18,11 @@ Pydantic-based configuration hierarchy. Design principles:
 
 Extending with new components:
 
-1. Subclass the appropriate base (e.g. ``FitnessConfigBase``).
+1. Subclass the appropriate base (e.g. ``MetricConfigBase``).
 2. Set ``func: ClassVar[Callable] = staticmethod(the_deap_or_custom_function)``.
 3. Add parameters as pydantic fields with defaults.
-4. For fitness, implement ``__call__`` to delegate to the function.
-5. Use the new config class in ``RunConfig`` — no registry needed.
+4. For metrics, implement ``__call__`` to delegate to the function.
+5. Use the new config class in ``RunConfig`` -- no registry needed.
 """
 
 import re
@@ -36,21 +39,21 @@ from pydantic import (
     model_validator,
 )
 
-from gentrade.backtest_fitness import (
-    CalmarRatioFitness,
-    MeanPnlFitness,
-    SharpeRatioFitness,
-    SortinoRatioFitness,
-    TotalReturnFitness,
+from gentrade.backtest_metrics import (
+    CalmarRatioMetric,
+    MeanPnlMetric,
+    SharpeRatioMetric,
+    SortinoRatioMetric,
+    TotalReturnMetric,
 )
-from gentrade.classification_fitness import (
-    BalancedAccuracyFitness,
-    F1Fitness,
-    FBetaFitness,
-    JaccardFitness,
-    MCCFitness,
-    PrecisionFitness,
-    RecallFitness,
+from gentrade.classification_metrics import (
+    BalancedAccuracyMetric,
+    F1Metric,
+    FBetaMetric,
+    JaccardMetric,
+    MCCMetric,
+    PrecisionMetric,
+    RecallMetric,
 )
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.minimal_pset import (
@@ -64,22 +67,22 @@ if TYPE_CHECKING:
     import vectorbt as vbt
 
 
-# ── Helpers ────────────────────────────────────────────────
+# -- Helpers ----------------------------------------------------
 
 
 def _to_snake_case(name: str) -> str:
     """Convert PascalCase to snake_case, handling consecutive capitals.
 
     Examples:
-        ``"FBeta"`` → ``"f_beta"``, ``"MCC"`` → ``"mcc"``,
-        ``"BalancedAccuracy"`` → ``"balanced_accuracy"``
+        ``"FBeta"`` -> ``"f_beta"``, ``"MCC"`` -> ``"mcc"``,
+        ``"BalancedAccuracy"`` -> ``"balanced_accuracy"``
     """
     name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
     name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
     return name.lower()
 
 
-# ── Component base ─────────────────────────────────────────
+# -- Component base ---------------------------------------------
 
 
 class _ComponentConfig(BaseModel):
@@ -115,50 +118,114 @@ class _ComponentConfig(BaseModel):
         return self.model_dump(exclude={"type"})
 
 
-# ── Fitness configs (callable) ─────────────────────────────
+# -- Evaluator configs ------------------------------------------
 
 
-class FitnessConfigBase(_ComponentConfig):
-    """Base for fitness configs.
+class EvaluatorConfigBase(_ComponentConfig):
+    """Base for evaluator configs.
 
-    - Each subclass only carries its own parameters (mutual exclusivity by
-      design — no spurious fields on unrelated fitness functions).
-    - ``_requires_backtest``: if ``True``, ``run_evolution`` registers
-      ``evaluate_backtest`` instead of the classification ``evaluate``.
+    Evaluator configs are thin data containers. The actual evaluation logic
+    lives in evaluator classes in ``gentrade.evaluators``, which are
+    constructed from these configs in ``evolve.py``.
     """
 
-    _type_suffix: ClassVar[str] = "FitnessConfig"
-    _requires_backtest: ClassVar[bool] = False
+    _type_suffix: ClassVar[str] = "EvaluatorConfig"
+
+
+class ClassificationEvaluatorConfig(EvaluatorConfigBase):
+    """Config for the classification evaluator.
+
+    No parameters -- all evaluation behaviour is fixed for classification.
+    The evaluator compiles the GP tree, computes a boolean prediction series,
+    and delegates to the supplied metric configs.
+    """
+
+
+class BacktestEvaluatorConfig(EvaluatorConfigBase):
+    """Config for the vectorbt backtest evaluator.
+
+    Carries portfolio simulation parameters. Replaces the former
+    ``BacktestConfig``; field names and defaults are identical.
+
+    - ``tp_stop`` / ``sl_stop``: take-profit and stop-loss as fractions.
+    - ``sl_trail``: trailing stop-loss.
+    - ``fees``: round-trip fee fraction per trade.
+    - ``init_cash``: initial portfolio cash.
+    """
+
+    tp_stop: float = Field(0.02, gt=0.0, le=1.0, description="Take-profit fraction")
+    sl_stop: float = Field(0.01, gt=0.0, le=1.0, description="Stop-loss fraction")
+    sl_trail: bool = Field(True, description="Use trailing stop-loss")
+    fees: float = Field(0.001, ge=0.0, description="Trading fee fraction")
+    init_cash: float = Field(100_000.0, gt=0.0, description="Initial portfolio cash")
+
+
+# -- Metric configs (callable) ----------------------------------
+
+
+class MetricConfigBase(_ComponentConfig):
+    """Base for metric configs.
+
+    - Each subclass is callable and returns a single ``float``.
+    - ``weight``: DEAP objective weight. Positive to maximise, negative to
+      minimise. Passed as ``weights=(m.weight for m in cfg.metrics)`` when
+      creating the DEAP ``FitnessMax`` creator class.
+    - ``_type_suffix`` is ``"MetricConfig"`` so ``F1MetricConfig.type == "f1"``.
+    """
+
+    _type_suffix: ClassVar[str] = "MetricConfig"
+
+    weight: float = Field(
+        1.0,
+        description=(
+            "DEAP objective weight. Use positive to maximise (default 1.0), "
+            "negative to minimise."
+        ),
+    )
 
     def __call__(self, *args: Any, **kwargs: Any) -> float:
-        """Generic callable interface for fitness configs.
-
-        Subclasses override this with more specific signatures. Having this
-        stub allows instances of :class:`FitnessConfigBase` to be treated as
-        ``Callable`` by the type checker.
-        """
+        """Generic callable stub; subclasses override with typed signatures."""
         raise NotImplementedError
 
 
-class ClassificationFitnessConfigBase(FitnessConfigBase):
-    """Base for classification fitness configs.
+class ClassificationMetricConfigBase(MetricConfigBase):
+    """Base for classification metric configs.
 
-    - Callable interface: ``cfg.fitness(y_true, y_pred) -> float``
-    - All scores are in ``[0, 1]``; higher means better.
+    Callable interface: ``cfg(y_true, y_pred) -> float``.
+    All scores are in ``[0, 1]``; higher means better (before weighting).
     """
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         raise NotImplementedError
 
 
-class F1FitnessConfig(ClassificationFitnessConfigBase):
+class BacktestMetricConfigBase(MetricConfigBase):
+    """Base for backtest metric configs.
+
+    Callable interface: ``cfg(portfolio) -> float``.
+    Scores should be maximised (higher is better, before weighting).
+    ``min_trades`` (default 0) is forwarded to the underlying metric object;
+    0 disables the guard.
+    """
+
+    min_trades: int = Field(
+        0,
+        ge=0,
+        description="Minimum closed trades required; 0 disables the guard.",
+    )
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        raise NotImplementedError
+
+
+class F1MetricConfig(ClassificationMetricConfigBase):
     """F1 score: harmonic mean of precision and recall."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return F1Fitness()(y_true, y_pred)
+        return F1Metric()(y_true, y_pred)
 
 
-class FBetaFitnessConfig(ClassificationFitnessConfigBase):
+class FBetaMetricConfig(ClassificationMetricConfigBase):
     """F-beta score with configurable precision/recall trade-off.
 
     - ``beta > 1`` favours recall (missing signals is costly).
@@ -168,109 +235,80 @@ class FBetaFitnessConfig(ClassificationFitnessConfigBase):
     beta: float = Field(2.0, gt=0.0)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return FBetaFitness(beta=self.beta)(y_true, y_pred)
+        return FBetaMetric(beta=self.beta)(y_true, y_pred)
 
 
-class MCCFitnessConfig(ClassificationFitnessConfigBase):
+class MCCMetricConfig(ClassificationMetricConfigBase):
     """Matthews Correlation Coefficient, rescaled to ``[0, 1]``."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return MCCFitness()(y_true, y_pred)
+        return MCCMetric()(y_true, y_pred)
 
 
-class BalancedAccuracyFitnessConfig(ClassificationFitnessConfigBase):
+class BalancedAccuracyMetricConfig(ClassificationMetricConfigBase):
     """Balanced accuracy: average of sensitivity and specificity."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return BalancedAccuracyFitness()(y_true, y_pred)
+        return BalancedAccuracyMetric()(y_true, y_pred)
 
 
-class PrecisionFitnessConfig(ClassificationFitnessConfigBase):
+class PrecisionMetricConfig(ClassificationMetricConfigBase):
     """Precision: fraction of predicted positives that are correct."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return PrecisionFitness()(y_true, y_pred)
+        return PrecisionMetric()(y_true, y_pred)
 
 
-class RecallFitnessConfig(ClassificationFitnessConfigBase):
+class RecallMetricConfig(ClassificationMetricConfigBase):
     """Recall: fraction of actual positives that are detected."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return RecallFitness()(y_true, y_pred)
+        return RecallMetric()(y_true, y_pred)
 
 
-class JaccardFitnessConfig(ClassificationFitnessConfigBase):
+class JaccardMetricConfig(ClassificationMetricConfigBase):
     """Jaccard index (intersection over union)."""
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return JaccardFitness()(y_true, y_pred)
+        return JaccardMetric()(y_true, y_pred)
 
 
-# ── Backtest fitness configs ───────────────────────────────
-
-
-class BacktestFitnessConfigBase(FitnessConfigBase):
-    """Base for vectorbt backtest fitness configs.
-
-    - Callable interface: ``cfg.fitness(portfolio) -> float``
-    - ``_requires_backtest = True`` signals the caller to run the backtest
-      evaluation path instead of the classification path.
-    - ``min_trades`` stored here (default 0) is passed through to the
-      underlying :class:`BacktestFitnessBase` instance. A value of zero
-      effectively disables the guard.
-    - Subclasses implement one-line metric extraction from ``vbt.Portfolio``.
-    """
-
-    _requires_backtest: ClassVar[bool] = True
-
-    # default 0 so that existing configs stay inactive unless explicitly set
-    min_trades: int = Field(
-        0,
-        ge=0,
-        description="Minimum number of closed trades required by the fitness "
-        "function; 0 disables the check.",
-    )
+class SharpeMetricConfig(BacktestMetricConfigBase):
+    """Sharpe ratio: risk-adjusted return."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        raise NotImplementedError
+        return SharpeRatioMetric(min_trades=self.min_trades)(portfolio)
 
 
-class SharpeFitnessConfig(BacktestFitnessConfigBase):
-    """Sharpe ratio: risk-adjusted return (annualised mean return / std dev)."""
-
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return SharpeRatioFitness(min_trades=self.min_trades)(portfolio)
-
-
-class SortinoFitnessConfig(BacktestFitnessConfigBase):
-    """Sortino ratio: downside-risk-adjusted return (penalises negative volatility only)."""  # noqa: E501
+class SortinoMetricConfig(BacktestMetricConfigBase):
+    """Sortino ratio: downside risk-adjusted return."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return SortinoRatioFitness(min_trades=self.min_trades)(portfolio)
+        return SortinoRatioMetric(min_trades=self.min_trades)(portfolio)
 
 
-class CalmarFitnessConfig(BacktestFitnessConfigBase):
+class CalmarMetricConfig(BacktestMetricConfigBase):
     """Calmar ratio: annualised return divided by maximum drawdown."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return CalmarRatioFitness(min_trades=self.min_trades)(portfolio)
+        return CalmarRatioMetric(min_trades=self.min_trades)(portfolio)
 
 
-class TotalReturnFitnessConfig(BacktestFitnessConfigBase):
+class TotalReturnMetricConfig(BacktestMetricConfigBase):
     """Total return: cumulative portfolio return over the evaluation period."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return TotalReturnFitness(min_trades=self.min_trades)(portfolio)
+        return TotalReturnMetric(min_trades=self.min_trades)(portfolio)
 
 
-class MeanPnlFitnessConfig(BacktestFitnessConfigBase):
+class MeanPnlMetricConfig(BacktestMetricConfigBase):
     """Mean PnL: average profit and loss per closed trade."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return MeanPnlFitness(min_trades=self.min_trades)(portfolio)
+        return MeanPnlMetric(min_trades=self.min_trades)(portfolio)
 
 
-# ── Pset configs ───────────────────────────────────────────
+# -- Pset configs -----------------------------------------------
 
 
 class PsetConfigBase(_ComponentConfig):
@@ -326,7 +364,7 @@ class DefaultLargePsetConfig(PsetConfigBase):
     )
 
 
-# ── Mutation configs ───────────────────────────────────────
+# -- Mutation configs -------------------------------------------
 #
 # ``func`` points to the DEAP mutation function.
 # ``_requires_pset`` / ``_requires_expr`` are ClassVar flags used by the
@@ -400,7 +438,7 @@ class EphemeralMutationConfig(MutationConfigBase):
     mode: str = Field("one", pattern=r"^(one|all)$")
 
 
-# ── Crossover configs ──────────────────────────────────────
+# -- Crossover configs ------------------------------------------
 
 
 class CrossoverConfigBase(_ComponentConfig):
@@ -432,21 +470,35 @@ class OnePointLeafBiasedCrossoverConfig(CrossoverConfigBase):
     termpb: float = Field(0.1, ge=0.0, le=1.0)
 
 
-# ── Selection configs ──────────────────────────────────────
+# -- Selection configs ------------------------------------------
 
 
 class SelectionConfigBase(_ComponentConfig):
-    """Base for selection operator configs.
-
-    - ``func``: DEAP selection function (excluded from serialization).
-    - Caller registers via ``toolbox.register("select", cfg.selection.func, **cfg.selection.params)``.
-    """
+    """Base for all selection operator configs."""
 
     _type_suffix: ClassVar[str] = "SelectionConfig"
     func: ClassVar[Callable[..., Any]]
 
 
-class TournamentSelectionConfig(SelectionConfigBase):
+class SingleObjectiveSelectionConfigBase(SelectionConfigBase):
+    """Base for single-objective selection operators.
+
+    Use when ``RunConfig.metrics`` has exactly one element.
+    DEAP operators in this group compare fitness values by their scalar
+    (or first-element) magnitude.
+    """
+
+
+class MultiObjectiveSelectionConfigBase(SelectionConfigBase):
+    """Base for Pareto-aware multi-objective selection operators.
+
+    Required when ``RunConfig.metrics`` has more than one element.
+    Operators in this group use non-dominated sorting or similar algorithms
+    over the full fitness tuple.
+    """
+
+
+class TournamentSelectionConfig(SingleObjectiveSelectionConfigBase):
     """Tournament selection: pick the best out of ``tournsize`` candidates."""
 
     func: ClassVar[Callable[..., Any]] = staticmethod(tools.selTournament)
@@ -454,7 +506,7 @@ class TournamentSelectionConfig(SelectionConfigBase):
     tournsize: int = Field(3, ge=2)
 
 
-class DoubleTournamentSelectionConfig(SelectionConfigBase):
+class DoubleTournamentSelectionConfig(SingleObjectiveSelectionConfigBase):
     """Double tournament: fitness selection + parsimony pressure.
 
     Penalises large trees, encouraging compact solutions.
@@ -467,13 +519,35 @@ class DoubleTournamentSelectionConfig(SelectionConfigBase):
     fitness_first: bool = True
 
 
-class BestSelectionConfig(SelectionConfigBase):
+class BestSelectionConfig(SingleObjectiveSelectionConfigBase):
     """Elitist selection: always select the best k individuals."""
 
     func: ClassVar[Callable[..., Any]] = staticmethod(tools.selBest)
 
 
-# ── Plain data configs ─────────────────────────────────────
+class NSGA2SelectionConfig(MultiObjectiveSelectionConfigBase):
+    """NSGA-II: non-dominated sorting + crowding-distance selection.
+
+    Compatible with ``eaMuPlusLambdaGentrade`` which calls
+    ``toolbox.select(population + offspring, mu)``, matching the
+    ``selNSGA2(individuals, k, nd=...)`` signature.
+    """
+
+    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selNSGA2)
+
+    nd: Literal["standard", "log"] = Field(
+        "standard",
+        description="Non-dominated sort variant passed as kwarg to selNSGA2.",
+    )
+
+
+class SPEA2SelectionConfig(MultiObjectiveSelectionConfigBase):
+    """SPEA2: strength Pareto evolutionary algorithm selection."""
+
+    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selSPEA2)
+
+
+# -- Plain data configs -----------------------------------------
 
 # Tree generation has no per-method parameters (half-and-half, full, and grow
 # differ only in which function is called), so it is expressed as a Literal
@@ -505,8 +579,8 @@ class EvolutionConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    mu: int = Field(200, gt=0, description="Parent population size (μ)")
-    lambda_: int = Field(400, gt=0, description="Offspring population size (λ)")
+    mu: int = Field(200, gt=0, description="Parent population size (mu)")
+    lambda_: int = Field(400, gt=0, description="Offspring population size (lambda)")
     generations: int = Field(30, gt=0, description="Number of generations")
     cxpb: float = Field(0.5, ge=0.0, le=1.0, description="Crossover probability")
     mutpb: float = Field(0.2, ge=0.0, le=1.0, description="Mutation probability")
@@ -567,27 +641,7 @@ class DataConfig(BaseModel):
     )
 
 
-class BacktestConfig(BaseModel):
-    """Portfolio simulation parameters for vectorbt-based fitness evaluation.
-
-    - ``tp_stop`` / ``sl_stop``: take-profit and stop-loss thresholds as
-      fractions (0.02 = 2%). These will later be evolved parameters; for
-      now they are fixed per run.
-    - ``sl_trail``: whether the stop-loss is trailing (moves with the price).
-    - ``fees``: round-trip trading fee fraction per trade.
-    - ``init_cash``: initial portfolio cash.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    tp_stop: float = Field(0.02, gt=0.0, le=1.0, description="Take-profit fraction")
-    sl_stop: float = Field(0.01, gt=0.0, le=1.0, description="Stop-loss fraction")
-    sl_trail: bool = Field(True, description="Use trailing stop-loss")
-    fees: float = Field(0.001, ge=0.0, description="Trading fee fraction")
-    init_cash: float = Field(100_000.0, gt=0.0, description="Initial portfolio cash")
-
-
-# ── Top-level config ───────────────────────────────────────
+# -- Top-level config -------------------------------------------
 
 
 class RunConfig(BaseModel):
@@ -595,7 +649,7 @@ class RunConfig(BaseModel):
 
     Composes all sub-configs. ``SerializeAsAny`` on polymorphic fields ensures
     ``model_dump()`` preserves subclass-specific fields (e.g. ``beta`` on
-    ``FBetaFitnessConfig``), which is required for correct logging and
+    ``FBetaMetricConfig``), which is required for correct logging and
     round-trip serialization.
 
     All defaults produce a valid run equivalent to the original
@@ -612,14 +666,32 @@ class RunConfig(BaseModel):
         default_factory=cast(Callable[[], EvolutionConfig], EvolutionConfig)
     )
     tree: TreeConfig = Field(default_factory=cast(Callable[[], TreeConfig], TreeConfig))
-    backtest: BacktestConfig | None = Field(
-        None, description="Backtest parameters; required when using a backtest fitness"
+
+    # Evaluator config
+    evaluator: SerializeAsAny[EvaluatorConfigBase] = Field(
+        default_factory=cast(
+            Callable[[], EvaluatorConfigBase], ClassificationEvaluatorConfig
+        ),
+        description="Evaluator config; determines classification vs backtest pipeline.",
     )
 
-    # Polymorphic component configs — SerializeAsAny preserves subclass fields
-    fitness: SerializeAsAny[FitnessConfigBase] = Field(
-        default_factory=cast(Callable[[], FitnessConfigBase], F1FitnessConfig)
+    # Metric configs
+    metrics: tuple[SerializeAsAny[MetricConfigBase], ...] = Field(
+        default_factory=cast(
+            Callable[[], tuple[MetricConfigBase, ...]],
+            lambda: (F1MetricConfig(),),
+        ),
+        description="Ordered tuple of metric configs for training fitness.",
     )
+    metrics_val: tuple[SerializeAsAny[MetricConfigBase], ...] | None = Field(
+        None,
+        description=(
+            "Metric configs for the validation phase. Required when val_data is "
+            "passed to run_evolution."
+        ),
+    )
+
+    # Polymorphic component configs -- SerializeAsAny preserves subclass fields
     pset: SerializeAsAny[PsetConfigBase] = Field(
         default_factory=cast(Callable[[], PsetConfigBase], ZigzagLargePsetConfig)
     )
@@ -634,14 +706,6 @@ class RunConfig(BaseModel):
             Callable[[], SelectionConfigBase], TournamentSelectionConfig
         )
     )
-    fitness_val: SerializeAsAny[FitnessConfigBase] | None = Field(
-        None,
-        description=(
-            "Fitness function for the validation phase. Required when val_data is "
-            "passed to run_evolution. Must match the mode of fitness (both backtest "
-            "or both classification)."
-        ),
-    )
     select_best: SerializeAsAny[SelectionConfigBase] = Field(
         default_factory=cast(Callable[[], SelectionConfigBase], BestSelectionConfig),
         description=(
@@ -651,12 +715,53 @@ class RunConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_fitness_val_mode(self) -> "RunConfig":
-        """Ensure fitness and fitness_val share the same evaluation mode."""
-        if self.fitness_val is not None:
-            if self.fitness._requires_backtest != self.fitness_val._requires_backtest:
-                raise ValueError(
-                    "fitness and fitness_val must both be backtest-based or both be "
-                    "classification-based. Mixed modes are not supported."
-                )
+    def _check_metrics_evaluator_consistency(self) -> "RunConfig":
+        """Ensure all metric configs match the evaluator type.
+
+        Classification metrics require ClassificationEvaluatorConfig;
+        backtest metrics require BacktestEvaluatorConfig.
+        """
+        is_backtest_eval = isinstance(self.evaluator, BacktestEvaluatorConfig)
+        for metric_sets, label in [
+            (self.metrics, "metrics"),
+            (self.metrics_val or (), "metrics_val"),
+        ]:
+            for m in metric_sets:
+                is_backtest_metric = isinstance(m, BacktestMetricConfigBase)
+                if is_backtest_metric != is_backtest_eval:
+                    raise ValueError(
+                        f"{label} contains a "
+                        f"{'backtest' if is_backtest_metric else 'classification'} "
+                        f"metric ({type(m).__name__}) but evaluator is "
+                        f"{'BacktestEvaluatorConfig' if is_backtest_eval else 'ClassificationEvaluatorConfig'}. "
+                        "All metrics must match the evaluator type."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _check_selection_objective_count(self) -> "RunConfig":
+        """Ensure selection operator matches the number of objectives.
+
+        More than one metric requires a MultiObjectiveSelectionConfigBase
+        operator (e.g. NSGA2SelectionConfig). Exactly one metric requires a
+        SingleObjectiveSelectionConfigBase operator.
+        """
+        n = len(self.metrics)
+        is_multi_select = isinstance(
+            self.selection, MultiObjectiveSelectionConfigBase
+        )
+        if n > 1 and not is_multi_select:
+            raise ValueError(
+                f"RunConfig has {n} metrics (multi-objective) but selection "
+                f"operator {type(self.selection).__name__!r} does not inherit "
+                "MultiObjectiveSelectionConfigBase. "
+                "Use NSGA2SelectionConfig or SPEA2SelectionConfig."
+            )
+        if n == 1 and is_multi_select:
+            raise ValueError(
+                f"RunConfig has 1 metric (single-objective) but selection "
+                f"operator {type(self.selection).__name__!r} inherits "
+                "MultiObjectiveSelectionConfigBase. "
+                "Use TournamentSelectionConfig or similar for single-objective runs."
+            )
         return self

@@ -42,21 +42,32 @@ from pytest import CaptureFixture, MonkeyPatch
 
 from gentrade.config import (
     TREE_GEN_FUNCS,
+    BacktestEvaluatorConfig,
+    BacktestMetricConfigBase,
     BestSelectionConfig,
+    ClassificationEvaluatorConfig,
+    ClassificationMetricConfigBase,
     DataConfig,
     DefaultLargePsetConfig,
     DefaultMediumPsetConfig,
     DoubleTournamentSelectionConfig,
     EphemeralMutationConfig,
+    EvaluatorConfigBase,
     EvolutionConfig,
-    F1FitnessConfig,
+    F1MetricConfig,
     InsertMutationConfig,
+    MetricConfigBase,
+    MultiObjectiveSelectionConfigBase,
+    NSGA2SelectionConfig,
     NodeReplacementMutationConfig,
     OnePointCrossoverConfig,
     OnePointLeafBiasedCrossoverConfig,
+    PrecisionMetricConfig,
     PsetConfigBase,
     RunConfig,
-    SharpeFitnessConfig,
+    SharpeMetricConfig,
+    SingleObjectiveSelectionConfigBase,
+    SPEA2SelectionConfig,
     ShrinkMutationConfig,
     TournamentSelectionConfig,
     TreeConfig,
@@ -312,15 +323,30 @@ class TestDataConfig:
 class TestRunConfigValidation:
     """Pydantic validator and input validation in run_evolution."""
 
-    def test_mixed_mode_fitness_raises(self, cfg_test_default: RunConfig) -> None:
-        """RunConfig rejects mixed backtest/classification fitness_val."""
-        # ``model_copy`` does not trigger the post-validator, so construct a
-        # fresh instance instead.  The error is raised during initialization.
-        with pytest.raises(ValueError, match="Mixed modes are not supported"):
+    def test_backtest_metric_with_classification_evaluator_raises(self) -> None:
+        """RunConfig rejects backtest metric with ClassificationEvaluatorConfig."""
+        with pytest.raises(ValueError, match="must match the evaluator type"):
             RunConfig(
-                fitness=F1FitnessConfig(),
-                fitness_val=SharpeFitnessConfig(),
-                backtest=None,
+                evaluator=ClassificationEvaluatorConfig(),
+                metrics=(SharpeMetricConfig(),),
+            )
+
+    def test_multi_metric_with_single_objective_selection_raises(self) -> None:
+        """RunConfig rejects 2 metrics with TournamentSelectionConfig."""
+        with pytest.raises(ValueError, match="multi-objective"):
+            RunConfig(
+                evaluator=ClassificationEvaluatorConfig(),
+                metrics=(F1MetricConfig(), PrecisionMetricConfig()),
+                selection=TournamentSelectionConfig(tournsize=3),
+            )
+
+    def test_single_metric_with_nsga2_selection_raises(self) -> None:
+        """RunConfig rejects 1 metric with NSGA2SelectionConfig."""
+        with pytest.raises(ValueError, match="single-objective"):
+            RunConfig(
+                evaluator=ClassificationEvaluatorConfig(),
+                metrics=(F1MetricConfig(),),
+                selection=NSGA2SelectionConfig(),
             )
 
     def test_missing_train_labels_classification_raises(
@@ -332,10 +358,10 @@ class TestRunConfigValidation:
             # omit cfg to exercise default-initialisation branch
             run_evolution(df, None, None, None, None)
 
-    def test_val_data_without_fitness_val_raises(
+    def test_val_data_without_metrics_val_raises(
         self, cfg_test_default: RunConfig
     ) -> None:
-        """run_evolution raises when val_data is given but cfg.fitness_val is None."""
+        """run_evolution raises when val_data is given but cfg.metrics_val is None."""
         df = generate_synthetic_ohlcv(cfg_test_default.data.n, cfg_test_default.seed)
         labels = zigzag_pivots(
             df["close"],
@@ -346,17 +372,20 @@ class TestRunConfigValidation:
         train_df, val_df = df.iloc[:split], df.iloc[split:]
         train_labels = labels.iloc[:split]
 
-        # cfg_test_default has fitness_val=None by default
-        assert cfg_test_default.fitness_val is None
-        with pytest.raises(ValueError, match="cfg.fitness_val must be set"):
-            # use default config which has fitness_val=None
+        # cfg_test_default has metrics_val=None by default
+        assert cfg_test_default.metrics_val is None
+        with pytest.raises(ValueError, match="cfg.metrics_val must be set"):
+            # use default config which has metrics_val=None
             run_evolution(train_df, train_labels, val_df, None, None)
 
     def test_val_labels_missing_classification_raises(
         self, cfg_test_default: RunConfig
     ) -> None:
-        """run_evolution raises when classification fitness_val used without val_labels."""
-        cfg = cfg_test_default.model_copy(update={"fitness_val": F1FitnessConfig()})
+        """run_evolution raises when classification evaluator used without val_labels."""
+        cfg = cfg_test_default.model_copy(update={
+            "evaluator": ClassificationEvaluatorConfig(),
+            "metrics_val": (F1MetricConfig(),),
+        })
         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
         labels = zigzag_pivots(
             df["close"], cfg.data.target_threshold, cfg.data.target_label
@@ -367,3 +396,41 @@ class TestRunConfigValidation:
 
         with pytest.raises(ValueError, match="val_labels must be provided"):
             run_evolution(train_df, train_labels, val_df, None, cfg)
+
+
+@pytest.mark.unit
+class TestMetricConfigSerialization:
+    """Metric configs round-trip through model_dump() correctly."""
+
+    def test_weight_present_in_dump(self) -> None:
+        """MetricConfigBase.model_dump() includes 'weight'."""
+        cfg = F1MetricConfig(weight=2.0)
+        dump = cfg.model_dump()
+        assert dump["weight"] == 2.0
+
+    def test_type_tag_correct(self) -> None:
+        """F1MetricConfig.type == 'f1'."""
+        assert F1MetricConfig().type == "f1"
+
+    def test_tuple_of_metrics_round_trips(self) -> None:
+        """RunConfig.metrics tuple preserves subclass fields in model_dump()."""
+        cfg = RunConfig(
+            evaluator=ClassificationEvaluatorConfig(),
+            metrics=(F1MetricConfig(weight=1.0), PrecisionMetricConfig(weight=0.5)),
+            selection=NSGA2SelectionConfig(),
+        )
+        dump = cfg.model_dump()
+        metrics_dump = dump["metrics"]
+        assert len(metrics_dump) == 2
+        assert metrics_dump[0]["type"] == "f1"
+        assert metrics_dump[0]["weight"] == 1.0
+        assert metrics_dump[1]["type"] == "precision"
+        assert metrics_dump[1]["weight"] == 0.5
+
+    def test_evaluator_type_tag_in_dump(self) -> None:
+        """BacktestEvaluatorConfig.type == 'backtest'."""
+        assert BacktestEvaluatorConfig().type == "backtest"
+
+    def test_classification_evaluator_type_tag(self) -> None:
+        """ClassificationEvaluatorConfig.type == 'classification'."""
+        assert ClassificationEvaluatorConfig().type == "classification"

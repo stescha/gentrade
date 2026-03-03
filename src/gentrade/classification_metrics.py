@@ -1,16 +1,16 @@
-"""Classification fitness functions for GP evolution.
+"""Classification metric functions for GP evolution.
 
 Callable classes that score how well a GP tree's boolean output matches
 ground-truth classification labels. All functions accept two boolean
 ``pd.Series`` (``y_true``, ``y_pred``) and return a ``float`` in ``[0, 1]``
-(higher is better), making them directly usable as DEAP fitness evaluators.
+(higher is better), making them directly usable as DEAP metric evaluators.
 
 Design notes:
 - All implementations handle edge cases (all-true, all-false, zero denominators)
   without raising, returning a neutral or worst-case score instead.
-- ``MCCFitness`` rescales MCC from ``[-1, 1]`` to ``[0, 1]`` so DEAP's
+- ``MCCMetric`` rescales MCC from ``[-1, 1]`` to ``[0, 1]`` so DEAP's
   maximization framework treats it uniformly with the rest.
-- Prefer ``MCCFitness`` or ``BalancedAccuracyFitness`` for heavily imbalanced
+- Prefer ``MCCMetric`` or ``BalancedAccuracyMetric`` for heavily imbalanced
   label distributions (e.g., rare zigzag pivots).
 """
 
@@ -19,8 +19,8 @@ import pandas as pd
 from typing import cast
 
 
-class ClassificationFitnessBase:
-    """Abstract base for classification fitness functions.
+class ClassificationMetricBase:
+    """Abstract base for classification metric functions.
 
     - Callable interface: ``fitness_fn(y_true, y_pred) -> float``.
     - Subclasses must implement ``__call__``.
@@ -59,7 +59,7 @@ def _confusion_counts(
     return tp, fp, fn, tn
 
 
-class F1Fitness(ClassificationFitnessBase):
+class F1Metric(ClassificationMetricBase):
     """F1 score: harmonic mean of precision and recall.
 
     Balances false positives and false negatives equally. A good default
@@ -74,7 +74,7 @@ class F1Fitness(ClassificationFitnessBase):
         return 2.0 * precision * recall / denom if denom > 0.0 else 0.0
 
 
-class FBetaFitness(ClassificationFitnessBase):
+class FBetaMetric(ClassificationMetricBase):
     """F-beta score: precision-recall trade-off controlled by beta.
 
     - ``beta > 1`` weights recall more heavily (missing a signal is costly).
@@ -99,7 +99,7 @@ class FBetaFitness(ClassificationFitnessBase):
         return (1.0 + beta_sq) * precision * recall / denom if denom > 0.0 else 0.0
 
 
-class MCCFitness(ClassificationFitnessBase):
+class MCCMetric(ClassificationMetricBase):
     """Matthews Correlation Coefficient (MCC), rescaled to ``[0, 1]``.
 
     MCC measures the correlation between predicted and true binary labels while
@@ -121,7 +121,7 @@ class MCCFitness(ClassificationFitnessBase):
         return (mcc + 1.0) / 2.0
 
 
-class BalancedAccuracyFitness(ClassificationFitnessBase):
+class BalancedAccuracyMetric(ClassificationMetricBase):
     """Balanced accuracy: average of sensitivity (TPR) and specificity (TNR).
 
     Gives equal weight to each class regardless of prevalence. Robust to
@@ -136,7 +136,7 @@ class BalancedAccuracyFitness(ClassificationFitnessBase):
         return (sensitivity + specificity) / 2.0
 
 
-class PrecisionFitness(ClassificationFitnessBase):
+class PrecisionMetric(ClassificationMetricBase):
     """Precision: fraction of predicted positives that are correct.
 
     Maximizes signal quality. Use when false positives (acting on non-pivot
@@ -149,7 +149,7 @@ class PrecisionFitness(ClassificationFitnessBase):
         return tp / (tp + fp) if (tp + fp) > 0 else 0.0
 
 
-class RecallFitness(ClassificationFitnessBase):
+class RecallMetric(ClassificationMetricBase):
     """Recall: fraction of actual positives that are detected.
 
     Maximizes coverage. Use when missing a pivot is more costly than raising
@@ -162,7 +162,7 @@ class RecallFitness(ClassificationFitnessBase):
         return tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
 
-class JaccardFitness(ClassificationFitnessBase):
+class JaccardMetric(ClassificationMetricBase):
     """Jaccard index (intersection over union) for binary classification.
 
     Measures the overlap between predicted and actual positive sets. Stricter

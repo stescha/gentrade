@@ -8,11 +8,13 @@ Run with: poetry run python scripts/run_zigzag.py
 """
 
 from gentrade.config import (
+    ClassificationEvaluatorConfig,
     DataConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
-    FBetaFitnessConfig,
-    MCCFitnessConfig,
+    F1MetricConfig,
+    FBetaMetricConfig,
+    MCCMetricConfig,
     NodeReplacementMutationConfig,
     OnePointLeafBiasedCrossoverConfig,
     RunConfig,
@@ -25,7 +27,10 @@ from gentrade.evolve import run_evolution
 # ── Example 1: Default config ─────────────────────────────
 # F1 fitness, large pset, uniform mutation, one-point crossover,
 # tournament selection — equivalent to the original smoke_zigzag.py.
-cfg_default = RunConfig()
+cfg_default = RunConfig(
+    evaluator=ClassificationEvaluatorConfig(),
+    metrics=(F1MetricConfig(),),
+)
 
 
 # ── Example 2: Recall-focused with medium pset ────────────
@@ -34,7 +39,8 @@ cfg_default = RunConfig()
 # parsimony pressure against bloat.
 cfg_recall = RunConfig(
     seed=42,
-    fitness=FBetaFitnessConfig(beta=3.0),
+    evaluator=ClassificationEvaluatorConfig(),
+    metrics=(FBetaMetricConfig(beta=3.0),),
     pset=ZigzagMediumPsetConfig(),
     evolution=EvolutionConfig(
         mu=300,
@@ -54,7 +60,8 @@ cfg_recall = RunConfig(
 cfg_extensive = RunConfig(
     seed=42,
     data=DataConfig(n=100000, target_threshold=0.02),
-    fitness=FBetaFitnessConfig(beta=3.0),
+    evaluator=ClassificationEvaluatorConfig(),
+    metrics=(FBetaMetricConfig(beta=3.0),),
     pset=ZigzagMediumPsetConfig(),
     evolution=EvolutionConfig(
         mu=1000, lambda_=2000, generations=50, cxpb=0.6, mutpb=0.3, processes=32
@@ -74,7 +81,8 @@ cfg_extensive = RunConfig(
 # structure better than uniform mutation.
 cfg_conservative = RunConfig(
     seed=2024,
-    fitness=MCCFitnessConfig(),
+    evaluator=ClassificationEvaluatorConfig(),
+    metrics=(MCCMetricConfig(),),
     evolution=EvolutionConfig(
         mu=100,
         lambda_=200,

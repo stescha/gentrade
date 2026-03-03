@@ -13,130 +13,48 @@ drive how the operator is wired without any isinstance checks.
 import multiprocessing
 import operator
 import random
-from functools import partial
-from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 from deap import base, creator, gp, tools
 
 from gentrade.algorithms import eaMuPlusLambdaGentrade
-from gentrade.backtest_fitness import run_vbt_backtest
-from gentrade.config import TREE_GEN_FUNCS, BacktestConfig, FitnessConfigBase, RunConfig
+from gentrade.config import (
+    TREE_GEN_FUNCS,
+    BacktestEvaluatorConfig,
+    ClassificationEvaluatorConfig,
+    EvaluatorConfigBase,
+    RunConfig,
+)
+from gentrade.evaluators import (
+    BacktestEvaluator,
+    ClassificationEvaluator,
+    _BacktestEvalCallable,
+    _ClassificationEvalCallable,
+)
 from gentrade.growtree import genFull
 
-if TYPE_CHECKING:
-    pass
 
 # moved to data module to centralise data helpers
 
 
-def _compile_tree_to_signals(
-    individual: gp.PrimitiveTree,
-    pset: gp.PrimitiveSetTyped,
-    df: pd.DataFrame,
-) -> pd.Series:
-    """Compile a GP tree and evaluate it on OHLCV data.
 
-    This helper centralises the logic used by both ``evaluate`` and
-    ``evaluate_backtest``. It handles the usual DEAP ``gp.compile`` call
-    and coerces the result into a boolean ``pd.Series`` of the same length as
-    ``df``. Scalar outputs (``True``/``False`` or numeric) are broadcast across
-    the entire series, matching the behaviour used in the old
-    ``smoke_zigzag`` script.
+def _make_evaluator(
+    evaluator_cfg: EvaluatorConfigBase,
+) -> ClassificationEvaluator | BacktestEvaluator:
+    """Construct an evaluator instance from its config.
 
     Args:
-        individual: GP tree to compile.
-        pset: Primitive set for compilation.
-        df: OHLCV DataFrame providing the input arrays.
+        evaluator_cfg: Evaluator config from ``RunConfig``.
 
     Returns:
-        Boolean ``pd.Series`` indexed like ``df``.
+        Concrete evaluator instance ready to call ``.evaluate()``.
     """
-    func = gp.compile(individual, pset)
-    y_pred = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
-
-    # Single-value trees return a scalar; broadcast to full length
-    if isinstance(y_pred, (bool, int, float, np.bool_)):
-        return pd.Series([bool(y_pred)] * len(df), index=df.index)
-
-    series = pd.Series(y_pred, index=df.index)
-    return series.astype(bool)
-
-
-def evaluate(
-    individual: gp.PrimitiveTree,
-    pset: gp.PrimitiveSetTyped,
-    df: pd.DataFrame,
-    y_true: pd.Series,
-    fitness_fn: FitnessConfigBase,
-) -> tuple[float]:
-    """Evaluate an individual's fitness using the supplied fitness function.
-
-    Args:
-        individual: GP tree to evaluate.
-        pset: Primitive set for compilation.
-        df: OHLCV DataFrame.
-        y_true: Ground truth boolean series.
-        fitness_fn: Callable ``(y_true, y_pred) -> float``. Typically a
-            ``FitnessConfigBase`` subclass instance.
-
-    Returns:
-        Single-element tuple with the fitness score (DEAP convention).
-    """
-    try:
-        y_pred = _compile_tree_to_signals(individual, pset, df)
-        return (fitness_fn(y_true, y_pred),)
-    except Exception:
-        return (0.0,)
-
-
-def evaluate_backtest(
-    individual: gp.PrimitiveTree,
-    pset: gp.PrimitiveSetTyped,
-    df: pd.DataFrame,
-    backtest_cfg: BacktestConfig,
-    fitness_fn: FitnessConfigBase,
-) -> tuple[float]:
-    """Evaluate an individual's fitness using vectorbt portfolio simulation.
-
-    Compiles the tree to a boolean entry signal, runs a vectorbt backtest
-    with TP/SL exits, then extracts a single metric via ``fitness_fn``.
-
-    Guards (all return ``(0.0,)``):
-    - Fitness function itself applies a minimum-trades guard based on its
-      ``min_trades`` attribute.
-    - Non-finite metric value (NaN or Inf).
-    - Any exception during compilation, simulation, or metric extraction.
-
-    Args:
-        individual: GP tree to evaluate.
-        pset: Primitive set for compilation.
-        df: OHLCV DataFrame.
-        backtest_cfg: Portfolio simulation parameters.
-        fitness_fn: Callable ``(vbt.Portfolio) -> float``. Typically a
-            ``BacktestFitnessConfigBase`` subclass instance.
-
-    Returns:
-        Single-element tuple with the fitness score (DEAP convention).
-    """
-    try:
-        entries = _compile_tree_to_signals(individual, pset, df)
-        pf = run_vbt_backtest(
-            ohlcv=df,
-            entries=entries,
-            tp_stop=backtest_cfg.tp_stop,
-            sl_stop=backtest_cfg.sl_stop,
-            sl_trail=backtest_cfg.sl_trail,
-            fees=backtest_cfg.fees,
-            init_cash=backtest_cfg.init_cash,
-        )
-        metric = fitness_fn(pf)
-        if not np.isfinite(metric):
-            return (0.0,)
-        return (metric,)
-    except Exception:
-        return (0.0,)
+    if isinstance(evaluator_cfg, BacktestEvaluatorConfig):
+        return BacktestEvaluator(evaluator_cfg)
+    return ClassificationEvaluator(
+        evaluator_cfg  # type: ignore[arg-type]
+    )
 
 
 def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
@@ -156,8 +74,22 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
     Returns:
         Configured DEAP toolbox without an evaluate operator.
     """
+    # NOTE: DEAP creator.create is idempotent -- re-registration with different
+    # weights is silently ignored, corrupting fitness dimensions across multiple
+    # run_evolution calls in the same process (e.g. the test suite).
+    # We delete and recreate when weights differ to support this use case.
+    # This is NOT safe if multiprocessing workers inherit module state before
+    # recreation; always call run_evolution (and therefore create_toolbox) before
+    # spawning worker processes.
+    # TODO: Replace with a per-run fitness class factory.
+    weights = tuple(m.weight for m in cfg.metrics)
+    if hasattr(creator, "FitnessMax"):
+        if creator.FitnessMax.weights != weights:
+            del creator.FitnessMax
+            if hasattr(creator, "Individual"):
+                del creator.Individual
     if not hasattr(creator, "FitnessMax"):
-        creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+        creator.create("FitnessMax", base.Fitness, weights=weights)
     if not hasattr(creator, "Individual"):
         creator.create("Individual", gp.PrimitiveTree, fitness=creator.FitnessMax)
 
@@ -244,27 +176,27 @@ def run_evolution(
         train_data: OHLCV DataFrame used for training fitness evaluation. Must
             have ``open``, ``high``, ``low``, ``close`` and ``volume`` columns.
         val_data: Optional OHLCV DataFrame for validation evaluation. When
-            provided, ``cfg.fitness_val`` must also be set.
+            provided, ``cfg.metrics_val`` must also be set.
         train_labels: Ground-truth boolean ``pd.Series`` for the training set.
-            Required when ``cfg.fitness`` is a classification fitness
-            (``_requires_backtest = False``).
+            Required when ``cfg.evaluator`` is a
+            ``ClassificationEvaluatorConfig``.
         val_labels: Ground-truth boolean ``pd.Series`` for the validation set.
-            Required when ``val_data`` is provided and ``cfg.fitness_val`` is a
-            classification fitness.
+            Required when ``val_data`` is provided and the evaluator is
+            ``ClassificationEvaluatorConfig``.
         cfg: Complete run configuration.  Defaults to :class:`RunConfig` if
             omitted or ``None``.
 
     Returns:
-        Tuple of ``(final_population, train_logbook, hall_of_fame, val_logbook)``
-        where ``val_logbook`` is ``None`` when no validation data was provided.
+        Tuple of ``(final_population, train_logbook, hall_of_fame)``
+        where ``val_logbook`` is logged via callback when provided.
 
     Raises:
-        ValueError: If ``cfg.fitness`` is classification-based and
+        ValueError: If evaluator is ``ClassificationEvaluatorConfig`` and
             ``train_labels`` is ``None``.
-        ValueError: If ``val_data`` is provided but ``cfg.fitness_val`` is
+        ValueError: If ``val_data`` is provided but ``cfg.metrics_val`` is
             ``None``.
-        ValueError: If ``val_data`` is provided, ``cfg.fitness_val`` is
-            classification-based, and ``val_labels`` is ``None``.
+        ValueError: If ``val_data`` is provided, evaluator is
+            ``ClassificationEvaluatorConfig``, and ``val_labels`` is ``None``.
     """
 
     if cfg is None:
@@ -276,31 +208,37 @@ def run_evolution(
         np.random.seed(cfg.seed)
 
     # ── 1b. Validate data / config consistency ─────────────────
-    if not cfg.fitness._requires_backtest and train_labels is None:
+    if (
+        isinstance(cfg.evaluator, ClassificationEvaluatorConfig)
+        and train_labels is None
+    ):
         raise ValueError(
-            "train_labels must be provided when using a classification fitness. "
+            "train_labels must be provided when using ClassificationEvaluatorConfig. "
             "Compute labels outside run_evolution and pass them in."
         )
-    if val_data is not None and cfg.fitness_val is None:
+    if val_data is not None and cfg.metrics_val is None:
         raise ValueError(
-            "cfg.fitness_val must be set in RunConfig when val_data is provided. "
-            "Add fitness_val=<FitnessConfig> to your RunConfig."
+            "cfg.metrics_val must be set in RunConfig when val_data is provided. "
+            "Add metrics_val=(...,) to your RunConfig."
         )
     if (
         val_data is not None
-        and cfg.fitness_val is not None
-        and not cfg.fitness_val._requires_backtest
+        and isinstance(cfg.evaluator, ClassificationEvaluatorConfig)
         and val_labels is None
     ):
         raise ValueError(
-            "val_labels must be provided when val_data is used with a classification "
-            "fitness_val. Compute labels outside run_evolution and pass them in."
+            "val_labels must be provided when val_data is used with "
+            "ClassificationEvaluatorConfig."
         )
 
     # ── 2. Print config summary ────────────────────────────
     print("=== GP Evolution Run ===")
     print(f"Seed: {cfg.seed}")
-    print(f"Fitness: {cfg.fitness.type}")
+    metric_summary = ", ".join(
+        f"{m.type}(w={m.weight})" for m in cfg.metrics
+    )
+    print(f"Metrics: [{metric_summary}]")
+    print(f"Evaluator: {cfg.evaluator.type}")
     print(
         f"Evolution: mu={cfg.evolution.mu}, λ={cfg.evolution.lambda_}, "
         f"gen={cfg.evolution.generations}, cxpb={cfg.evolution.cxpb}, "
@@ -325,80 +263,48 @@ def run_evolution(
     # ── 5. DEAP toolbox ────────────────────────────────────
     toolbox = create_toolbox(cfg, pset)
 
-    # ── 6. Evaluation — dispatch based on fitness type ─────
-    if cfg.fitness._requires_backtest:
-        if cfg.backtest is None:
-            raise ValueError(
-                "RunConfig.backtest must be set when using a backtest fitness. "
-                "Add backtest=BacktestConfig() to your RunConfig."
-            )
-        toolbox.register(
-            "evaluate",
-            partial(
-                evaluate_backtest,
-                pset=pset,
-                df=train_data,
-                backtest_cfg=cfg.backtest,
-                fitness_fn=cfg.fitness,
-            ),
+    # ── 6. Evaluation — dispatch based on evaluator type ─────
+    # Use picklable callable objects (not local lambdas) so evaluation
+    # can be distributed to multiprocessing worker processes.
+    evaluator = _make_evaluator(cfg.evaluator)
+
+    if isinstance(cfg.evaluator, BacktestEvaluatorConfig):
+        _eval_fn = _BacktestEvalCallable(
+            evaluator,  # type: ignore[arg-type]
+            pset=pset,
+            df=train_data,
+            metrics=cfg.metrics,  # type: ignore[arg-type]
         )
     else:
-        if train_labels is None:
-            raise ValueError(
-                "train_labels must be provided when using a classification fitness. "
-                "Compute labels outside run_evolution and pass them in."
-            )
-        toolbox.register(
-            "evaluate",
-            partial(
-                evaluate,
-                pset=pset,
-                df=train_data,
-                y_true=train_labels,
-                fitness_fn=cfg.fitness,
-            ),
+        assert train_labels is not None  # validated above
+        _eval_fn = _ClassificationEvalCallable(  # type: ignore[assignment]
+            evaluator,  # type: ignore[arg-type]
+            pset=pset,
+            df=train_data,
+            y_true=train_labels,
+            metrics=cfg.metrics,  # type: ignore[arg-type]
         )
+    toolbox.register("evaluate", _eval_fn)
 
-    # ── 6c. Validation evaluate — register a second operator on the toolbox
-    # which mirrors the train evaluate but uses the validation data/labels.
     if val_data is not None:
-        if cfg.backtest is None:
-            raise ValueError(
-                "RunConfig.backtest must be set when using a backtest fitness_val. "
-                "Add backtest=BacktestConfig() to your RunConfig."
-            )
-        if cfg.fitness_val is None:
-            raise ValueError(
-                "RunConfig.fitness_val must be set when val_data is provided. "
-                "Add fitness_val=<FitnessConfig> to your RunConfig."
-            )
-        if cfg.fitness_val._requires_backtest:
-            toolbox.register(
-                "evaluate_val",
-                partial(
-                    evaluate_backtest,
-                    pset=pset,
-                    df=val_data,
-                    backtest_cfg=cfg.backtest,
-                    fitness_fn=cfg.fitness_val,
-                ),
+        assert cfg.metrics_val is not None  # validated above
+        if isinstance(cfg.evaluator, BacktestEvaluatorConfig):
+            _val_eval_fn = _BacktestEvalCallable(
+                evaluator,  # type: ignore[arg-type]
+                pset=pset,
+                df=val_data,
+                metrics=cfg.metrics_val,  # type: ignore[arg-type]
             )
         else:
-            if val_labels is None:
-                raise ValueError(
-                    "val_labels must be provided when val_data is used with a classification "
-                    "fitness_val. Compute labels outside run_evolution and pass them in."
-                )
-            toolbox.register(
-                "evaluate_val",
-                partial(
-                    evaluate,
-                    pset=pset,
-                    df=val_data,
-                    y_true=val_labels,
-                    fitness_fn=cfg.fitness_val,
-                ),
+            assert val_labels is not None  # validated above
+            _val_eval_fn = _ClassificationEvalCallable(  # type: ignore[assignment]
+                evaluator,  # type: ignore[arg-type]
+                pset=pset,
+                df=val_data,
+                y_true=val_labels,
+                metrics=cfg.metrics_val,  # type: ignore[arg-type]
             )
+        toolbox.register("evaluate_val", _val_eval_fn)
 
     # ── 6b. Multiprocessing ────────────────────────────────
     pool = None
@@ -467,7 +373,11 @@ def run_evolution(
     print()
 
     best = hof[0]
-    print(f"Best individual ({cfg.fitness.type} = {best.fitness.values[0]:.4f}):")
+    fitness_str = ", ".join(
+        f"{m.type}={v:.4f}"
+        for m, v in zip(cfg.metrics, best.fitness.values)
+    )
+    print(f"Best individual ({fitness_str}):")
     print(f"  {str(best)}")
     print()
 
@@ -477,8 +387,12 @@ def run_evolution(
 
     print(f"Top {cfg.evolution.hof_size} individuals:")
     for i, ind in enumerate(hof):
+        fitness_str_i = ", ".join(
+            f"{m.type}={v:.4f}"
+            for m, v in zip(cfg.metrics, ind.fitness.values)
+        )
         print(
-            f"  {i + 1}. {cfg.fitness.type}={ind.fitness.values[0]:.4f}: {str(ind)[:80]}..."
+            f"  {i + 1}. {fitness_str_i}: {str(ind)[:80]}..."
         )
     print()
 

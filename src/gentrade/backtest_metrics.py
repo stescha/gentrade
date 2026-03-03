@@ -1,8 +1,8 @@
-"""Backtest fitness functions for GP evolution via vectorbt portfolio simulation.
+"""Backtest metric functions for GP evolution via vectorbt portfolio simulation.
 
 Standalone callable classes that score GP tree signals by simulating a
 portfolio with take-profit and stop-loss exits using vectorbt.
-``BacktestFitnessBase`` defines the callable interface; subclasses implement
+``BacktestMetricBase`` defines the callable interface; subclasses implement
 metric extraction from the resulting portfolio.
 
 ``run_vbt_backtest`` is the sole entry point for the simulation. It accepts
@@ -14,10 +14,10 @@ import pandas as pd
 import vectorbt as vbt
 
 
-class BacktestFitnessBase:
-    """Abstract base for backtest fitness functions.
+class BacktestMetricBase:
+    """Abstract base for backtest metric functions.
 
-    Callable interface: ``fitness_fn(portfolio) -> float``.
+    Callable interface: ``metric_fn(portfolio) -> float``.
     Subclasses implement metric extraction from a vectorbt Portfolio.
     Scores should be maximized (higher is better) for DEAP compatibility.
 
@@ -26,7 +26,7 @@ class BacktestFitnessBase:
     min_trades: int
         Minimum number of closed trades required for a nonzero score. A value
         of zero disables the guard; when the portfolio has fewer closed trades
-        than this threshold the fitness returns ``0.0`` immediately.
+        than this threshold the metric returns ``0.0`` immediately.
     """
 
     def __init__(self, min_trades: int = 0) -> None:
@@ -40,7 +40,7 @@ class BacktestFitnessBase:
         return self.min_trades > 0 and portfolio.trades.count() < self.min_trades
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
-        """Compute fitness score from a backtest portfolio.
+        """Compute metric score from a backtest portfolio.
 
         Args:
             portfolio: VectorBT Portfolio object.
@@ -51,7 +51,7 @@ class BacktestFitnessBase:
         raise NotImplementedError
 
 
-class SharpeRatioFitness(BacktestFitnessBase):
+class SharpeRatioMetric(BacktestMetricBase):
     """Sharpe ratio: risk-adjusted return (mean return / return std deviation)."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -60,7 +60,7 @@ class SharpeRatioFitness(BacktestFitnessBase):
         return float(portfolio.sharpe_ratio())
 
 
-class SortinoRatioFitness(BacktestFitnessBase):
+class SortinoRatioMetric(BacktestMetricBase):
     """Sortino ratio: downside risk-adjusted return."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -69,7 +69,7 @@ class SortinoRatioFitness(BacktestFitnessBase):
         return float(portfolio.sortino_ratio())
 
 
-class CalmarRatioFitness(BacktestFitnessBase):
+class CalmarRatioMetric(BacktestMetricBase):
     """Calmar ratio: annualised return divided by maximum drawdown."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -78,7 +78,7 @@ class CalmarRatioFitness(BacktestFitnessBase):
         return float(portfolio.calmar_ratio())
 
 
-class TotalReturnFitness(BacktestFitnessBase):
+class TotalReturnMetric(BacktestMetricBase):
     """Total return: cumulative portfolio return over the evaluation period."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -87,7 +87,7 @@ class TotalReturnFitness(BacktestFitnessBase):
         return float(portfolio.total_return())
 
 
-class MeanPnlFitness(BacktestFitnessBase):
+class MeanPnlMetric(BacktestMetricBase):
     """Mean PnL per trade: average profit/loss across all closed trades.
 
     Returns ``0.0`` when there are no trades to avoid division-by-zero errors.
