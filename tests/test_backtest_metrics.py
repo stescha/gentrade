@@ -1,5 +1,5 @@
-"""Tests for backtest fitness computation classes, config classes, BacktestConfig,
-and the evaluate_backtest function.
+"""Tests for backtest metric computation classes, config classes, BacktestEvaluatorConfig,
+and the BacktestEvaluator class.
 """
 
 import pytest
@@ -11,35 +11,35 @@ import pandas as pd  # noqa: E402
 import vectorbt as vbt  # noqa: E402
 from deap import gp as deap_gp  # noqa: E402
 
-from gentrade.backtest_fitness import (  # noqa: E402
-    BacktestFitnessBase,
-    CalmarRatioFitness,
-    MeanPnlFitness,
-    SharpeRatioFitness,
-    SortinoRatioFitness,
-    TotalReturnFitness,
+from gentrade.backtest_metrics import (  # noqa: E402
+    BacktestMetricBase,
+    CalmarRatioMetric,
+    MeanPnlMetric,
+    SharpeRatioMetric,
+    SortinoRatioMetric,
+    TotalReturnMetric,
     run_vbt_backtest,
 )
 from gentrade.config import (  # noqa: E402
-    BacktestConfig,
-    BacktestFitnessConfigBase,
-    CalmarFitnessConfig,
-    F1FitnessConfig,
-    MCCFitnessConfig,
-    MeanPnlFitnessConfig,
-    SharpeFitnessConfig,
-    SortinoFitnessConfig,
-    TotalReturnFitnessConfig,
+    BacktestEvaluatorConfig,
+    BacktestMetricConfigBase,
+    CalmarMetricConfig,
+    F1MetricConfig,
+    MCCMetricConfig,
+    MeanPnlMetricConfig,
+    SharpeMetricConfig,
+    SortinoMetricConfig,
+    TotalReturnMetricConfig,
 )
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.evolve import (  # noqa: E402
-    _compile_tree_to_signals,
-    evaluate_backtest,
+from gentrade.evaluators import _compile_tree_to_signals  # noqa: E402
+from gentrade.evolve import (
+    _make_evaluator,  # helper to construct evaluators from configs
 )
 from gentrade.minimal_pset import create_pset_zigzag_medium  # noqa: E402
 from gentrade.pset.pset import tree_from_string  # noqa: E402
 
-# ── Module-level helpers ───────────────────────────────────
+# -- Module-level helpers ------------------------------------------
 
 
 def _make_portfolio(n: int = 500, seed: int = 42) -> "vbt.Portfolio":  # noqa: F821
@@ -58,7 +58,7 @@ def _make_portfolio(n: int = 500, seed: int = 42) -> "vbt.Portfolio":  # noqa: F
     return run_vbt_backtest(df, entries, tp_stop=0.02, sl_stop=0.01)
 
 
-# ── Tests ──────────────────────────────────────────────────
+# -- Tests ----------------------------------------------------------
 
 
 @pytest.mark.unit
@@ -88,97 +88,94 @@ class TestRunVbtBacktest:
 
 
 @pytest.mark.unit
-class TestBacktestFitnessComputation:
+class TestBacktestMetricComputation:
     """Computation classes extract correct metric types from a portfolio."""
 
     def test_sharpe_returns_float(self) -> None:
-        """SharpeRatioFitness returns a float."""
+        """SharpeRatioMetric returns a float."""
         pf = _make_portfolio()
-        result = SharpeRatioFitness()(pf)
+        result = SharpeRatioMetric()(pf)
         assert isinstance(result, float)
 
     def test_sortino_returns_float(self) -> None:
-        """SortinoRatioFitness returns a float."""
+        """SortinoRatioMetric returns a float."""
         pf = _make_portfolio()
-        result = SortinoRatioFitness()(pf)
+        result = SortinoRatioMetric()(pf)
         assert isinstance(result, float)
 
     def test_calmar_returns_float(self) -> None:
-        """CalmarRatioFitness returns a float."""
+        """CalmarRatioMetric returns a float."""
         pf = _make_portfolio()
-        result = CalmarRatioFitness()(pf)
+        result = CalmarRatioMetric()(pf)
         assert isinstance(result, float)
 
     def test_total_return_returns_float(self) -> None:
-        """TotalReturnFitness returns a float."""
+        """TotalReturnMetric returns a float."""
         pf = _make_portfolio()
-        result = TotalReturnFitness()(pf)
+        result = TotalReturnMetric()(pf)
         assert isinstance(result, float)
 
     def test_mean_pnl_no_trades_returns_zero(self) -> None:
-        """MeanPnlFitness returns 0.0 for a zero-trade portfolio."""
+        """MeanPnlMetric returns 0.0 for a zero-trade portfolio."""
         df = generate_synthetic_ohlcv(200, 0)
         entries = pd.Series([False] * 200, dtype=bool)
         pf = run_vbt_backtest(df, entries, tp_stop=0.02, sl_stop=0.01)
-        result = MeanPnlFitness()(pf)
+        result = MeanPnlMetric()(pf)
         assert result == 0.0
 
     def test_min_trades_guard_blocks(self) -> None:
-        """Fitness objects respect their ``min_trades`` attribute."""
+        """Metric objects respect their ``min_trades`` attribute."""
         pf = _make_portfolio()
-        # choose a threshold higher than whatever trades we got
         threshold = pf.trades.count() + 1
         assert threshold > 0
-        assert SharpeRatioFitness(min_trades=threshold)(pf) == 0.0
-        assert MeanPnlFitness(min_trades=threshold)(pf) == 0.0
+        assert SharpeRatioMetric(min_trades=threshold)(pf) == 0.0
+        assert MeanPnlMetric(min_trades=threshold)(pf) == 0.0
 
     def test_min_trades_guard_inactive_when_zero(self) -> None:
         """A zero ``min_trades`` should not alter normal behaviour."""
         pf = _make_portfolio()
-        normal = SharpeRatioFitness()(pf)
-        assert SharpeRatioFitness(min_trades=0)(pf) == normal
-        assert MeanPnlFitness(min_trades=0)(pf) == MeanPnlFitness()(pf)
+        normal = SharpeRatioMetric()(pf)
+        assert SharpeRatioMetric(min_trades=0)(pf) == normal
+        assert MeanPnlMetric(min_trades=0)(pf) == MeanPnlMetric()(pf)
 
     def test_base_raises_not_implemented(self) -> None:
-        """BacktestFitnessBase raises NotImplementedError when called."""
+        """BacktestMetricBase raises NotImplementedError when called."""
         with pytest.raises(NotImplementedError):
-            BacktestFitnessBase()(None)
+            BacktestMetricBase()(None)
 
 
 @pytest.mark.unit
-class TestBacktestFitnessConfig:
-    """Backtest fitness config classes have correct ClassVar flags and type tags."""
+class TestBacktestMetricConfig:
+    """Backtest metric config classes have correct type tags and inheritance."""
 
     def test_model_dump_includes_type(self) -> None:
-        """SharpeFitnessConfig.model_dump() contains key 'type' with value 'sharpe'."""
-        cfg = SharpeFitnessConfig()
+        """SharpeMetricConfig.model_dump() contains key 'type' with value 'sharpe'."""
+        cfg = SharpeMetricConfig()
         dump = cfg.model_dump()
         assert dump.get("type") == "sharpe"
 
     def test_model_dump_excludes_func_attribute(self) -> None:
-        """SharpeFitnessConfig.model_dump() does not contain a 'func' key."""
-        dump = SharpeFitnessConfig().model_dump()
+        """SharpeMetricConfig.model_dump() does not contain a 'func' key."""
+        dump = SharpeMetricConfig().model_dump()
         assert "func" not in dump
 
-    def test_requires_backtest_flag_true(self) -> None:
-        """SharpeFitnessConfig._requires_backtest is True."""
-        assert SharpeFitnessConfig()._requires_backtest is True
+    def test_is_backtest_metric_config_base(self) -> None:
+        """SharpeMetricConfig is an instance of BacktestMetricConfigBase."""
+        assert isinstance(SharpeMetricConfig(), BacktestMetricConfigBase)
 
-    @pytest.mark.parametrize("config_cls", [F1FitnessConfig, MCCFitnessConfig])
-    def test_classification_configs_have_requires_backtest_false(
-        self, config_cls: type
-    ) -> None:
-        """Classification configs have _requires_backtest == False."""
-        assert config_cls()._requires_backtest is False
+    @pytest.mark.parametrize("config_cls", [F1MetricConfig, MCCMetricConfig])
+    def test_classification_configs_are_not_backtest(self, config_cls: type) -> None:
+        """F1MetricConfig is not a BacktestMetricConfigBase."""
+        assert not isinstance(config_cls(), BacktestMetricConfigBase)
 
     @pytest.mark.parametrize(
         "config_cls",
         [
-            SharpeFitnessConfig,
-            SortinoFitnessConfig,
-            CalmarFitnessConfig,
-            TotalReturnFitnessConfig,
-            MeanPnlFitnessConfig,
+            SharpeMetricConfig,
+            SortinoMetricConfig,
+            CalmarMetricConfig,
+            TotalReturnMetricConfig,
+            MeanPnlMetricConfig,
         ],
     )
     def test_all_backtest_configs_callable(self, config_cls: type) -> None:
@@ -190,11 +187,11 @@ class TestBacktestFitnessConfig:
     @pytest.mark.parametrize(
         "config_cls, expected_type",
         [
-            (SharpeFitnessConfig, "sharpe"),
-            (SortinoFitnessConfig, "sortino"),
-            (CalmarFitnessConfig, "calmar"),
-            (TotalReturnFitnessConfig, "total_return"),
-            (MeanPnlFitnessConfig, "mean_pnl"),
+            (SharpeMetricConfig, "sharpe"),
+            (SortinoMetricConfig, "sortino"),
+            (CalmarMetricConfig, "calmar"),
+            (TotalReturnMetricConfig, "total_return"),
+            (MeanPnlMetricConfig, "mean_pnl"),
         ],
     )
     def test_type_tags(self, config_cls: type, expected_type: str) -> None:
@@ -202,26 +199,26 @@ class TestBacktestFitnessConfig:
         assert config_cls().type == expected_type
 
     def test_min_trades_field_defaults_and_dump(self) -> None:
-        """Backtest fitness configs expose min_trades with default 0 in dump."""
-        cfg = SharpeFitnessConfig()
+        """Backtest metric configs expose min_trades with default 0 in dump."""
+        cfg = SharpeMetricConfig()
         assert cfg.min_trades == 0
         dump = cfg.model_dump()
         assert dump.get("min_trades") == 0
 
     def test_min_trades_passes_to_underlying(self) -> None:
-        """Config value is forwarded to the fitness object returned by __call__."""
+        """Config value is forwarded to the metric object returned by __call__."""
         pf = _make_portfolio()
-        cfg = SharpeFitnessConfig(min_trades=3)
-        assert cfg(pf) == SharpeRatioFitness(min_trades=3)(pf)
+        cfg = SharpeMetricConfig(min_trades=3)
+        assert cfg(pf) == SharpeRatioMetric(min_trades=3)(pf)
 
 
 @pytest.mark.unit
-class TestBacktestConfig:
-    """BacktestConfig validates fields and defaults correctly."""
+class TestBacktestEvaluatorConfig:
+    """BacktestEvaluatorConfig validates fields and defaults correctly."""
 
     def test_defaults(self) -> None:
-        """BacktestConfig() has the expected default values (no min_trades)."""
-        cfg = BacktestConfig()
+        """BacktestEvaluatorConfig() has the expected default values (no min_trades)."""
+        cfg = BacktestEvaluatorConfig()
         assert cfg.tp_stop == 0.02
         assert cfg.sl_stop == 0.01
         assert cfg.sl_trail is True
@@ -232,42 +229,42 @@ class TestBacktestConfig:
 
     def test_model_dump_all_fields_present(self) -> None:
         """model_dump() contains all expected field names (no min_trades)."""
-        dump = BacktestConfig().model_dump()
+        dump = BacktestEvaluatorConfig().model_dump()
         fields = ("tp_stop", "sl_stop", "sl_trail", "fees", "init_cash")
         for field in fields:
             assert field in dump
 
     def test_tp_stop_must_be_positive(self) -> None:
-        """BacktestConfig(tp_stop=0.0) raises ValidationError."""
+        """BacktestEvaluatorConfig(tp_stop=0.0) raises ValidationError."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            BacktestConfig(tp_stop=0.0)
+            BacktestEvaluatorConfig(tp_stop=0.0)
 
     def test_sl_stop_must_be_positive(self) -> None:
-        """BacktestConfig(sl_stop=0.0) raises ValidationError."""
+        """BacktestEvaluatorConfig(sl_stop=0.0) raises ValidationError."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            BacktestConfig(sl_stop=0.0)
+            BacktestEvaluatorConfig(sl_stop=0.0)
 
     def test_fees_zero_allowed(self) -> None:
-        """BacktestConfig(fees=0.0) does not raise."""
-        cfg = BacktestConfig(fees=0.0)
+        """BacktestEvaluatorConfig(fees=0.0) does not raise."""
+        cfg = BacktestEvaluatorConfig(fees=0.0)
         assert cfg.fees == 0.0
 
     def test_frozen(self) -> None:
-        """BacktestConfig is immutable (frozen pydantic model)."""
+        """BacktestEvaluatorConfig is immutable (frozen pydantic model)."""
         from pydantic import ValidationError
 
-        cfg = BacktestConfig()
+        cfg = BacktestEvaluatorConfig()
         with pytest.raises((ValidationError, TypeError)):
             cfg.tp_stop = 0.05  # type: ignore[misc]
 
 
 @pytest.mark.integration
-class TestEvaluateBacktest:
-    """evaluate_backtest correctly wraps the backtest pipeline for DEAP."""
+class TestBacktestEvaluator:
+    """BacktestEvaluator correctly wraps the backtest pipeline for DEAP."""
 
     def _make_individual(self) -> deap_gp.PrimitiveTree:
         """Build a minimal always-false GP tree for testing."""
@@ -281,67 +278,65 @@ class TestEvaluateBacktest:
         return create_pset_zigzag_medium()
 
     def test_returns_tuple_of_one_float(self) -> None:
-        """evaluate_backtest returns a tuple of length 1 with a float."""
+        """BacktestEvaluator.evaluate returns a tuple of length 1 with a float."""
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
-        result = evaluate_backtest(
+        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        result = evaluator.evaluate(
             individual,
             pset=pset,
             df=df,
-            backtest_cfg=BacktestConfig(),
-            fitness_fn=SharpeFitnessConfig(min_trades=0),
+            metrics=(SharpeMetricConfig(min_trades=0),),
         )
         assert isinstance(result, tuple)
         assert len(result) == 1
         assert isinstance(result[0], float)
 
     def test_min_trades_guard_returns_zero(self) -> None:
-        """evaluate_backtest returns (0.0,) when the fitness applies a high threshold."""
+        """BacktestEvaluator returns (0.0,) when the metric applies a high threshold."""
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
-        result = evaluate_backtest(
+        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        result = evaluator.evaluate(
             individual,
             pset=pset,
             df=df,
-            backtest_cfg=BacktestConfig(),
-            fitness_fn=SharpeFitnessConfig(min_trades=999999),
+            metrics=(SharpeMetricConfig(min_trades=999999),),
         )
         assert result == (0.0,)
 
     def test_exception_returns_zero(self) -> None:
-        """evaluate_backtest returns (0.0,) for a corrupt (empty) individual."""
+        """BacktestEvaluator returns (0.0,) for a corrupt (empty) individual."""
         pset = self._make_pset()
         individual = deap_gp.PrimitiveTree([])
         df = self._make_df()
-        result = evaluate_backtest(
+        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        result = evaluator.evaluate(
             individual,
             pset=pset,
             df=df,
-            backtest_cfg=BacktestConfig(),
-            fitness_fn=SharpeFitnessConfig(),
+            metrics=(SharpeMetricConfig(),),
         )
         assert result == (0.0,)
 
     def test_nonfinite_guard_returns_zero(self) -> None:
-        """evaluate_backtest returns (0.0,) when fitness_fn returns NaN."""
+        """BacktestEvaluator returns (0.0,) when metric returns NaN."""
 
-        class _NanFitness(
-            BacktestFitnessConfigBase
-        ):  # subclass to satisfy FitnessConfigBase
+        class _NanMetric(BacktestMetricConfigBase):
             def __call__(self, pf: object) -> float:
                 return float("nan")
 
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
-        result = evaluate_backtest(
+        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        result = evaluator.evaluate(
             individual,
             pset=pset,
             df=df,
-            backtest_cfg=BacktestConfig(),
-            fitness_fn=_NanFitness(),
+            metrics=(_NanMetric(),),
         )
         assert result == (0.0,)
 
@@ -365,7 +360,6 @@ class TestCompileTreeToSignals:
     def test_scalar_tree_is_broadcast(self) -> None:
         """A tree returning a scalar True is broadcast to a full Series."""
         pset = self._make_pset()
-        # ge(close, close) is always True (>= is always satisfied for equal values)
         individual = tree_from_string("ge(close, close)", pset)
         df = generate_synthetic_ohlcv(100, 42)
         result = _compile_tree_to_signals(individual, pset, df)

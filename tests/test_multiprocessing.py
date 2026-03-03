@@ -9,7 +9,8 @@ import pytest
 from gentrade.config import (
     DataConfig,
     EvolutionConfig,
-    F1FitnessConfig,
+    ClassificationEvaluatorConfig,
+    F1MetricConfig,
     OnePointCrossoverConfig,
     RunConfig,
     TournamentSelectionConfig,
@@ -35,7 +36,8 @@ def _make_cfg(processes: int) -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        fitness=F1FitnessConfig(),
+        evaluator=ClassificationEvaluatorConfig(),
+        metrics=(F1MetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
         crossover=OnePointCrossoverConfig(),

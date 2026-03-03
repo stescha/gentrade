@@ -9,7 +9,6 @@ Run with: poetry run python scripts/run_zigzag.py
 
 from gentrade import config
 from gentrade.config import (
-    BacktestEvaluatorConfig,
     DataConfig,
     DefaultLargePsetConfig,
     DoubleTournamentSelectionConfig,
@@ -19,30 +18,18 @@ from gentrade.config import (
     TreeConfig,
 )
 from gentrade.evolve import run_evolution
+from gentrade.minimal_pset import zigzag_pivots
 from gentrade.tradetools import load_binance_ohlcv
 
 cfg = RunConfig(
-    # seed=42,
+    seed=42,
     data=DataConfig(pair="BTCUSDT", start=100000, count=10000),
-    # data=DataConfig(n=100000, target_threshold=0.02),
-    evaluator=BacktestEvaluatorConfig(
-        tp_stop=0.02,
-        sl_stop=0.01,
-        sl_trail=True,
-        fees=0.001,
-        init_cash=100_000.0,
-    ),
-    metrics=(config.MeanPnlMetricConfig(min_trades=3),),
-    # metrics=(config.SharpeMetricConfig(weight=1.0, min_trades=30),),
-    # metrics=(config.TotalReturnMetricConfig(weight=1.0, min_trades=30),),
-    # metrics=(config.CalmarMetricConfig(weight=1.0, min_trades=5),),
-    # metrics_val=(config.MeanPnlMetricConfig(min_trades=3),),
-    # metrics_val=(config.SharpeMetricConfig(weight=1.0, min_trades=30),),
-    # metrics_val=(config.TotalReturnMetricConfig(weight=1.0, min_trades=30),),
-    metrics_val=(config.MeanPnlMetricConfig(min_trades=3),),
+    evaluator=config.ClassificationEvaluatorConfig(),
+    metrics=(config.F1MetricConfig(),),
+    metrics_val=(config.F1MetricConfig(),),
     pset=DefaultLargePsetConfig(),
     evolution=EvolutionConfig(
-        mu=1000, lambda_=600, generations=10, cxpb=0.6, mutpb=0.3, processes=32
+        mu=10000, lambda_=6000, generations=50, cxpb=0.6, mutpb=0.3, processes=32
     ),
     tree=TreeConfig(max_depth=8, max_height=20, tree_gen="grow"),
     crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),
@@ -67,6 +54,15 @@ if __name__ == "__main__":
         start=start + count,
         count=int(count * val_perc),
     )
+    labels_train = zigzag_pivots(df_train["close"], 0.03, -1)
+    labels_val = zigzag_pivots(df_val["close"], 0.03, -1)
+
     # we are using a backtest fitness so no labels are required; still pass
     # explicit ``None`` values for the label slots and the config object.
-    run_evolution(train_data=df_train, val_data=df_val, cfg=cfg)
+    run_evolution(
+        train_data=df_train,
+        train_labels=labels_train,
+        val_data=df_val,
+        val_labels=labels_val,
+        cfg=cfg,
+    )

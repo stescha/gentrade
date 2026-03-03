@@ -1,23 +1,38 @@
 """Shared fixtures for gentrade test suite."""
 
 import pytest
+from deap import creator
 
 from gentrade.config import (
-    BacktestConfig,
+    BacktestEvaluatorConfig,
+    ClassificationEvaluatorConfig,
     DataConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
-    F1FitnessConfig,
-    FBetaFitnessConfig,
+    F1MetricConfig,
+    FBetaMetricConfig,
     OnePointCrossoverConfig,
     OnePointLeafBiasedCrossoverConfig,
     RunConfig,
-    SharpeFitnessConfig,
+    SharpeMetricConfig,
     TournamentSelectionConfig,
     TreeConfig,
     UniformMutationConfig,
     ZigzagMediumPsetConfig,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_deap_creator() -> None:
+    """Reset DEAP creator classes before each test.
+
+    Prevents weight-mismatch errors when single-objective and multi-objective
+    tests run in the same pytest session. See NOTE in evolve.py create_toolbox.
+    """
+    if hasattr(creator, "FitnessMax"):
+        del creator.FitnessMax
+    if hasattr(creator, "Individual"):
+        del creator.Individual
 
 
 @pytest.fixture
@@ -33,7 +48,8 @@ def cfg_test_default() -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        fitness=F1FitnessConfig(),
+        evaluator=ClassificationEvaluatorConfig(),
+        metrics=(F1MetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
         crossover=OnePointCrossoverConfig(),
@@ -54,7 +70,8 @@ def cfg_e2e_quick() -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        fitness=F1FitnessConfig(),
+        evaluator=ClassificationEvaluatorConfig(),
+        metrics=(F1MetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
         crossover=OnePointCrossoverConfig(),
@@ -68,19 +85,13 @@ def cfg_e2e_fbeta(cfg_e2e_quick: RunConfig) -> RunConfig:
     return cfg_e2e_quick.model_copy(
         update={
             "seed": 43,
-            "fitness": FBetaFitnessConfig(beta=3.0),
+            "metrics": (FBetaMetricConfig(beta=3.0),),
             "crossover": OnePointLeafBiasedCrossoverConfig(termpb=0.1),
             "selection": DoubleTournamentSelectionConfig(
                 fitness_size=5, parsimony_size=1.4
             ),
         }
     )
-
-
-@pytest.fixture
-def backtest_cfg_default() -> BacktestConfig:
-    """Default BacktestConfig for unit tests."""
-    return BacktestConfig()
 
 
 @pytest.fixture
@@ -96,25 +107,25 @@ def cfg_backtest_unit() -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        fitness=SharpeFitnessConfig(),
+        evaluator=BacktestEvaluatorConfig(),
+        metrics=(SharpeMetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
         crossover=OnePointCrossoverConfig(),
         selection=TournamentSelectionConfig(tournsize=3),
-        backtest=BacktestConfig(),
     )
 
 
 @pytest.fixture
 def cfg_e2e_quick_with_val(cfg_e2e_quick: RunConfig) -> RunConfig:
-    """E2E variant: F1 fitness for both training and validation phases.
+    """E2E variant: F1 metric for both training and validation phases.
 
-    Extends ``cfg_e2e_quick`` with ``fitness_val=F1FitnessConfig()`` and
+    Extends ``cfg_e2e_quick`` with ``metrics_val=(F1MetricConfig(),)`` and
     default ``select_best``. Use this fixture when testing validation-set
     support in :func:`run_evolution`.
     """
     return cfg_e2e_quick.model_copy(
         update={
-            "fitness_val": F1FitnessConfig(),
+            "metrics_val": (F1MetricConfig(),),
         }
     )
