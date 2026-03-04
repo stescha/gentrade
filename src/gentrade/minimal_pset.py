@@ -39,6 +39,12 @@ from gentrade.pset.talib_primitives import (
     MACD_macdsignal,
     STOCH_slowd,
     STOCH_slowk,
+    add_cycle_indicators,
+    add_momentum_indicators,
+    add_overlap_studies,
+    add_statistic_functions,
+    add_volatility_indicators,
+    add_volume_indicators,
 )
 
 
@@ -198,37 +204,11 @@ def add_features_large(pset: gp.PrimitiveSetTyped) -> None:
     add_features_medium(pset)
 
     # Additional ephemeral constants needed by full talib set
-    try:
-        pset.addEphemeralConstant("slowlimit", SlowLimit.sample, SlowLimit)
-    except Exception:
-        pass
-    try:
-        pset.addEphemeralConstant("fastlimit", FastLimit.sample, FastLimit)
-    except Exception:
-        pass
-    try:
-        pset.addEphemeralConstant("vfactor", VFactor.sample, VFactor)
-    except Exception:
-        pass
-    try:
-        pset.addEphemeralConstant("acceleration", Acceleration.sample, Acceleration)
-    except Exception:
-        pass
-    try:
-        pset.addEphemeralConstant("maximum", Maximum.sample, Maximum)
-    except Exception:
-        pass
-
-    # Add all remaining talib indicators - duplicates will raise but we ignore them
-    # Import the individual add_* functions
-    from gentrade.pset.talib_primitives import (
-        add_cycle_indicators,
-        add_momentum_indicators,
-        add_overlap_studies,
-        add_statistic_functions,
-        add_volatility_indicators,
-        add_volume_indicators,
-    )
+    pset.addEphemeralConstant("slowlimit", SlowLimit.sample, SlowLimit)
+    pset.addEphemeralConstant("fastlimit", FastLimit.sample, FastLimit)
+    pset.addEphemeralConstant("vfactor", VFactor.sample, VFactor)
+    pset.addEphemeralConstant("acceleration", Acceleration.sample, Acceleration)
+    pset.addEphemeralConstant("maximum", Maximum.sample, Maximum)
 
     # Wrap each category to handle duplicate primitive errors
     for add_func in [
@@ -239,11 +219,7 @@ def add_features_large(pset: gp.PrimitiveSetTyped) -> None:
         add_volatility_indicators,
         add_volume_indicators,
     ]:
-        try:
-            add_func(pset)
-        except Exception:
-            # Duplicates or other errors - continue with next category
-            pass
+        add_func(pset)
 
 
 def create_pset_zigzag_minimal(name: str = "zigzag_minimal") -> gp.PrimitiveSetTyped:
