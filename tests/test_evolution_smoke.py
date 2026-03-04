@@ -20,9 +20,6 @@ from gentrade.data import generate_synthetic_ohlcv
 from gentrade.evolve import run_evolution
 from gentrade.minimal_pset import zigzag_pivots
 
-# Skip entire module if zigzag is not installed
-zigzag = pytest.importorskip("zigzag")
-
 
 @pytest.mark.e2e
 class TestEvolutionSmoke:

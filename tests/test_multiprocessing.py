@@ -7,9 +7,9 @@ produces structurally valid results equivalent to single-process mode.
 import pytest
 
 from gentrade.config import (
+    ClassificationEvaluatorConfig,
     DataConfig,
     EvolutionConfig,
-    ClassificationEvaluatorConfig,
     F1MetricConfig,
     OnePointCrossoverConfig,
     RunConfig,
@@ -21,8 +21,6 @@ from gentrade.config import (
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.evolve import run_evolution
 from gentrade.minimal_pset import zigzag_pivots
-
-zigzag = pytest.importorskip("zigzag")
 
 
 def _make_cfg(processes: int) -> RunConfig:
