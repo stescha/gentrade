@@ -355,7 +355,6 @@ class TestRunConfigValidation:
         self, cfg_test_default: RunConfig
     ) -> None:
         """run_evolution raises when val_data is given but cfg.metrics_val is None."""
-        pytest.importorskip("zigzag")
         df = generate_synthetic_ohlcv(cfg_test_default.data.n, cfg_test_default.seed)
         labels = zigzag_pivots(
             df["close"],
@@ -376,7 +375,6 @@ class TestRunConfigValidation:
         self, cfg_test_default: RunConfig
     ) -> None:
         """run_evolution raises when classification evaluator used without val_labels."""
-        pytest.importorskip("zigzag")
         cfg = cfg_test_default.model_copy(
             update={
                 "evaluator": ClassificationEvaluatorConfig(),

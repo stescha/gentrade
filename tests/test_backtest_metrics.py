@@ -1,15 +1,13 @@
-"""Tests for backtest metric computation classes, config classes, BacktestEvaluatorConfig,
-and the BacktestEvaluator class.
+"""Tests for backtest metrics: computation classes, config classes,
+BacktestEvaluatorConfig, and the BacktestEvaluator class.
 """
-
-import pytest
-
-zigzag = pytest.importorskip("zigzag")  # noqa: E402
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+import pytest
 import vectorbt as vbt  # noqa: E402
 from deap import gp as deap_gp  # noqa: E402
+from pydantic import ValidationError
 
 from gentrade.backtest_metrics import (  # noqa: E402
     BacktestMetricBase,
@@ -36,8 +34,9 @@ from gentrade.evaluators import _compile_tree_to_signals  # noqa: E402
 from gentrade.evolve import (
     _make_evaluator,  # helper to construct evaluators from configs
 )
+from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
 from gentrade.minimal_pset import create_pset_zigzag_medium  # noqa: E402
-from gentrade.pset.pset import tree_from_string  # noqa: E402
+from gentrade.pset.pset_types import BooleanSeries, NumericSeries
 
 # -- Module-level helpers ------------------------------------------
 
@@ -236,14 +235,12 @@ class TestBacktestEvaluatorConfig:
 
     def test_tp_stop_must_be_positive(self) -> None:
         """BacktestEvaluatorConfig(tp_stop=0.0) raises ValidationError."""
-        from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
             BacktestEvaluatorConfig(tp_stop=0.0)
 
     def test_sl_stop_must_be_positive(self) -> None:
         """BacktestEvaluatorConfig(sl_stop=0.0) raises ValidationError."""
-        from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
             BacktestEvaluatorConfig(sl_stop=0.0)
@@ -255,7 +252,6 @@ class TestBacktestEvaluatorConfig:
 
     def test_frozen(self) -> None:
         """BacktestEvaluatorConfig is immutable (frozen pydantic model)."""
-        from pydantic import ValidationError
 
         cfg = BacktestEvaluatorConfig()
         with pytest.raises((ValidationError, TypeError)):
@@ -268,8 +264,17 @@ class TestBacktestEvaluator:
 
     def _make_individual(self) -> deap_gp.PrimitiveTree:
         """Build a minimal always-false GP tree for testing."""
-        pset = create_pset_zigzag_medium()
-        return tree_from_string("gt(close, close)", pset)
+        # "gt(close, close)" will always return False, so the resulting portfolio should
+        # have zero trades and trigger the min_trades guards in the metrics
+        return deap_gp.PrimitiveTree(
+            [
+                deap_gp.Primitive(
+                    name="gt", args=[NumericSeries, NumericSeries], ret=BooleanSeries
+                ),
+                deap_gp.Terminal(terminal="close", symbolic=False, ret=NumericSeries),
+                deap_gp.Terminal(terminal="close", symbolic=False, ret=NumericSeries),
+            ]
+        )
 
     def _make_df(self) -> pd.DataFrame:
         return generate_synthetic_ohlcv(500, 42)
@@ -277,21 +282,20 @@ class TestBacktestEvaluator:
     def _make_pset(self) -> deap_gp.PrimitiveSetTyped:
         return create_pset_zigzag_medium()
 
-    def test_returns_tuple_of_one_float(self) -> None:
+    def test_raises_for_valid_metric(self) -> None:
         """BacktestEvaluator.evaluate returns a tuple of length 1 with a float."""
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
         evaluator = _make_evaluator(BacktestEvaluatorConfig())
-        result = evaluator.evaluate(
-            individual,
-            pset=pset,
-            df=df,
-            metrics=(SharpeMetricConfig(min_trades=0),),
-        )
-        assert isinstance(result, tuple)
-        assert len(result) == 1
-        assert isinstance(result[0], float)
+        with pytest.raises(MetricCalculationError) as excinfo:
+            evaluator.evaluate(
+                individual,
+                pset=pset,
+                df=df,
+                metrics=(SharpeMetricConfig(min_trades=0),),
+            )
+        print(excinfo.value)
 
     def test_min_trades_guard_returns_zero(self) -> None:
         """BacktestEvaluator returns (0.0,) when the metric applies a high threshold."""
@@ -307,22 +311,23 @@ class TestBacktestEvaluator:
         )
         assert result == (0.0,)
 
-    def test_exception_returns_zero(self) -> None:
-        """BacktestEvaluator returns (0.0,) for a corrupt (empty) individual."""
+    def test_exception_raises_tree_evaluation_error(self) -> None:
+        """BacktestEvaluator raises TreeEvaluationError for corrupt individual."""
+
         pset = self._make_pset()
         individual = deap_gp.PrimitiveTree([])
         df = self._make_df()
         evaluator = _make_evaluator(BacktestEvaluatorConfig())
-        result = evaluator.evaluate(
-            individual,
-            pset=pset,
-            df=df,
-            metrics=(SharpeMetricConfig(),),
-        )
-        assert result == (0.0,)
+        with pytest.raises(TreeEvaluationError):
+            evaluator.evaluate(
+                individual,
+                pset=pset,
+                df=df,
+                metrics=(SharpeMetricConfig(),),
+            )
 
-    def test_nonfinite_guard_returns_zero(self) -> None:
-        """BacktestEvaluator returns (0.0,) when metric returns NaN."""
+    def test_nonfinite_raises_metric_calculation_error(self) -> None:
+        """BacktestEvaluator raises MetricCalculationError when metric returns NaN."""
 
         class _NanMetric(BacktestMetricConfigBase):
             def __call__(self, pf: object) -> float:
@@ -332,18 +337,36 @@ class TestBacktestEvaluator:
         individual = self._make_individual()
         df = self._make_df()
         evaluator = _make_evaluator(BacktestEvaluatorConfig())
-        result = evaluator.evaluate(
-            individual,
-            pset=pset,
-            df=df,
-            metrics=(_NanMetric(),),
-        )
-        assert result == (0.0,)
+        with pytest.raises(MetricCalculationError) as excinfo:
+            evaluator.evaluate(
+                individual,
+                pset=pset,
+                df=df,
+                metrics=(_NanMetric(),),
+            )
+        # Verify the exception contains the expected attributes
+        assert excinfo.value.tree is individual
+        assert excinfo.value.metric is not None
+        assert excinfo.value.signals is not None
 
 
 @pytest.mark.unit
 class TestCompileTreeToSignals:
     """_compile_tree_to_signals produces a well-formed boolean Series."""
+
+    def _make_individual(self) -> deap_gp.PrimitiveTree:
+        """Build a minimal always-false GP tree for testing."""
+        # "gt(close, close)" will always return False, so the resulting portfolio should
+        # have zero trades and trigger the min_trades guards in the metrics
+        return deap_gp.PrimitiveTree(
+            [
+                deap_gp.Primitive(
+                    name="gt", args=[NumericSeries, NumericSeries], ret=BooleanSeries
+                ),
+                deap_gp.Terminal(terminal="close", symbolic=False, ret=NumericSeries),
+                deap_gp.Terminal(terminal="close", symbolic=False, ret=NumericSeries),
+            ]
+        )
 
     def _make_pset(self) -> deap_gp.PrimitiveSetTyped:
         return create_pset_zigzag_medium()
@@ -351,7 +374,7 @@ class TestCompileTreeToSignals:
     def test_returns_bool_series_same_length(self) -> None:
         """Result is a boolean Series with the same length as the DataFrame."""
         pset = self._make_pset()
-        individual = tree_from_string("gt(close, close)", pset)
+        individual = self._make_individual()
         df = generate_synthetic_ohlcv(300, 42)
         result = _compile_tree_to_signals(individual, pset, df)
         assert result.dtype == bool
@@ -360,7 +383,7 @@ class TestCompileTreeToSignals:
     def test_scalar_tree_is_broadcast(self) -> None:
         """A tree returning a scalar True is broadcast to a full Series."""
         pset = self._make_pset()
-        individual = tree_from_string("ge(close, close)", pset)
+        individual = self._make_individual()
         df = generate_synthetic_ohlcv(100, 42)
         result = _compile_tree_to_signals(individual, pset, df)
         assert len(result) == len(df)
