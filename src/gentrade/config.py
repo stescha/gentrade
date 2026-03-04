@@ -693,7 +693,7 @@ class RunConfig(BaseModel):
 
     # Polymorphic component configs -- SerializeAsAny preserves subclass fields
     pset: SerializeAsAny[PsetConfigBase] = Field(
-        default_factory=cast(Callable[[], PsetConfigBase], ZigzagLargePsetConfig)
+        default_factory=cast(Callable[[], PsetConfigBase], DefaultLargePsetConfig)
     )
     mutation: SerializeAsAny[MutationConfigBase] = Field(
         default_factory=cast(Callable[[], MutationConfigBase], UniformMutationConfig)
@@ -747,9 +747,7 @@ class RunConfig(BaseModel):
         SingleObjectiveSelectionConfigBase operator.
         """
         n = len(self.metrics)
-        is_multi_select = isinstance(
-            self.selection, MultiObjectiveSelectionConfigBase
-        )
+        is_multi_select = isinstance(self.selection, MultiObjectiveSelectionConfigBase)
         if n > 1 and not is_multi_select:
             raise ValueError(
                 f"RunConfig has {n} metrics (multi-objective) but selection "

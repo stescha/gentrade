@@ -254,7 +254,9 @@ def run_evolution(
 
     # ── 3. Build pset ──────────────────────────────────────
     pset = cfg.pset.func()
-    print(f"Created pset with {len(pset.primitives)} primitive types")
+    print(
+        f"Created pset with {pset.prims_count} primitives and {pset.terms_count} terminals"
+    )
     print()
 
     # ── 5. DEAP toolbox ────────────────────────────────────
@@ -388,10 +390,6 @@ def run_evolution(
     )
     print(f"Best individual ({fitness_str}):")
     print(f"  {str(best)}")
-    print()
-
-    zigzag_in_hof = any("zigzag_pivots" in str(ind) for ind in hof)
-    print(f"zigzag_pivots in top-{cfg.evolution.hof_size} HoF: {zigzag_in_hof}")
     print()
 
     print("Top 5 individuals:")
