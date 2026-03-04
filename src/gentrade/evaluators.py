@@ -8,7 +8,13 @@ Evaluator classes own the expensive per-individual work:
 Each evaluator is a plain class (not a Pydantic model) constructed from
 its thin config object. The ``evaluate`` method is called once per individual
 by the DEAP toolbox, returning ``tuple[float, ...]``.
+
+Error handling follows a fail-fast approach: exceptions during tree evaluation
+or metric calculation are wrapped in domain-specific exceptions and re-raised.
+This ensures bugs and misconfigurations surface immediately.
 """
+
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -19,6 +25,20 @@ from gentrade.config import (
     BacktestMetricConfigBase,
     ClassificationMetricConfigBase,
 )
+from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
+
+
+def _compile_tree(
+    individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
+) -> Callable[..., pd.Series]:
+    try:
+        return gp.compile(individual, pset)
+    except Exception as e:
+        raise TreeEvaluationError(
+            "Failed to compile tree.",
+            tree=individual,
+            err=e,
+        ) from e
 
 
 def _compile_tree_to_signals(
@@ -35,12 +55,43 @@ def _compile_tree_to_signals(
 
     Returns:
         Boolean ``pd.Series`` indexed like ``df``.
+
+    Raises:
+        TreeEvaluationError: If tree compilation fails, execution produces
+            unexpected output type, or result is not a boolean Series.
     """
-    func = gp.compile(individual, pset)
-    y_pred = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
+
+    func = _compile_tree(individual, pset)
+    try:
+        y_pred = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
+    except Exception as e:
+        raise TreeEvaluationError(
+            "Failed to execute tree.",
+            tree=individual,
+            signals=y_pred,
+            err=e,
+        ) from e
+
+    # Scalar output can happen for small trees composed entirely by
+    # the auxiliary boolean terminals.
     if isinstance(y_pred, (bool, int, float, np.bool_)):
         return pd.Series([bool(y_pred)] * len(df), index=df.index)
-    return pd.Series(y_pred, index=df.index).astype(bool)
+
+    if not isinstance(y_pred, pd.Series):
+        raise TreeEvaluationError(
+            f"Expected tree execution to return a pd.Series, got {type(y_pred)}",
+            tree=individual,
+            signals=y_pred,
+        )
+
+    if not pd.api.types.is_bool_dtype(y_pred):
+        raise TreeEvaluationError(
+            f"Expected boolean Series, got dtype {y_pred.dtype}",
+            tree=individual,
+            signals=y_pred,
+        )
+
+    return y_pred
 
 
 class BacktestEvaluator:
@@ -89,12 +140,16 @@ class BacktestEvaluator:
             metrics: Ordered tuple of backtest metric configs.
 
         Returns:
-            Tuple of floats, one per metric. Returns all zeros on any outer
-            exception; individual metric failures return 0.0 for that slot.
+            Tuple of floats, one per metric.
+
+        Raises:
+            TreeEvaluationError: If tree compilation or execution fails.
+            MetricCalculationError: If metric calculation fails or returns
+                non-finite value.
         """
-        n = len(metrics)
+        entries = _compile_tree_to_signals(individual, pset, df)
+
         try:
-            entries = _compile_tree_to_signals(individual, pset, df)
             pf = run_vbt_backtest(
                 ohlcv=df,
                 entries=entries,
@@ -104,16 +159,39 @@ class BacktestEvaluator:
                 fees=self.fees,
                 init_cash=self.init_cash,
             )
-            result: list[float] = []
-            for m in metrics:
-                try:
-                    val = m(pf)
-                    result.append(float(val) if np.isfinite(val) else 0.0)
-                except Exception:
-                    result.append(0.0)
-            return tuple(result)
-        except Exception:
-            return (0.0,) * n
+        except Exception as e:
+            raise TreeEvaluationError(
+                f"Failed to run backtest: {e}",
+                tree=individual,
+                signals=entries,
+                err=e,
+            ) from e
+
+        result: list[float] = []
+        for m in metrics:
+            try:
+                val = m(pf)
+            except Exception as e:
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} calculation failed.",
+                    tree=individual,
+                    metric=m,
+                    signals=entries,
+                    err=e,
+                ) from e
+
+            if not np.isfinite(val):
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} returned non-finite value.",
+                    tree=individual,
+                    metric=m,
+                    value=val,
+                    signals=entries,
+                )
+
+            result.append(float(val))
+
+        return tuple(result)
 
 
 class ClassificationEvaluator:
@@ -145,19 +223,38 @@ class ClassificationEvaluator:
             metrics: Ordered tuple of classification metric configs.
 
         Returns:
-            Tuple of floats, one per metric. Returns all zeros on any outer
-            exception; individual metric failures return 0.0 for that slot.
+            Tuple of floats, one per metric.
+
+        Raises:
+            TreeEvaluationError: If tree compilation or execution fails.
+            MetricCalculationError: If metric calculation fails or returns
+                non-finite value.
         """
-        n = len(metrics)
-        try:
-            y_pred = _compile_tree_to_signals(individual, pset, df)
-            result: list[float] = []
-            for m in metrics:
-                try:
-                    val = m(y_true, y_pred)
-                    result.append(float(val) if np.isfinite(val) else 0.0)
-                except Exception:
-                    result.append(0.0)
-            return tuple(result)
-        except Exception:
-            return (0.0,) * n
+        y_pred = _compile_tree_to_signals(individual, pset, df)
+
+        result: list[float] = []
+        for m in metrics:
+            try:
+                val = m(y_true, y_pred)
+            except Exception as e:
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} calculation failed.",
+                    tree=individual,
+                    metric=m,
+                    value=None,
+                    signals=y_pred,
+                    err=e,
+                ) from e
+
+            if not np.isfinite(val):
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} returned non-finite value.",
+                    tree=individual,
+                    metric=m,
+                    value=val,
+                    signals=y_pred,
+                )
+
+            result.append(float(val))
+
+        return tuple(result)

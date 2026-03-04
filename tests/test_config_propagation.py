@@ -43,31 +43,24 @@ from pytest import CaptureFixture, MonkeyPatch
 from gentrade.config import (
     TREE_GEN_FUNCS,
     BacktestEvaluatorConfig,
-    BacktestMetricConfigBase,
     BestSelectionConfig,
     ClassificationEvaluatorConfig,
-    ClassificationMetricConfigBase,
     DataConfig,
     DefaultLargePsetConfig,
     DefaultMediumPsetConfig,
     DoubleTournamentSelectionConfig,
     EphemeralMutationConfig,
-    EvaluatorConfigBase,
     EvolutionConfig,
     F1MetricConfig,
     InsertMutationConfig,
-    MetricConfigBase,
-    MultiObjectiveSelectionConfigBase,
-    NSGA2SelectionConfig,
     NodeReplacementMutationConfig,
+    NSGA2SelectionConfig,
     OnePointCrossoverConfig,
     OnePointLeafBiasedCrossoverConfig,
     PrecisionMetricConfig,
     PsetConfigBase,
     RunConfig,
     SharpeMetricConfig,
-    SingleObjectiveSelectionConfigBase,
-    SPEA2SelectionConfig,
     ShrinkMutationConfig,
     TournamentSelectionConfig,
     TreeConfig,
@@ -362,6 +355,7 @@ class TestRunConfigValidation:
         self, cfg_test_default: RunConfig
     ) -> None:
         """run_evolution raises when val_data is given but cfg.metrics_val is None."""
+        pytest.importorskip("zigzag")
         df = generate_synthetic_ohlcv(cfg_test_default.data.n, cfg_test_default.seed)
         labels = zigzag_pivots(
             df["close"],
@@ -382,10 +376,13 @@ class TestRunConfigValidation:
         self, cfg_test_default: RunConfig
     ) -> None:
         """run_evolution raises when classification evaluator used without val_labels."""
-        cfg = cfg_test_default.model_copy(update={
-            "evaluator": ClassificationEvaluatorConfig(),
-            "metrics_val": (F1MetricConfig(),),
-        })
+        pytest.importorskip("zigzag")
+        cfg = cfg_test_default.model_copy(
+            update={
+                "evaluator": ClassificationEvaluatorConfig(),
+                "metrics_val": (F1MetricConfig(),),
+            }
+        )
         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
         labels = zigzag_pivots(
             df["close"], cfg.data.target_threshold, cfg.data.target_label

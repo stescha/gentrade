@@ -16,20 +16,20 @@ class Primitive:
     def __init__(
         self,
         name: str,
-        function: Callable[..., Any],
-        *args: type,
+        args: Sequence[type],
+        ret: type,
     ) -> None: ...
 
 class Terminal(Primitive):
     """Represents a terminal in a GP tree."""
 
-    value: Any
+    value: str
     ephemeral: bool
     def __init__(
         self,
-        value: Any,
-        ephemeral: bool,
-        ret_type: type,
+        terminal: Any,
+        symbolic: bool,
+        ret: type,
     ) -> None: ...
 
 class PrimitiveSet:
