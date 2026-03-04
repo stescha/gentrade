@@ -21,7 +21,7 @@ Evolve trading strategies using genetic programming (GP) on historical OHLCV cry
 
 ## Core Concept: GP Trees as Trading Strategies
 
-- Each candidate solution is a **DEAP `PrimitiveTree`** — an abstract syntax tree (AST) that transforms an OHLCV `pd.DataFrame` into a boolean signal `pd.Series` (buy or sell signals).
+- Each candidate solution is a **DEAP `PrimitiveTree`** — an abstract syntax tree (AST) that transforms an OHLCV `pd.DataFrame` into a boolean signal `pd.Series` (buy or sell signals).  In classification experiments the same signal is compared against a pre‑computed label series instead of being fed to the backtester.
 - Trees are composed of typed primitives: TA-Lib indicators, arithmetic/comparison operators, boolean logic, and domain-specific functions (crossover detection, threshold comparisons, quantile filters).
 - The **typed primitive set** (`pset/`) enforces that trees are syntactically valid (e.g., an ADX indicator receives High, Low, Close series — not arbitrary floats).
 - String representations of trees (e.g., `and_(gt(close, sma(close, 20)), gt(volume, sma(volume, 10)))`) can be parsed back into executable `PrimitiveTree` objects via the `parse_individual` function. This is important for serialization and reproducibility.
@@ -77,6 +77,20 @@ Custom `genFull`, `genGrow`, and `genHalfAndHalf` replace DEAP's built-in genera
 - When implementing new metrics, always include a **minimum trade count** guard — strategies with fewer than ~10 trades should be penalized or invalidated to prevent overfitting.
 - Fitness is always returned as a **tuple** (DEAP convention), even for single-objective optimization.
 
+### Multi-objective & validation metrics
+
+The configuration now allows a tuple of metrics to be supplied, which
+will be treated as a multi-objective fitness by DEAP.  The selection
+operator must match the objective count (e.g. `NSGA2SelectionConfig`
+for multi-objective runs, `TournamentSelectionConfig` for single
+objective); this check is enforced by `RunConfig` validators.
+
+A second tuple `metrics_val` may be provided for validation data.  When
+`run_evolution` is called with a non-`None` validation dataset it will
+periodically evaluate the current best individual on `metrics_val` and
+print the score; this behaviour is controlled by
+`evolution.validation_interval`.
+
 ## Data Flow
 
 ```
@@ -87,6 +101,26 @@ OHLCV DataFrame
     → C++ backtester (eval_signals) → raw trade results
     → LazyTradeStats → metric(s) → fitness tuple
 ```
+
+`run_evolution` is the main entry point for experiments; its signature is
+now:
+
+```python
+run_evolution(
+    train_data: pd.DataFrame,
+    train_labels: pd.Series | None = None,
+    val_data: pd.DataFrame | None = None,
+    val_labels: pd.Series | None = None,
+    cfg: RunConfig | None = None,
+) -> tuple[list[gp.PrimitiveTree], tools.Logbook, tools.HallOfFame]
+```
+
+All data/label arguments except `train_data` are optional.  When using a
+classification evaluator the caller must supply the corresponding
+`*_labels` Series.  If `val_data` is provided `cfg.metrics_val` must also
+be set or a `ValueError` is raised.  Data loading/generation is
+performed externally; helpers such as `gentrade.data.prepare_data` exist
+for convenience.
 
 ## Conventions
 

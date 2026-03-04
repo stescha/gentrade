@@ -35,6 +35,10 @@ Follow these guidelines when writing tests for the `gentrade` repository.
     -   Verify determinism via **structural properties** (e.g., population size, tree depth/size distribution) rather than fragile float values.
     -   Assert **invariants**: "Best fitness in final generation >= best fitness in initial generation" (elitism check).
 
+5.  **Config validation & error cases**:
+    -   The `RunConfig` model contains numerous validators; write unit tests that exercise misconfigurations such as mismatched evaluator/metric types, missing `metrics_val` when validation data is supplied, or wrong selection operators for multi-objective setups.
+    -   When calling `run_evolution`, also assert that appropriate `ValueError` messages are raised for missing `train_labels` (classification mode) or `val_labels` (when using classification with validation data).
+
 ## Example: Structure Check
 
 ```python

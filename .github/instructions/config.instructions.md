@@ -10,6 +10,28 @@ Established config approach for `gentrade` evolution pipeline. Follow this patte
 
 **Config is thin data.** Behavior belongs to the caller (`evolve.py`), not the config classes.
 
+To support the split between classification and backtest workflows the
+codebase now introduces two new categories of components:
+
+* **Evaluator configs** (a subclass of `_ComponentConfig`) simply select
+  which evaluation pipeline to instantiate; there are currently
+  `ClassificationEvaluatorConfig` (no parameters) and
+  `BacktestEvaluatorConfig` (carries portfolio parameters such as
+  `tp_stop`, `sl_stop`, `fees`, etc.).  The evaluator object itself lives
+  in `gentrade.evaluators` and is constructed from the config by
+  `run_evolution`.
+* **Metric configs** are also subclasses of `_ComponentConfig` but are
+  callable objects (i.e. implement `__call__`).  There are two
+  parallel hierarchies, one for classification metrics and one for
+  backtest metrics; each metric config knows how to score the data it
+  is passed, and also carries a `weight` used when creating the DEAP
+  `FitnessMax` class.  Metrics can now be supplied as a tuple for
+  multi‑objective runs, and a second tuple `metrics_val` is available
+  for validation evaluation.
+
+The rules below for extending the system apply equally to mutation,
+selection, crossover, pset, evaluator, and metric configs.
+
 ## Architecture: ClassVar + Properties
 
 ### 1. All Components Inherit from `_ComponentConfig`
@@ -55,6 +77,20 @@ class TreeConfig(BaseModel):
     tree_gen: Literal["half_and_half", "full", "grow"] = "half_and_half"
     # No func attribute — caller resolves via TREE_GEN_FUNCS[cfg.tree.tree_gen]
 ```
+
+The top-level `RunConfig` now composes *all* sub-configs and includes
+additional validation logic.  Two important validators live on
+`RunConfig`:
+
+* **Evaluator/metric consistency:** every metric in `metrics` and
+  `metrics_val` must match the evaluator type (classification metrics
+  require `ClassificationEvaluatorConfig`, backtest metrics require
+  `BacktestEvaluatorConfig`).  Mismatches raise a `ValueError` during
+  model construction.
+* **Selection/objective count:** the selection operator must be
+  single‑objective when there is exactly one metric, and multi‑objective
+  otherwise. The validator enforces this and helps catch
+  misconfiguration early.
 
 - When a component has **no configurable parameters**, use a `Literal` field + module-level dict.
 - Caller looks up the function via the dict: `func = TREE_GEN_FUNCS[cfg.tree.tree_gen]`.
