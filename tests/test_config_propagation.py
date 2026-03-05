@@ -15,6 +15,40 @@ import functools
 import inspect
 from typing import Any, Callable, Literal
 
+import pytest
+from deap import base, gp, tools
+
+from gentrade.config import (
+    TREE_GEN_FUNCS,
+    BacktestEvaluatorConfig,
+    BestSelectionConfig,
+    ClassificationEvaluatorConfig,
+    DefaultLargePsetConfig,
+    DefaultMediumPsetConfig,
+    DoubleTournamentSelectionConfig,
+    EphemeralMutationConfig,
+    F1MetricConfig,
+    InsertMutationConfig,
+    NodeReplacementMutationConfig,
+    NSGA2SelectionConfig,
+    OnePointCrossoverConfig,
+    OnePointLeafBiasedCrossoverConfig,
+    PrecisionMetricConfig,
+    PsetConfigBase,
+    RunConfig,
+    SharpeMetricConfig,
+    ShrinkMutationConfig,
+    TournamentSelectionConfig,
+    TreeConfig,
+    UniformMutationConfig,
+    ZigzagLargePsetConfig,
+    ZigzagMediumPsetConfig,
+)
+from gentrade.data import generate_synthetic_ohlcv
+from gentrade.evolve import create_toolbox, run_evolution
+from gentrade.growtree import genFull, genGrow, genHalfAndHalf
+from gentrade.minimal_pset import zigzag_pivots
+
 
 def _unwrap_op(op: Callable[..., Any]) -> Any:
     """Return the original (un-decorated) function stored in a toolbox alias.
@@ -33,45 +67,6 @@ def _unwrap_op(op: Callable[..., Any]) -> Any:
     # ``inspect.unwrap`` may return Any; callers expect a callable but we
     # don't enforce it statically.
     return inspect.unwrap(op)
-
-
-import pandas as pd
-import pytest
-from deap import base, gp, tools
-from pytest import CaptureFixture, MonkeyPatch
-
-from gentrade.config import (
-    TREE_GEN_FUNCS,
-    BacktestEvaluatorConfig,
-    BestSelectionConfig,
-    ClassificationEvaluatorConfig,
-    DataConfig,
-    DefaultLargePsetConfig,
-    DefaultMediumPsetConfig,
-    DoubleTournamentSelectionConfig,
-    EphemeralMutationConfig,
-    EvolutionConfig,
-    F1MetricConfig,
-    InsertMutationConfig,
-    NodeReplacementMutationConfig,
-    NSGA2SelectionConfig,
-    OnePointCrossoverConfig,
-    OnePointLeafBiasedCrossoverConfig,
-    PrecisionMetricConfig,
-    PsetConfigBase,
-    RunConfig,
-    SharpeMetricConfig,
-    ShrinkMutationConfig,
-    TournamentSelectionConfig,
-    TreeConfig,
-    UniformMutationConfig,
-    ZigzagLargePsetConfig,
-    ZigzagMediumPsetConfig,
-)
-from gentrade.data import generate_synthetic_ohlcv, prepare_data
-from gentrade.evolve import create_toolbox, run_evolution
-from gentrade.growtree import genFull, genGrow, genHalfAndHalf
-from gentrade.minimal_pset import zigzag_pivots
 
 
 def _make_toolbox(cfg: RunConfig) -> base.Toolbox:
@@ -253,66 +248,6 @@ class TestPsetWiring:
 
 
 @pytest.mark.unit
-class TestDataConfig:
-    """Verify synthetic vs. real data selection logic in RunConfig/run_evolution."""
-
-    def test_data_config_defaults(self) -> None:
-        """Default RunConfig uses synthetic parameters and no pair.
-
-        ``prepare_data`` should honour ``n`` and return that many rows.
-        """
-        cfg = RunConfig()
-        assert cfg.data.pair is None
-        assert cfg.data.n > 0
-        df = prepare_data(cfg)
-        assert len(df) == cfg.data.n
-
-    def test_real_data_branch_monkeypatched(
-        self,
-        cfg_test_default: RunConfig,
-        monkeypatch: MonkeyPatch,
-        capsys: CaptureFixture[str],
-    ) -> None:
-        """When ``pair`` is set, :func:`prepare_data` uses
-        ``load_binance_ohlcv`` and prints a message.
-        """
-
-        # monkeypatch the actual tradetools loader since prepare_data
-        # imports it locally inside the function
-        import gentrade.tradetools as tt
-
-        def fake_load(
-            pair: str,
-            start: int | None = None,
-            stop: int | None = None,
-            count: int | None = None,
-        ) -> pd.DataFrame:
-            # simple one-row DataFrame
-            return pd.DataFrame(
-                {"open": [1], "high": [1], "low": [1], "close": [1], "volume": [1]}
-            )
-
-        monkeypatch.setattr(tt, "load_binance_ohlcv", fake_load)
-        # configure small evolution for speed
-        cfg = cfg_test_default.model_copy(
-            update={
-                "data": DataConfig(
-                    pair="BTCUSDT",
-                    start=100,
-                    count=1,
-                    n=10,  # synthetic size should be ignored
-                ),
-                "evolution": EvolutionConfig(mu=1, lambda_=1, generations=1),
-            }
-        )
-        df = prepare_data(cfg)
-        captured = capsys.readouterr()
-        assert "Loaded real OHLCV data for BTCUSDT" in captured.out
-        assert isinstance(df, pd.DataFrame)
-        assert df.iloc[0]["open"] == 1
-
-
-@pytest.mark.unit
 class TestRunConfigValidation:
     """Pydantic validator and input validation in run_evolution."""
 
@@ -346,7 +281,7 @@ class TestRunConfigValidation:
         self, cfg_test_default: RunConfig
     ) -> None:
         """run_evolution raises when classification fitness used without train_labels."""
-        df = generate_synthetic_ohlcv(cfg_test_default.data.n, cfg_test_default.seed)
+        df = generate_synthetic_ohlcv(100, 42)
         with pytest.raises(ValueError, match="train_labels must be provided"):
             # omit cfg to exercise default-initialisation branch
             run_evolution(df, None, None, None, None)
@@ -355,11 +290,11 @@ class TestRunConfigValidation:
         self, cfg_test_default: RunConfig
     ) -> None:
         """run_evolution raises when val_data is given but cfg.metrics_val is None."""
-        df = generate_synthetic_ohlcv(cfg_test_default.data.n, cfg_test_default.seed)
+        df = generate_synthetic_ohlcv(100, 42)
         labels = zigzag_pivots(
             df["close"],
-            cfg_test_default.data.target_threshold,
-            cfg_test_default.data.target_label,
+            0.01,
+            -1,
         )
         split = int(len(df) * 0.8)
         train_df, val_df = df.iloc[:split], df.iloc[split:]
@@ -381,10 +316,8 @@ class TestRunConfigValidation:
                 "metrics_val": (F1MetricConfig(),),
             }
         )
-        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(
-            df["close"], cfg.data.target_threshold, cfg.data.target_label
-        )
+        df = generate_synthetic_ohlcv(100, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         split = int(len(df) * 0.8)
         train_df, val_df = df.iloc[:split], df.iloc[split:]
         train_labels = labels.iloc[:split]

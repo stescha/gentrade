@@ -18,7 +18,6 @@ from gentrade import config
 from gentrade.config import (
     BacktestEvaluatorConfig,
     BestSelectionConfig,
-    DataConfig,
     DefaultLargePsetConfig,
     DoubleTournamentSelectionConfig,  # noqa: F401 (import for reference)
     EvolutionConfig,
@@ -33,7 +32,6 @@ from gentrade.tradetools import load_binance_ohlcv
 1
 cfg = RunConfig(
     # seed=42,
-    data=DataConfig(pair="BTCUSDT", start=100000, count=5000),
     evaluator=BacktestEvaluatorConfig(
         tp_stop=0.02,
         sl_stop=0.01,

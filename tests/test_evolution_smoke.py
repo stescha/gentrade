@@ -27,12 +27,8 @@ class TestEvolutionSmoke:
 
     def test_evolution_completes_f1(self, cfg_e2e_quick: RunConfig) -> None:
         """Evolution with default F1 config runs to completion."""
-        df = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
-        labels = zigzag_pivots(
-            df["close"],
-            cfg_e2e_quick.data.target_threshold,
-            cfg_e2e_quick.data.target_label,
-        )
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         pop, logbook, hof = run_evolution(df, labels, None, None, cfg_e2e_quick)
 
         assert len(pop) == cfg_e2e_quick.evolution.mu
@@ -41,12 +37,8 @@ class TestEvolutionSmoke:
 
     def test_evolution_completes_fbeta(self, cfg_e2e_fbeta: RunConfig) -> None:
         """Evolution with FBeta fitness and double tournament runs to completion."""
-        df = generate_synthetic_ohlcv(cfg_e2e_fbeta.data.n, cfg_e2e_fbeta.seed)
-        labels = zigzag_pivots(
-            df["close"],
-            cfg_e2e_fbeta.data.target_threshold,
-            cfg_e2e_fbeta.data.target_label,
-        )
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, 1)
         pop, logbook, hof = run_evolution(df, labels, None, None, cfg_e2e_fbeta)
 
         assert len(pop) == cfg_e2e_fbeta.evolution.mu
@@ -55,12 +47,8 @@ class TestEvolutionSmoke:
 
     def test_all_individuals_evaluated(self, cfg_e2e_quick: RunConfig) -> None:
         """Every individual in the final population has a valid numeric fitness."""
-        df = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
-        labels = zigzag_pivots(
-            df["close"],
-            cfg_e2e_quick.data.target_threshold,
-            cfg_e2e_quick.data.target_label,
-        )
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         pop, _, _ = run_evolution(df, labels, None, None, cfg_e2e_quick)
 
         assert all(ind.fitness.valid for ind in pop)
@@ -69,20 +57,12 @@ class TestEvolutionSmoke:
 
     def test_deterministic_structure_with_seed(self, cfg_e2e_quick: RunConfig) -> None:
         """Same config and seed produce identical population tree sizes."""
-        df = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
-        labels = zigzag_pivots(
-            df["close"],
-            cfg_e2e_quick.data.target_threshold,
-            cfg_e2e_quick.data.target_label,
-        )
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         pop1, _, _ = run_evolution(df, labels, None, None, cfg_e2e_quick)
         # regen data to ensure same randomness for multiple runs
-        df2 = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
-        labels2 = zigzag_pivots(
-            df2["close"],
-            cfg_e2e_quick.data.target_threshold,
-            cfg_e2e_quick.data.target_label,
-        )
+        df2 = generate_synthetic_ohlcv(1000, 42)
+        labels2 = zigzag_pivots(df2["close"], 0.01, -1)
         pop2, _, _ = run_evolution(df2, labels2, None, None, cfg_e2e_quick)
 
         # Tree node counts are deterministic given the same seed
@@ -104,10 +84,8 @@ class TestMultiObjectiveEvolution:
                 "selection": NSGA2SelectionConfig(),
             }
         )
-        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(
-            df["close"], cfg.data.target_threshold, cfg.data.target_label
-        )
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         pop, logbook, hof = run_evolution(df, labels, None, None, cfg)
 
         assert len(pop) == cfg.evolution.mu

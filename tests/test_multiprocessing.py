@@ -8,7 +8,6 @@ import pytest
 
 from gentrade.config import (
     ClassificationEvaluatorConfig,
-    DataConfig,
     EvolutionConfig,
     F1MetricConfig,
     OnePointCrossoverConfig,
@@ -27,7 +26,6 @@ def _make_cfg(processes: int) -> RunConfig:
     """Build a minimal RunConfig with the given process count."""
     return RunConfig(
         seed=42,
-        data=DataConfig(n=100, target_threshold=0.03, target_label=1),
         evolution=EvolutionConfig(
             mu=10, lambda_=20, generations=2, verbose=False, processes=processes
         ),
@@ -50,10 +48,8 @@ class TestMultiprocessingEvolution:
     def test_multiprocessing_completes(self) -> None:
         """Evolution with processes=2 runs to completion with correct structure."""
         cfg = _make_cfg(processes=2)
-        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(
-            df["close"], cfg.data.target_threshold, cfg.data.target_label
-        )
+        df = generate_synthetic_ohlcv(100, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         pop, logbook, _ = run_evolution(df, labels, None, None, cfg)
 
         assert len(pop) == cfg.evolution.mu
@@ -63,10 +59,8 @@ class TestMultiprocessingEvolution:
     def test_single_process_still_works(self) -> None:
         """Evolution with processes=1 (default) still works correctly."""
         cfg = _make_cfg(processes=1)
-        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(
-            df["close"], cfg.data.target_threshold, cfg.data.target_label
-        )
+        df = generate_synthetic_ohlcv(100, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         pop, logbook, _ = run_evolution(df, labels, None, None, cfg)
 
         assert len(pop) == cfg.evolution.mu

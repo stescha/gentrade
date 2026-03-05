@@ -6,7 +6,6 @@ from deap import creator
 from gentrade.config import (
     BacktestEvaluatorConfig,
     ClassificationEvaluatorConfig,
-    DataConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
     F1MetricConfig,
@@ -43,7 +42,6 @@ def cfg_test_default() -> RunConfig:
     """
     return RunConfig(
         seed=42,
-        data=DataConfig(n=100, target_threshold=0.03, target_label=1),
         evolution=EvolutionConfig(mu=10, lambda_=20, generations=2, verbose=False),
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
@@ -65,7 +63,6 @@ def cfg_e2e_quick() -> RunConfig:
     """
     return RunConfig(
         seed=42,
-        data=DataConfig(n=1000, target_threshold=0.03, target_label=1),
         evolution=EvolutionConfig(mu=50, lambda_=100, generations=10, verbose=False),
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
@@ -102,7 +99,6 @@ def cfg_backtest_unit() -> RunConfig:
     """
     return RunConfig(
         seed=42,
-        data=DataConfig(n=200, target_threshold=0.03, target_label=1),
         evolution=EvolutionConfig(mu=10, lambda_=20, generations=2, verbose=False),
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17

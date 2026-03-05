@@ -1,8 +1,6 @@
 import numpy as np
 import pandas as pd
 
-from gentrade.config import RunConfig
-
 
 def generate_synthetic_ohlcv(n: int, seed: None | int = None) -> pd.DataFrame:
     """Generate synthetic OHLCV data with realistic price movements.
@@ -40,31 +38,31 @@ def generate_synthetic_ohlcv(n: int, seed: None | int = None) -> pd.DataFrame:
     )
 
 
-def prepare_data(cfg: RunConfig) -> pd.DataFrame:
-    """Load or generate OHLCV data according to a run configuration.
+# def prepare_data(cfg: RunConfig) -> pd.DataFrame:
+#     """Load or generate OHLCV data according to a run configuration.
 
-    This function encapsulates the logic that used to live inside
-    :func:`run_evolution`. Calling code may use it to fetch data once and then
-    pass the resulting DataFrame into :func:`run_evolution`.
+#     This function encapsulates the logic that used to live inside
+#     :func:`run_evolution`. Calling code may use it to fetch data once and then
+#     pass the resulting DataFrame into :func:`run_evolution`.
 
-    Args:
-        cfg: Run configuration containing ``DataConfig`` parameters.
+#     Args:
+#         cfg: Run configuration containing ``DataConfig`` parameters.
 
-    Returns:
-        OHLCV ``DataFrame`` suitable for evolution. For synthetically generated
-        data the random seed from ``cfg`` is reused for reproducibility.
-    """
-    if cfg.data.pair is not None:
-        from gentrade.tradetools import load_binance_ohlcv
+#     Returns:
+#         OHLCV ``DataFrame`` suitable for evolution. For synthetically generated
+#         data the random seed from ``cfg`` is reused for reproducibility.
+#     """
+#     if cfg.data.pair is not None:
+#         from gentrade.tradetools import load_binance_ohlcv
 
-        df = load_binance_ohlcv(
-            cfg.data.pair,
-            cfg.data.start,
-            cfg.data.stop,
-            cfg.data.count,
-        )
-        print(f"Loaded real OHLCV data for {cfg.data.pair}: {len(df)} rows")
-    else:
-        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        print(f"Generated synthetic OHLCV data: {len(df)} rows")
-    return df
+#         df = load_binance_ohlcv(
+#             cfg.data.pair,
+#             cfg.data.start,
+#             cfg.data.stop,
+#             cfg.data.count,
+#         )
+#         print(f"Loaded real OHLCV data for {cfg.data.pair}: {len(df)} rows")
+#     else:
+#         df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
+#         print(f"Generated synthetic OHLCV data: {len(df)} rows")
+#     return df

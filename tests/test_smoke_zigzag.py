@@ -29,10 +29,8 @@ class TestZigzagIntegration:
         cfg = cfg_e2e_quick
         assert "zigzag" in cfg.pset.type
 
-        df = generate_synthetic_ohlcv(cfg.data.n, cfg.seed)
-        labels = zigzag_pivots(
-            df["close"], cfg.data.target_threshold, cfg.data.target_label
-        )
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         pop, logbook, hof = run_evolution(df, labels, None, None, cfg)
 
         zigzag_found = any("zigzag_pivots" in str(ind) for ind in hof)

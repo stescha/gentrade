@@ -119,8 +119,8 @@ All data/label arguments except `train_data` are optional.  When using a
 classification evaluator the caller must supply the corresponding
 `*_labels` Series.  If `val_data` is provided `cfg.metrics_val` must also
 be set or a `ValueError` is raised.  Data loading/generation is
-performed externally; helpers such as `gentrade.data.prepare_data` exist
-for convenience.
+performed externally.
+
 
 ## Conventions
 

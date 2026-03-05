@@ -2,6 +2,8 @@
 BacktestEvaluatorConfig, and the BacktestEvaluator class.
 """
 
+from typing import Self
+
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import pytest
@@ -330,7 +332,7 @@ class TestBacktestEvaluator:
         """BacktestEvaluator raises MetricCalculationError when metric returns NaN."""
 
         class _NanMetric(BacktestMetricConfigBase):
-            def __call__(self, pf: object) -> float:
+            def __call__(self: Self, pf: object) -> float:
                 return float("nan")
 
         pset = self._make_pset()
