@@ -13,6 +13,7 @@ drive how the operator is wired without any isinstance checks.
 import multiprocessing
 import operator
 import random
+from typing import overload
 
 import numpy as np
 import pandas as pd
@@ -33,6 +34,24 @@ from gentrade.evaluators import (
 from gentrade.growtree import genFull
 
 # moved to data module to centralise data helpers
+
+
+@overload
+def _make_evaluator(
+    evaluator_cfg: BacktestEvaluatorConfig,
+) -> BacktestEvaluator: ...
+
+
+@overload
+def _make_evaluator(
+    evaluator_cfg: ClassificationEvaluatorConfig,
+) -> ClassificationEvaluator: ...
+
+
+@overload
+def _make_evaluator(
+    evaluator_cfg: EvaluatorConfigBase,
+) -> ClassificationEvaluator | BacktestEvaluator: ...
 
 
 def _make_evaluator(
@@ -78,7 +97,7 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
     # TODO: Replace with a per-run fitness class factory.
     weights = tuple(m.weight for m in cfg.metrics)
     if hasattr(creator, "FitnessMax"):
-        if creator.FitnessMax.weights != weights:
+        if creator.FitnessMax.weights != weights:  # type: ignore[attr-defined]
             del creator.FitnessMax
             if hasattr(creator, "Individual"):
                 del creator.Individual
@@ -102,7 +121,8 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
     toolbox.register("select", cfg.selection.func, **cfg.selection.params)
 
     # sel_best — selects the single best individual; used by the validation phase.
-    # k=1 is enforced here per design; the selection function comes from cfg.select_best.
+    # k=1 is enforced here per design; the selection function comes from
+    # cfg.select_best.
     toolbox.register("sel_best", cfg.select_best.func, k=1)
 
     # Crossover — func + params (e.g. termpb for leaf-biased)
@@ -232,7 +252,8 @@ def run_evolution(
     print(f"Seed: {cfg.seed}")
     metric_summary = ", ".join(f"{m.type}(w={m.weight})" for m in cfg.metrics)
     print(
-        f"Objective mode: {'Multi-objective' if is_multiobjective else 'Single-objective'}"
+        "Objective mode:",
+        "Multi-objective" if is_multiobjective else "Single-objective",
     )
     print(f"Metrics: [{metric_summary}]")
     print(f"Evaluator: {cfg.evaluator.type}")
@@ -242,7 +263,8 @@ def run_evolution(
         f"mutpb={cfg.evolution.mutpb}, processes={cfg.evolution.processes}"
     )
     print(
-        f"Tree: depth=[{cfg.tree.min_depth}, {cfg.tree.max_depth}], max_height={cfg.tree.max_height}"
+        f"Tree: depth=[{cfg.tree.min_depth}, {cfg.tree.max_depth}], "
+        f"max_height={cfg.tree.max_height}"
     )
     print(f"Pset: {cfg.pset.type}")
     print(f"Mutation: {cfg.mutation.type}")
@@ -253,9 +275,10 @@ def run_evolution(
     print()
 
     # ── 3. Build pset ──────────────────────────────────────
-    pset = cfg.pset.func()
+    pset: gp.PrimitiveSetTyped = cfg.pset.func()
     print(
-        f"Created pset with {pset.prims_count} primitives and {pset.terms_count} terminals"
+        f"Created pset with {pset.prims_count} primitives and {pset.terms_count} "
+        "terminals"
     )
     print()
 
@@ -386,7 +409,8 @@ def run_evolution(
 
     best = hof[0]
     fitness_str = ", ".join(
-        f"{m.type}={v:.4f}" for m, v in zip(cfg.metrics, best.fitness.values)
+        f"{m.type}={v:.4f}"
+        for m, v in zip(cfg.metrics, best.fitness.values, strict=True)
     )
     print(f"Best individual ({fitness_str}):")
     print(f"  {str(best)}")
@@ -394,35 +418,39 @@ def run_evolution(
 
     print("Top 5 individuals:")
     # Restirict to top 5 to account for multobjective cases where the Hall of Fame is a
-    # ParetoFront. The ParetoFront size grows during evolution. To avoid overwhelming the
-    # output, we limit the reporting to the top 5 individuals. Note that the
+    # ParetoFront. The ParetoFront size grows during evolution. To avoid overwhelming
+    # the output, we limit the reporting to the top 5 individuals. Note that the
     # ParetoFront does not have a guaranteed order, so the "top 5" is somewhat arbitrary
     # in that case.
     # NOTE: Sorting / selecting best individuals from a ParetoFront is non-trivial and
-    # depends on the specific implementation and objectives. A solution will be added later
-    # after further investigation. For now, we simply report the first 5 individuals in the
-    # order they are stored in the ParetoFront.
+    # depends on the specific implementation and objectives. A solution will be added
+    # later after further investigation. For now, we simply report the first 5
+    # individuals in the order they are stored in the ParetoFront.
 
-    for i, ind in enumerate(hof[:5]):  # type: ignore[index]
+    for i, ind in enumerate(list(hof)[:5]):
         fitness_str_i = ", ".join(
-            f"{m.type}={v:.4f}" for m, v in zip(cfg.metrics, ind.fitness.values)
+            f"{m.type}={v:.4f}"
+            for m, v in zip(cfg.metrics, ind.fitness.values, strict=True)
         )
         print(f"  {i + 1}. {fitness_str_i}: {str(ind)[:80]}...")
     print()
 
     print("Logbook summary (last 5 generations):")
-    for record in logbook[-5:]:  # type: ignore[index]
+    for record in list(logbook)[-5:]:
         if is_multiobjective:
             avg_str = ", ".join(
-                f"{m.type}_avg={v:.4f}" for m, v in zip(cfg.metrics, record["avg"])
+                f"{m.type}_avg={v:.4f}"
+                for m, v in zip(cfg.metrics, record["avg"], strict=True)
             )
             max_str = ", ".join(
-                f"{m.type}_max={v:.4f}" for m, v in zip(cfg.metrics, record["max"])
+                f"{m.type}_max={v:.4f}"
+                for m, v in zip(cfg.metrics, record["max"], strict=True)
             )
             print(f"  Gen {record['gen']}: {avg_str}, {max_str}")
         else:
             print(
-                f"  Gen {record['gen']}: avg={record['avg']:.4f}, max={record['max']:.4f}"
+                f"  Gen {record['gen']}: avg={record['avg']:.4f}, "
+                f"max={record['max']:.4f}"
             )
 
     # ── 12. Log full config dump ───────────────────────────

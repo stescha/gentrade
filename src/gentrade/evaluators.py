@@ -14,7 +14,7 @@ or metric calculation are wrapped in domain-specific exceptions and re-raised.
 This ensures bugs and misconfigurations surface immediately.
 """
 
-from typing import Callable
+from typing import Callable, cast
 
 import numpy as np
 import pandas as pd
@@ -32,7 +32,8 @@ def _compile_tree(
     individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
 ) -> Callable[..., pd.Series]:
     try:
-        return gp.compile(individual, pset)
+        # gp.compile is untyped; explicitly cast to expected signature
+        return cast(Callable[..., pd.Series], gp.compile(individual, pset))
     except Exception as e:
         raise TreeEvaluationError(
             "Failed to compile tree.",

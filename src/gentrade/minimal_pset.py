@@ -211,15 +211,15 @@ def add_features_large(pset: gp.PrimitiveSetTyped) -> None:
     pset.addEphemeralConstant("maximum", Maximum.sample, Maximum)
 
     # Wrap each category to handle duplicate primitive errors
-    for add_func in [
-        add_cycle_indicators,
-        add_momentum_indicators,
-        add_overlap_studies,
-        add_statistic_functions,
-        add_volatility_indicators,
-        add_volume_indicators,
-    ]:
-        add_func(pset)
+    # TODO:
+    # Temporarily allow type ignores because `talib_primitives` is untyped.
+    # Remove aftere pset rework.
+    add_cycle_indicators(pset)  # type: ignore
+    add_momentum_indicators(pset)  # type: ignore
+    add_overlap_studies(pset)  # type: ignore
+    add_statistic_functions(pset)  # type: ignore
+    add_volatility_indicators(pset)  # type: ignore
+    add_volume_indicators(pset)  # type: ignore
 
 
 def create_pset_zigzag_minimal(name: str = "zigzag_minimal") -> gp.PrimitiveSetTyped:

@@ -5,7 +5,13 @@ from typing import Any
 from deap import base, tools
 
 
-def varOr(population, toolbox, lambda_, cxpb, mutpb):
+def varOr(
+    population: list[Any],
+    toolbox: base.Toolbox,
+    lambda_: int,
+    cxpb: float,
+    mutpb: float,
+) -> list[Any]:
     r"""Part of an evolutionary algorithm applying only the variation part
     (crossover, mutation **or** reproduction). The modified individuals have
     their fitness invalidated. The individuals are cloned so returned

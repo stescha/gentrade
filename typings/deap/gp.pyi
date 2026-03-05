@@ -72,6 +72,8 @@ class PrimitiveSetTyped:
     primitives: dict[type, list[Primitive]]
     mapping: dict[str, Primitive]
     terminals: dict[type, list[Primitive]]
+    prims_count: int
+    terms_count: int
     ret: type
     def __init__(
         self,
