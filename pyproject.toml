@@ -23,9 +23,10 @@ dependencies = [
     "mypy (>=1.19.1,<2.0.0)",
     "pytest (>=9.0.2,<10.0.0)",
     "ruff (>=0.15.4,<0.16.0)",
-    "zigzag @ file:///home/stuff/PyProj/gentrade/vendor/zigzag",
     "pandas-stubs (>=3.0.0.260204,<4.0.0.0)",
     "pydantic (>=2.12.5,<3.0.0)",
+    # local wheel checked in under vendor/dist
+    "zigzag @ file:vendor/dist/zigzag-0.3.2-cp311-cp311-manylinux_2_42_x86_64.whl",
 ]
 
 

@@ -9,7 +9,7 @@ import operator
 import pandas as pd
 import talib
 from deap import gp
-from zigzag import peak_valley_pivots  # type: ignore[import-untyped]
+from zigzag import peak_valley_pivots  # type: ignore[attr-defined]
 
 from gentrade.pset.pset_types import (
     Acceleration,
