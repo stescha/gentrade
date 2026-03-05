@@ -1916,7 +1916,10 @@ files = [
 ]
 
 [package.dependencies]
-numpy = {version = ">=1.23.2", markers = "python_version == \"3.11\""}
+numpy = [
+    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
+    {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
+]
 python-dateutil = ">=2.8.2"
 pytz = ">=2020.1"
 tzdata = ">=2022.7"
@@ -3476,5 +3479,5 @@ url = "vendor/dist/zigzag-0.3.2-cp311-cp311-manylinux_2_42_x86_64.whl"
 
 [metadata]
 lock-version = "2.1"
-python-versions = "~3.11"
-content-hash = "3e463e70c9522b91e1f5276443de95d499b03593607817a7214551300d8d0c3a"
+python-versions = ">=3.11,<3.13"
+content-hash = "d2876ab72ae27f4c7859d75c1ebd0c0bf7d83caf14d8debaa42aacf436b90b93"
