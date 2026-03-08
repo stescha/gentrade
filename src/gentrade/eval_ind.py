@@ -103,6 +103,8 @@ class BacktestEvaluator:
     config with the resulting portfolio to produce a fitness tuple.
 
     Args:
+        pset: Primitive set for compilation (constant for the run).
+        metrics: Ordered tuple of backtest metric configs to compute.
         tp_stop: Take profit stop.
         sl_stop: Stop loss stop.
         sl_trail: Trailing stop loss.
@@ -112,12 +114,18 @@ class BacktestEvaluator:
 
     def __init__(
         self,
+        pset: gp.PrimitiveSetTyped,
+        metrics: tuple[BacktestMetricConfigBase, ...],
         tp_stop: float,
         sl_stop: float,
         sl_trail: bool,
         fees: float,
         init_cash: float,
     ) -> None:
+        # constant context
+        self.pset = pset
+        self.metrics = metrics
+        # other parameters
         self.tp_stop = tp_stop
         self.sl_stop = sl_stop
         self.sl_trail = sl_trail
@@ -128,17 +136,13 @@ class BacktestEvaluator:
         self,
         individual: gp.PrimitiveTree,
         *,
-        pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
-        metrics: tuple[BacktestMetricConfigBase, ...],
     ) -> tuple[float, ...]:
         """Evaluate one individual using backtest metrics.
 
         Args:
             individual: GP tree to evaluate.
-            pset: Primitive set for compilation.
             df: OHLCV DataFrame.
-            metrics: Ordered tuple of backtest metric configs.
 
         Returns:
             Tuple of floats, one per metric.
@@ -148,7 +152,7 @@ class BacktestEvaluator:
             MetricCalculationError: If metric calculation fails or returns
                 non-finite value.
         """
-        entries = _compile_tree_to_signals(individual, pset, df)
+        entries = _compile_tree_to_signals(individual, self.pset, df)
 
         try:
             pf = run_vbt_backtest(
@@ -169,7 +173,7 @@ class BacktestEvaluator:
             ) from e
 
         result: list[float] = []
-        for m in metrics:
+        for m in self.metrics:
             try:
                 val = m(pf)
             except Exception as e:
@@ -202,17 +206,24 @@ class ClassificationEvaluator:
     metric config with ``(y_true, y_pred)`` to produce a fitness tuple.
 
     Args:
-        cfg: Classification evaluator config (carries no parameters).
+        pset: Primitive set for compilation (constant for the run).
+        metrics: Ordered tuple of classification metric configs.
     """
+
+    def __init__(
+        self,
+        pset: gp.PrimitiveSetTyped,
+        metrics: tuple[ClassificationMetricConfigBase, ...],
+    ) -> None:
+        self.pset = pset
+        self.metrics = metrics
 
     def evaluate(
         self,
         individual: gp.PrimitiveTree,
         *,
-        pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
         y_true: pd.Series,
-        metrics: tuple[ClassificationMetricConfigBase, ...],
     ) -> tuple[float, ...]:
         """Evaluate one individual using classification metrics.
 
@@ -231,10 +242,10 @@ class ClassificationEvaluator:
             MetricCalculationError: If metric calculation fails or returns
                 non-finite value.
         """
-        y_pred = _compile_tree_to_signals(individual, pset, df)
+        y_pred = _compile_tree_to_signals(individual, self.pset, df)
 
         result: list[float] = []
-        for m in metrics:
+        for m in self.metrics:
             try:
                 val = m(y_true, y_pred)
             except Exception as e:

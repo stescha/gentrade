@@ -25,6 +25,7 @@ from gentrade.config import (
     BacktestEvaluatorConfig,
     ClassificationEvaluatorConfig,
     EvaluatorConfigBase,
+    MetricConfigBase,
     RunConfig,
 )
 from gentrade.eval_ind import (
@@ -39,35 +40,54 @@ from gentrade.growtree import genFull
 @overload
 def _make_evaluator(
     evaluator_cfg: BacktestEvaluatorConfig,
+    pset: gp.PrimitiveSetTyped,
+    metrics: tuple[MetricConfigBase, ...],
 ) -> BacktestEvaluator: ...
 
 
 @overload
 def _make_evaluator(
     evaluator_cfg: ClassificationEvaluatorConfig,
+    pset: gp.PrimitiveSetTyped,
+    metrics: tuple[MetricConfigBase, ...],
 ) -> ClassificationEvaluator: ...
 
 
 @overload
 def _make_evaluator(
     evaluator_cfg: EvaluatorConfigBase,
+    pset: gp.PrimitiveSetTyped,
+    metrics: tuple[MetricConfigBase, ...],
 ) -> ClassificationEvaluator | BacktestEvaluator: ...
 
 
 def _make_evaluator(
     evaluator_cfg: EvaluatorConfigBase,
+    pset: gp.PrimitiveSetTyped,
+    metrics: tuple[MetricConfigBase, ...],
 ) -> ClassificationEvaluator | BacktestEvaluator:
     """Construct an evaluator instance from its config.
 
     Args:
         evaluator_cfg: Evaluator config from ``RunConfig``.
+        pset: the primitive set used during the run.
+        metrics: ordered tuple of metric configs used for fitness.
 
     Returns:
         Concrete evaluator instance ready to call ``.evaluate()``.
     """
     if isinstance(evaluator_cfg, BacktestEvaluatorConfig):
-        return BacktestEvaluator(**evaluator_cfg.model_dump(exclude={"type"}))
-    return ClassificationEvaluator()
+        # pass pset and metrics as first args before portfolio params
+        # metrics variable has a broad type; mypy cannot infer which
+        # concrete metric base class is appropriate for the evaluator.
+        return BacktestEvaluator(
+            pset=pset,
+            metrics=metrics,  # type: ignore[arg-type]
+            **evaluator_cfg.model_dump(exclude={"type"}),
+        )
+    # classification evaluator currently carries no other parameters
+    # metrics might be classification metrics; ignore for now
+    return ClassificationEvaluator(pset=pset, metrics=metrics)  # type: ignore[arg-type]
 
 
 def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
@@ -288,25 +308,21 @@ def run_evolution(
     # ── 6. Evaluation — dispatch based on evaluator type ─────
     # Use picklable callable objects (not local lambdas) so evaluation
     # can be distributed to multiprocessing worker processes.
-    evaluator = _make_evaluator(cfg.evaluator)
+    evaluator = _make_evaluator(cfg.evaluator, pset=pset, metrics=cfg.metrics)
 
     if isinstance(cfg.evaluator, BacktestEvaluatorConfig):
         toolbox.register(
             "evaluate",
             evaluator.evaluate,
-            pset=pset,
             df=train_data,
-            metrics=cfg.metrics,
         )
     else:
         assert train_labels is not None  # validated above
         toolbox.register(
             "evaluate",
             evaluator.evaluate,
-            pset=pset,
             df=train_data,
             y_true=train_labels,
-            metrics=cfg.metrics,
         )
 
     if val_data is not None:
@@ -314,9 +330,7 @@ def run_evolution(
             toolbox.register(
                 "evaluate_val",
                 evaluator.evaluate,
-                pset=pset,
                 df=val_data,
-                metrics=cfg.metrics_val,
             )
 
         else:
@@ -324,10 +338,8 @@ def run_evolution(
             toolbox.register(
                 "evaluate_val",
                 evaluator.evaluate,
-                pset=pset,
                 df=val_data,
                 y_true=val_labels,
-                metrics=cfg.metrics_val,
             )
 
     # ── 6b. Multiprocessing ────────────────────────────────

@@ -131,14 +131,12 @@ class TestMetricCalculationError:
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return float("nan")
 
-        evaluator = ClassificationEvaluator()
+        evaluator = ClassificationEvaluator(pset=pset, metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(
                 valid_individual,
-                pset=pset,
                 df=df,
                 y_true=labels,
-                metrics=(_NanMetric(),),
             )
         assert excinfo.value.tree is valid_individual
         assert excinfo.value.metric is not None
@@ -157,14 +155,12 @@ class TestMetricCalculationError:
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return float("inf")
 
-        evaluator = ClassificationEvaluator()
+        evaluator = ClassificationEvaluator(pset=pset, metrics=(_InfMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(
                 valid_individual,
-                pset=pset,
                 df=df,
                 y_true=labels,
-                metrics=(_InfMetric(),),
             )
         assert "non-finite" in str(excinfo.value).lower()
 
@@ -181,14 +177,12 @@ class TestMetricCalculationError:
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 raise ValueError("Simulated metric error")
 
-        evaluator = ClassificationEvaluator()
+        evaluator = ClassificationEvaluator(pset=pset, metrics=(_ExceptionMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(
                 valid_individual,
-                pset=pset,
                 df=df,
                 y_true=labels,
-                metrics=(_ExceptionMetric(),),
             )
         # Exception chaining should preserve the ValueError
         assert excinfo.value.__cause__ is not None
@@ -207,14 +201,12 @@ class TestMetricCalculationError:
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return float("nan")
 
-        evaluator = ClassificationEvaluator()
+        evaluator = ClassificationEvaluator(pset=pset, metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(
                 valid_individual,
-                pset=pset,
                 df=df,
                 y_true=labels,
-                metrics=(_NanMetric(),),
             )
         # Signals should be captured for debugging
         assert excinfo.value.signals is not None
@@ -233,13 +225,11 @@ class TestValidTreeEvaluation:
     ) -> None:
         """Valid tree evaluation returns proper fitness tuple."""
 
-        evaluator = ClassificationEvaluator()
+        evaluator = ClassificationEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         result = evaluator.evaluate(
             valid_individual,
-            pset=pset,
             df=df,
             y_true=labels,
-            metrics=(F1MetricConfig(),),
         )
         assert isinstance(result, tuple)
         assert len(result) == 1
@@ -259,13 +249,11 @@ class TestValidTreeEvaluation:
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return 0.0
 
-        evaluator = ClassificationEvaluator()
+        evaluator = ClassificationEvaluator(pset=pset, metrics=(_ZeroMetric(),))
         result = evaluator.evaluate(
             valid_individual,
-            pset=pset,
             df=df,
             y_true=labels,
-            metrics=(_ZeroMetric(),),
         )
         assert result == (0.0,)
 
@@ -287,6 +275,8 @@ class TestBacktestEvaluatorExceptions:
                 return float("nan")
 
         evaluator = BacktestEvaluator(
+            pset=pset,
+            metrics=(_NanMetric(),),
             tp_stop=0.02,
             sl_stop=0.01,
             sl_trail=True,
@@ -296,9 +286,7 @@ class TestBacktestEvaluatorExceptions:
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(
                 valid_individual,
-                pset=pset,
                 df=df,
-                metrics=(_NanMetric(),),
             )
         assert "non-finite" in str(excinfo.value).lower()
 
@@ -311,6 +299,8 @@ class TestBacktestEvaluatorExceptions:
         individual = gp.PrimitiveTree([])
 
         evaluator = BacktestEvaluator(
+            pset=pset,
+            metrics=(SharpeMetricConfig(),),
             tp_stop=0.02,
             sl_stop=0.01,
             sl_trail=True,
@@ -320,7 +310,5 @@ class TestBacktestEvaluatorExceptions:
         with pytest.raises(TreeEvaluationError):
             evaluator.evaluate(
                 individual,
-                pset=pset,
                 df=df,
-                metrics=(SharpeMetricConfig(),),
             )

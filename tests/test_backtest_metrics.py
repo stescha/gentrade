@@ -289,13 +289,15 @@ class TestBacktestEvaluator:
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
-        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        evaluator = _make_evaluator(
+            BacktestEvaluatorConfig(),
+            pset=pset,
+            metrics=(SharpeMetricConfig(min_trades=0),),
+        )
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(
                 individual,
-                pset=pset,
                 df=df,
-                metrics=(SharpeMetricConfig(min_trades=0),),
             )
         print(excinfo.value)
 
@@ -304,12 +306,14 @@ class TestBacktestEvaluator:
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
-        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        evaluator = _make_evaluator(
+            BacktestEvaluatorConfig(),
+            pset=pset,
+            metrics=(SharpeMetricConfig(min_trades=999999),),
+        )
         result = evaluator.evaluate(
             individual,
-            pset=pset,
             df=df,
-            metrics=(SharpeMetricConfig(min_trades=999999),),
         )
         assert result == (0.0,)
 
@@ -319,13 +323,15 @@ class TestBacktestEvaluator:
         pset = self._make_pset()
         individual = deap_gp.PrimitiveTree([])
         df = self._make_df()
-        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        evaluator = _make_evaluator(
+            BacktestEvaluatorConfig(),
+            pset=pset,
+            metrics=(SharpeMetricConfig(),),
+        )
         with pytest.raises(TreeEvaluationError):
             evaluator.evaluate(
                 individual,
-                pset=pset,
                 df=df,
-                metrics=(SharpeMetricConfig(),),
             )
 
     def test_nonfinite_raises_metric_calculation_error(self) -> None:
@@ -338,13 +344,15 @@ class TestBacktestEvaluator:
         pset = self._make_pset()
         individual = self._make_individual()
         df = self._make_df()
-        evaluator = _make_evaluator(BacktestEvaluatorConfig())
+        evaluator = _make_evaluator(
+            BacktestEvaluatorConfig(),
+            pset=pset,
+            metrics=(_NanMetric(),),
+        )
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(
                 individual,
-                pset=pset,
                 df=df,
-                metrics=(_NanMetric(),),
             )
         # Verify the exception contains the expected attributes
         assert excinfo.value.tree is individual
