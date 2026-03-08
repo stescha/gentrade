@@ -1,5 +1,6 @@
 import random
 from collections.abc import Callable
+from multiprocessing import pool
 from typing import Any
 
 from deap import base, tools
@@ -71,6 +72,7 @@ def varOr(
 
 
 def eaMuPlusLambdaGentrade(
+    pool: pool.Pool,
     population: list[Any],
     toolbox: base.Toolbox,
     mu: int,
@@ -88,6 +90,10 @@ def eaMuPlusLambdaGentrade(
     :param population: A list of individuals.
     :param toolbox: A :class:`~deap.base.Toolbox` that contains the evolution
                     operators.
+    :param pool: A :class:`multiprocessing.Pool` created by
+                 :func:`gentrade.eval_pop.create_pool`.  Evaluation will be
+                 performed via ``pool.map`` instead of the toolbox's built-in
+                 mapper.
     :param mu: The number of individuals to select for the next generation.
     :param lambda\_: The number of children to produce at each generation.
     :param cxpb: The probability that an offspring is produced by crossover.
@@ -137,7 +143,7 @@ def eaMuPlusLambdaGentrade(
     logbook = tools.Logbook()
     logbook.header = ["gen", "nevals"] + (stats.fields if stats else [])
 
-    nevals, duration = evaluate_population(population, toolbox)
+    nevals, duration = evaluate_population(population, pool)
 
     if halloffame is not None:
         halloffame.update(population)
@@ -153,7 +159,7 @@ def eaMuPlusLambdaGentrade(
         offspring = varOr(population, toolbox, lambda_, cxpb, mutpb)
 
         # Evaluate the individuals with an invalid fitness
-        nevals, duration = evaluate_population(offspring, toolbox)
+        nevals, duration = evaluate_population(offspring, pool)
 
         # Update the hall of fame with the generated individuals
         if halloffame is not None:
@@ -168,7 +174,7 @@ def eaMuPlusLambdaGentrade(
         if verbose:
             print(
                 f"Gen {gen} evaluation time: {duration:.4f} s"
-                f" {duration / nevals:.4f} s/individual"
+                f" {duration / nevals:.5f} s/individual"
             )
             print(logbook.stream)
 

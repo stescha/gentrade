@@ -207,7 +207,9 @@ class ClassificationEvaluator:
 
     Args:
         pset: Primitive set for compilation (constant for the run).
-        metrics: Ordered tuple of classification metric configs.
+        metrics: Ordered tuple of classification metric configs.  These are
+            stored on the instance at construction so that ``evaluate``
+            no longer requires them as arguments.
     """
 
     def __init__(
@@ -228,11 +230,9 @@ class ClassificationEvaluator:
         """Evaluate one individual using classification metrics.
 
         Args:
-            individual: GP tree to evaluate.
-            pset: Primitive set for compilation.
+                individual: GP tree to evaluate.
             df: OHLCV DataFrame.
             y_true: Ground-truth boolean series.
-            metrics: Ordered tuple of classification metric configs.
 
         Returns:
             Tuple of floats, one per metric.

@@ -10,7 +10,6 @@ mutation, the ``_requires_pset`` and ``_requires_expr`` ClassVar flags
 drive how the operator is wired without any isinstance checks.
 """
 
-import multiprocessing
 import operator
 import random
 from typing import overload
@@ -32,6 +31,7 @@ from gentrade.eval_ind import (
     BacktestEvaluator,
     ClassificationEvaluator,
 )
+from gentrade.eval_pop import create_pool
 from gentrade.growtree import genFull
 
 # moved to data module to centralise data helpers
@@ -310,21 +310,6 @@ def run_evolution(
     # can be distributed to multiprocessing worker processes.
     evaluator = _make_evaluator(cfg.evaluator, pset=pset, metrics=cfg.metrics)
 
-    if isinstance(cfg.evaluator, BacktestEvaluatorConfig):
-        toolbox.register(
-            "evaluate",
-            evaluator.evaluate,
-            df=train_data,
-        )
-    else:
-        assert train_labels is not None  # validated above
-        toolbox.register(
-            "evaluate",
-            evaluator.evaluate,
-            df=train_data,
-            y_true=train_labels,
-        )
-
     if val_data is not None:
         if isinstance(cfg.evaluator, BacktestEvaluatorConfig):
             toolbox.register(
@@ -334,7 +319,6 @@ def run_evolution(
             )
 
         else:
-            # assert train_labels is not None  # validated above
             toolbox.register(
                 "evaluate_val",
                 evaluator.evaluate,
@@ -343,13 +327,15 @@ def run_evolution(
             )
 
     # ── 6b. Multiprocessing ────────────────────────────────
-    pool = None
-    if cfg.evolution.processes > 1:
-        pool = multiprocessing.Pool(processes=cfg.evolution.processes)
-        toolbox.register("map", pool.map)
-        print(f"Using multiprocessing with {cfg.evolution.processes} workers")
-    else:
-        print("Using single-process evaluation")
+    # Use multiprocessing even if processes=1 to simplify code paths.
+    # The avoidable overhead is acceptable because running only one process
+    # is a unusal configuration.
+    pool = create_pool(
+        cfg.evolution.processes,
+        evaluator=evaluator,
+        train_data=train_data,
+        train_labels=train_labels,
+    )
 
     # ── 7. Statistics ──────────────────────────────────────
     stats = tools.Statistics(lambda ind: ind.fitness.values)
@@ -395,6 +381,7 @@ def run_evolution(
 
     try:
         pop, logbook = eaMuPlusLambdaGentrade(
+            pool,
             pop,
             toolbox,
             mu=cfg.evolution.mu,
