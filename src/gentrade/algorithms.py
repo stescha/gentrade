@@ -1,4 +1,5 @@
 import random
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -156,7 +157,9 @@ def eaMuPlusLambdaGentrade(
 
         # Evaluate the individuals with an invalid fitness
         invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        t_start = time.perf_counter()
         fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
+        duration = time.perf_counter() - t_start
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
 
@@ -169,8 +172,13 @@ def eaMuPlusLambdaGentrade(
 
         # Update the statistics with the new population
         record = stats.compile(population) if stats is not None else {}
-        logbook.record(gen=gen, nevals=len(invalid_ind), **record)
+        nevals = len(invalid_ind)
+        logbook.record(gen=gen, nevals=nevals, **record)
         if verbose:
+            print(
+                f"Gen {gen} evaluation time: {duration:.4f} s"
+                f" {duration / nevals:.4f} s/individual"
+            )
             print(logbook.stream)
 
         if val_callback is not None:
