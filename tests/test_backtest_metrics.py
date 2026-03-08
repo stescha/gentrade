@@ -32,7 +32,7 @@ from gentrade.config import (  # noqa: E402
     TotalReturnMetricConfig,
 )
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.evaluators import _compile_tree_to_signals  # noqa: E402
+from gentrade.eval_ind import _compile_tree_to_signals
 from gentrade.evolve import (
     _make_evaluator,  # helper to construct evaluators from configs
 )

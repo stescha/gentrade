@@ -27,7 +27,7 @@ from gentrade.config import (
     EvaluatorConfigBase,
     RunConfig,
 )
-from gentrade.evaluators import (
+from gentrade.eval_ind import (
     BacktestEvaluator,
     ClassificationEvaluator,
 )

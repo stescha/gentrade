@@ -1,9 +1,10 @@
 import random
-import time
 from collections.abc import Callable
 from typing import Any
 
 from deap import base, tools
+
+from .eval_pop import evaluate_population
 
 
 def varOr(
@@ -136,17 +137,13 @@ def eaMuPlusLambdaGentrade(
     logbook = tools.Logbook()
     logbook.header = ["gen", "nevals"] + (stats.fields if stats else [])
 
-    # Evaluate the individuals with an invalid fitness
-    invalid_ind = [ind for ind in population if not ind.fitness.valid]
-    fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
-    for ind, fit in zip(invalid_ind, fitnesses):
-        ind.fitness.values = fit
+    nevals, duration = evaluate_population(population, toolbox)
 
     if halloffame is not None:
         halloffame.update(population)
 
     record = stats.compile(population) if stats is not None else {}
-    logbook.record(gen=0, nevals=len(invalid_ind), **record)
+    logbook.record(gen=0, nevals=nevals, **record)
     if verbose:
         print(logbook.stream)
 
@@ -156,12 +153,7 @@ def eaMuPlusLambdaGentrade(
         offspring = varOr(population, toolbox, lambda_, cxpb, mutpb)
 
         # Evaluate the individuals with an invalid fitness
-        invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-        t_start = time.perf_counter()
-        fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
-        duration = time.perf_counter() - t_start
-        for ind, fit in zip(invalid_ind, fitnesses):
-            ind.fitness.values = fit
+        nevals, duration = evaluate_population(offspring, toolbox)
 
         # Update the hall of fame with the generated individuals
         if halloffame is not None:
@@ -172,7 +164,6 @@ def eaMuPlusLambdaGentrade(
 
         # Update the statistics with the new population
         record = stats.compile(population) if stats is not None else {}
-        nevals = len(invalid_ind)
         logbook.record(gen=gen, nevals=nevals, **record)
         if verbose:
             print(

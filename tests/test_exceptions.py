@@ -19,7 +19,7 @@ from gentrade.config import (
     SharpeMetricConfig,
 )
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.evaluators import (
+from gentrade.eval_ind import (
     BacktestEvaluator,
     ClassificationEvaluator,
     _compile_tree_to_signals,
