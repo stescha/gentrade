@@ -342,15 +342,7 @@ def run_evolution(
     # can be distributed to multiprocessing worker processes.
     evaluator = _make_evaluator(cfg.evaluator, pset=pset, metrics=cfg.metrics)
 
-    if val_data is not None:
-        # evaluator.evaluate now handles both single DataFrame and mapping
-        if isinstance(cfg.evaluator, BacktestEvaluatorConfig):
-            toolbox.register("evaluate_val", evaluator.evaluate, df=val_data)
-        else:
-            assert val_labels is not None
-            toolbox.register(
-                "evaluate_val", evaluator.evaluate, df=val_data, y_true=val_labels
-            )
+    toolbox.register("evaluate_val", evaluator.evaluate, df=val_data, y_true=val_labels)
 
     # ── 6b. Multiprocessing ────────────────────────────────
     # Use multiprocessing even if processes=1 to simplify code paths.

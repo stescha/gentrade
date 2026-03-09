@@ -6,7 +6,11 @@ from multiprocessing import pool
 import pandas as pd
 from deap import gp
 
-from gentrade.eval_ind import BacktestEvaluator, ClassificationEvaluator
+from gentrade.eval_ind import (
+    BacktestEvaluator,
+    ClassificationEvaluator,
+    IndividualEvaluatorBase,
+)
 
 
 # The multiprocessing module serializes (pickles) any objects that are
@@ -39,7 +43,7 @@ class WorkerContext:
     functions then reference ``_worker_ctx`` to access it.
     """
 
-    evaluator: BacktestEvaluator | ClassificationEvaluator
+    evaluator: IndividualEvaluatorBase
     train_data: dict[str, pd.DataFrame]
     train_labels: dict[str, pd.Series] | None
 
@@ -109,16 +113,9 @@ def worker_evaluate(individual: gp.PrimitiveTree) -> tuple[float, ...]:
         raise RuntimeError("Worker context not initialized")
 
     evaluator = _worker_ctx.evaluator
-    if isinstance(evaluator, ClassificationEvaluator):
-        if _worker_ctx.train_labels is None:
-            raise ValueError("ClassificationEvaluator requires train_labels")
-        return evaluator.evaluate(
-            individual,
-            df=_worker_ctx.train_data,
-            y_true=_worker_ctx.train_labels,
-        )
-    else:
-        return evaluator.evaluate(individual, df=_worker_ctx.train_data)
+    return evaluator.evaluate(
+        individual, df=_worker_ctx.train_data, y_true=_worker_ctx.train_labels
+    )
 
 
 def evaluate_population(

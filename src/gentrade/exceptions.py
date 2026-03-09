@@ -8,7 +8,9 @@ for debugging and allow the caller to decide how to handle failures.
 import pandas as pd
 from deap import gp
 
-from gentrade.config import BacktestMetricConfigBase, ClassificationMetricConfigBase
+from gentrade.config import (
+    MetricConfigBase,
+)
 
 
 class TreeErrorBase(Exception):
@@ -77,7 +79,7 @@ class MetricCalculationError(TreeErrorBase):
         message: str,
         *,
         tree: gp.PrimitiveTree,
-        metric: BacktestMetricConfigBase | ClassificationMetricConfigBase,
+        metric: MetricConfigBase | MetricConfigBase,
         value: float | int | None = None,
         signals: pd.Series | None = None,
         err: Exception | None = None,

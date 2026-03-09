@@ -114,11 +114,9 @@ def load_binance_ohlcvs(
     stop: Optional[int] = None,
     count: Optional[int] = None,
     index_col: str = "close_time",
-    return_filename: bool = False,
-) -> dict[str, pd.DataFrame | tuple[str, pd.DataFrame]]:
+) -> dict[str, pd.DataFrame]:
     return {
-        p: load_binance_ohlcv(p, start, stop, count, index_col, return_filename)  # type: ignore[call-overload]
-        for p in pairs
+        p: load_binance_ohlcv(p, start, stop, count, index_col, False) for p in pairs
     }
 
 

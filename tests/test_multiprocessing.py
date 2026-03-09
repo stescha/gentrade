@@ -4,6 +4,8 @@ Verifies that evolution with ``processes > 1`` completes successfully and
 produces structurally valid results equivalent to single-process mode.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from gentrade._defaults import KEY_OHLCV
@@ -19,6 +21,7 @@ from gentrade.config import (
     ZigzagMediumPsetConfig,
 )
 from gentrade.data import generate_synthetic_ohlcv
+from gentrade.eval_ind import IndividualEvaluatorBase
 from gentrade.evolve import run_evolution
 from gentrade.minimal_pset import zigzag_pivots
 
@@ -97,7 +100,7 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
 
     from gentrade.eval_pop import WorkerContext, init_worker, worker_evaluate
 
-    class DummyEval:
+    class DummyEval(IndividualEvaluatorBase):
         def evaluate(
             self, individual: Any, df: Any, y_true: Any | None = None
         ) -> tuple[float, ...]:
@@ -115,10 +118,11 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
     df2 = pd.DataFrame(
         {"open": [0], "high": [0], "low": [0], "close": [1], "volume": [1]}
     )
-
     ctx = WorkerContext(
-        evaluator=DummyEval(), train_data={"a": df1, "b": df2}, train_labels=None
-    )  # type: ignore[arg-type]
+        evaluator=DummyEval(pset=MagicMock(), metrics=(MagicMock(),)),
+        train_data={"a": df1, "b": df2},
+        train_labels=None,
+    )
     init_worker(ctx)
 
     fitness = worker_evaluate(None)  # type: ignore[arg-type]
