@@ -4,8 +4,7 @@ import pytest
 from deap import creator
 
 from gentrade.config import (
-    BacktestEvaluatorConfig,
-    ClassificationEvaluatorConfig,
+    BacktestConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
     F1MetricConfig,
@@ -46,7 +45,6 @@ def cfg_test_default() -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        evaluator=ClassificationEvaluatorConfig(),
         metrics=(F1MetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
@@ -67,7 +65,6 @@ def cfg_e2e_quick() -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        evaluator=ClassificationEvaluatorConfig(),
         metrics=(F1MetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
@@ -103,7 +100,7 @@ def cfg_backtest_unit() -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        evaluator=BacktestEvaluatorConfig(),
+        backtest=BacktestConfig(),
         metrics=(SharpeMetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),

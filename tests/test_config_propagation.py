@@ -21,9 +21,7 @@ from deap import base, gp, tools
 from gentrade._defaults import KEY_OHLCV
 from gentrade.config import (
     TREE_GEN_FUNCS,
-    BacktestEvaluatorConfig,
     BestSelectionConfig,
-    ClassificationEvaluatorConfig,
     DefaultLargePsetConfig,
     DefaultMediumPsetConfig,
     DoubleTournamentSelectionConfig,
@@ -37,7 +35,6 @@ from gentrade.config import (
     PrecisionMetricConfig,
     PsetConfigBase,
     RunConfig,
-    SharpeMetricConfig,
     ShrinkMutationConfig,
     TournamentSelectionConfig,
     TreeConfig,
@@ -252,19 +249,10 @@ class TestPsetWiring:
 class TestRunConfigValidation:
     """Pydantic validator and input validation in run_evolution."""
 
-    def test_backtest_metric_with_classification_evaluator_raises(self) -> None:
-        """RunConfig rejects backtest metric with ClassificationEvaluatorConfig."""
-        with pytest.raises(ValueError, match="must match the evaluator type"):
-            RunConfig(
-                evaluator=ClassificationEvaluatorConfig(),
-                metrics=(SharpeMetricConfig(),),
-            )
-
     def test_multi_metric_with_single_objective_selection_raises(self) -> None:
         """RunConfig rejects 2 metrics with TournamentSelectionConfig."""
         with pytest.raises(ValueError, match="multi-objective"):
             RunConfig(
-                evaluator=ClassificationEvaluatorConfig(),
                 metrics=(F1MetricConfig(), PrecisionMetricConfig()),
                 selection=TournamentSelectionConfig(tournsize=3),
             )
@@ -273,7 +261,6 @@ class TestRunConfigValidation:
         """RunConfig rejects 1 metric with NSGA2SelectionConfig."""
         with pytest.raises(ValueError, match="single-objective"):
             RunConfig(
-                evaluator=ClassificationEvaluatorConfig(),
                 metrics=(F1MetricConfig(),),
                 selection=NSGA2SelectionConfig(),
             )
@@ -281,10 +268,10 @@ class TestRunConfigValidation:
     def test_missing_train_labels_classification_raises(
         self, cfg_test_default: RunConfig
     ) -> None:
-        """run_evolution raises when classification fitness used without train_labels."""
+        """run_evolution raises when classification metrics used without train_labels."""
         df = generate_synthetic_ohlcv(100, 42)
+        # Default RunConfig has F1MetricConfig which requires labels.
         with pytest.raises(ValueError, match="train_labels must be provided"):
-            # omit cfg to exercise default-initialisation branch
             run_evolution(df, None, None, None, None)
         with pytest.raises(ValueError, match="train_labels must be provided"):
             run_evolution({KEY_OHLCV: df}, None, None, None, None)
@@ -294,19 +281,13 @@ class TestRunConfigValidation:
     ) -> None:
         """run_evolution raises when val_data is given but cfg.metrics_val is None."""
         df = generate_synthetic_ohlcv(100, 42)
-        labels = zigzag_pivots(
-            df["close"],
-            0.01,
-            -1,
-        )
+        labels = zigzag_pivots(df["close"], 0.01, -1)
         split = int(len(df) * 0.8)
         train_df, val_df = df.iloc[:split], df.iloc[split:]
         train_labels = labels.iloc[:split]
 
-        # cfg_test_default has metrics_val=None by default
         assert cfg_test_default.metrics_val is None
         with pytest.raises(ValueError, match="cfg.metrics_val must be set"):
-            # use default config which has metrics_val=None
             run_evolution(train_df, train_labels, val_df, None, None)
         with pytest.raises(ValueError, match="cfg.metrics_val must be set"):
             run_evolution(
@@ -320,13 +301,9 @@ class TestRunConfigValidation:
     def test_val_labels_missing_classification_raises(
         self, cfg_test_default: RunConfig
     ) -> None:
-        """run_evolution raises when classification evaluator used without val_labels."""
-        cfg = cfg_test_default.model_copy(
-            update={
-                "evaluator": ClassificationEvaluatorConfig(),
-                "metrics_val": (F1MetricConfig(),),
-            }
-        )
+        """run_evolution raises when classification metrics used without val_labels."""
+        # cfg_test_default uses F1MetricConfig; add metrics_val with same metric.
+        cfg = cfg_test_default.model_copy(update={"metrics_val": (F1MetricConfig(),)})
         df = generate_synthetic_ohlcv(100, 42)
         labels = zigzag_pivots(df["close"], 0.01, -1)
         split = int(len(df) * 0.8)
@@ -362,7 +339,6 @@ class TestMetricConfigSerialization:
     def test_tuple_of_metrics_round_trips(self) -> None:
         """RunConfig.metrics tuple preserves subclass fields in model_dump()."""
         cfg = RunConfig(
-            evaluator=ClassificationEvaluatorConfig(),
             metrics=(F1MetricConfig(weight=1.0), PrecisionMetricConfig(weight=0.5)),
             selection=NSGA2SelectionConfig(),
         )
@@ -373,11 +349,3 @@ class TestMetricConfigSerialization:
         assert metrics_dump[0]["weight"] == 1.0
         assert metrics_dump[1]["type"] == "precision"
         assert metrics_dump[1]["weight"] == 0.5
-
-    def test_evaluator_type_tag_in_dump(self) -> None:
-        """BacktestEvaluatorConfig.type == 'backtest'."""
-        assert BacktestEvaluatorConfig().type == "backtest"
-
-    def test_classification_evaluator_type_tag(self) -> None:
-        """ClassificationEvaluatorConfig.type == 'classification'."""
-        assert ClassificationEvaluatorConfig().type == "classification"

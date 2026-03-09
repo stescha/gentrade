@@ -3,9 +3,6 @@
 Pydantic-based configuration hierarchy. Design principles:
 
 - **Config classes are thin data containers.** They carry parameters only.
-- **Evaluator configs** describe *which* evaluation pipeline to use
-  (classification vs. backtest). The actual logic lives in
-  ``gentrade.evaluators``, constructed from these configs in ``evolve.py``.
 - **Metric configs** are callable via ``__call__``, which is a one-line
   delegation to the underlying metric class.
 - **Operator configs** (pset, mutation, crossover, selection) expose the DEAP
@@ -118,40 +115,24 @@ class _ComponentConfig(BaseModel):
         return self.model_dump(exclude={"type"})
 
 
-# -- Evaluator configs ------------------------------------------
+# -- Backtest config --------------------------------------------
 
 
-class EvaluatorConfigBase(_ComponentConfig):
-    """Base for evaluator configs.
+class BacktestConfig(_ComponentConfig):
+    """Backtest simulation parameters for ``IndividualEvaluator``.
 
-    Evaluator configs are thin data containers. The actual evaluation logic
-    lives in evaluator classes in ``gentrade.evaluators``, which are
-    constructed from these configs in ``evolve.py``.
-    """
-
-    _type_suffix: ClassVar[str] = "EvaluatorConfig"
-
-
-class ClassificationEvaluatorConfig(EvaluatorConfigBase):
-    """Config for the classification evaluator.
-
-    No parameters -- all evaluation behaviour is fixed for classification.
-    The evaluator compiles the GP tree, computes a boolean prediction series,
-    and delegates to the supplied metric configs.
-    """
-
-
-class BacktestEvaluatorConfig(EvaluatorConfigBase):
-    """Config for the vectorbt backtest evaluator.
-
-    Carries portfolio simulation parameters. Replaces the former
-    ``BacktestConfig``; field names and defaults are identical.
+    These parameters are only used when at least one
+    ``BacktestMetricConfigBase`` metric is included in the run.  When no
+    backtest metric is present the evaluator never calls the vectorbt
+    backtester, so these values have no effect.
 
     - ``tp_stop`` / ``sl_stop``: take-profit and stop-loss as fractions.
     - ``sl_trail``: trailing stop-loss.
     - ``fees``: round-trip fee fraction per trade.
     - ``init_cash``: initial portfolio cash.
     """
+
+    _type_suffix: ClassVar[str] = "Config"
 
     tp_stop: float = Field(0.02, gt=0.0, le=1.0, description="Take-profit fraction")
     sl_stop: float = Field(0.01, gt=0.0, le=1.0, description="Stop-loss fraction")
@@ -626,12 +607,13 @@ class RunConfig(BaseModel):
     )
     tree: TreeConfig = Field(default_factory=cast(Callable[[], TreeConfig], TreeConfig))
 
-    # Evaluator config
-    evaluator: SerializeAsAny[EvaluatorConfigBase] = Field(
-        default_factory=cast(
-            Callable[[], EvaluatorConfigBase], ClassificationEvaluatorConfig
+    # Backtest simulation parameters -- used only when backtest metrics are present.
+    backtest: BacktestConfig = Field(
+        default_factory=cast(Callable[[], BacktestConfig], BacktestConfig),
+        description=(
+            "Backtest simulation parameters. Ignored when no backtest metrics "
+            "are present in ``metrics``."
         ),
-        description="Evaluator config; determines classification vs backtest pipeline.",
     )
 
     # Metric configs
@@ -672,30 +654,6 @@ class RunConfig(BaseModel):
             "validation phase. Registered on the toolbox as sel_best with k=1."
         ),
     )
-
-    @model_validator(mode="after")
-    def _check_metrics_evaluator_consistency(self) -> "RunConfig":
-        """Ensure all metric configs match the evaluator type.
-
-        Classification metrics require ClassificationEvaluatorConfig;
-        backtest metrics require BacktestEvaluatorConfig.
-        """
-        is_backtest_eval = isinstance(self.evaluator, BacktestEvaluatorConfig)
-        for metric_sets, label in [
-            (self.metrics, "metrics"),
-            (self.metrics_val or (), "metrics_val"),
-        ]:
-            for m in metric_sets:
-                is_backtest_metric = isinstance(m, BacktestMetricConfigBase)
-                if is_backtest_metric != is_backtest_eval:
-                    raise ValueError(
-                        f"{label} contains a "
-                        f"{'backtest' if is_backtest_metric else 'classification'} "
-                        f"metric ({type(m).__name__}) but evaluator is "
-                        f"{'BacktestEvaluatorConfig' if is_backtest_eval else 'ClassificationEvaluatorConfig'}. "
-                        "All metrics must match the evaluator type."
-                    )
-        return self
 
     @model_validator(mode="after")
     def _check_selection_objective_count(self) -> "RunConfig":

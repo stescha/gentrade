@@ -34,7 +34,8 @@ def generate_synthetic_ohlcv(n: int, seed: None | int = None) -> pd.DataFrame:
             "low": low,
             "close": close,
             "volume": volume,
-        }
+        },
+        index=pd.date_range("1990-01-01", periods=n, freq="1min"),
     )
 
 

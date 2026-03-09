@@ -1,27 +1,25 @@
 """GP tree evaluators for the gentrade evolution pipeline.
 
-Evaluator classes own the expensive per-individual work:
-1. Compile the GP tree to a boolean signal ``pd.Series``.
-2. Run classification comparison or vectorbt portfolio simulation.
-3. Call each metric config and collect results into a fitness tuple.
+A single :class:`IndividualEvaluator` handles both backtest-based and
+classification-based metrics, or any mixture of the two.  At construction time
+it inspects the ``metrics`` tuple and sets internal flags so the expensive
+vectorbt backtest is skipped when no backtest metric is present.
 
-Each evaluator is a plain class (not a Pydantic model) constructed from
-its thin config object. The ``evaluate`` method is called once per individual
-by the DEAP toolbox, returning ``tuple[float, ...]``.
+The ``evaluate`` method is called once per individual by the DEAP toolbox and
+returns a ``tuple[float, ...]`` with one element per metric.
 
 Error handling follows a fail-fast approach: exceptions during tree evaluation
 or metric calculation are wrapped in domain-specific exceptions and re-raised.
 This ensures bugs and misconfigurations surface immediately.
 """
 
-from abc import ABC, abstractmethod
 from typing import Callable, cast
 
 import numpy as np
 import pandas as pd
+import vectorbt as vbt
 from deap import gp
 
-from gentrade.backtest_metrics import run_vbt_backtest
 from gentrade.config import (
     BacktestMetricConfigBase,
     ClassificationMetricConfigBase,
@@ -30,22 +28,57 @@ from gentrade.config import (
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
 
 
-class IndividualEvaluatorBase(ABC):
-    """ """
+class IndividualEvaluator:
+    """Unified GP-tree evaluator supporting backtest and classification metrics.
+
+    At construction time the ``metrics`` tuple is scanned once to set the
+    ``_needs_backtest`` and ``_needs_labels`` flags.  At evaluation time only
+    the branches that are needed are executed, so a pure-classification run
+    never pays the cost of a vectorbt simulation.
+
+    Args:
+        pset: DEAP primitive set used to compile GP trees.
+        metrics: Ordered tuple of metric configs; determines fitness tuple length.
+        tp_stop: Take-profit fraction (ignored when ``_needs_backtest`` is False).
+        sl_stop: Stop-loss fraction (ignored when ``_needs_backtest`` is False).
+        sl_trail: Use trailing stop-loss.
+        fees: Round-trip trading fee fraction.
+        init_cash: Initial portfolio cash.
+    """
 
     def __init__(
         self,
         pset: gp.PrimitiveSetTyped,
         metrics: tuple[MetricConfigBase, ...],
+        tp_stop: float = 0.02,
+        sl_stop: float = 0.01,
+        sl_trail: bool = True,
+        fees: float = 0.001,
+        init_cash: float = 100_000.0,
     ) -> None:
         self.pset = pset
         self.metrics = metrics
+        self.tp_stop = tp_stop
+        self.sl_stop = sl_stop
+        self.sl_trail = sl_trail
+        self.fees = fees
+        self.init_cash = init_cash
+
+        self._needs_backtest: bool = any(
+            isinstance(m, BacktestMetricConfigBase) for m in metrics
+        )
+        self._needs_labels: bool = any(
+            isinstance(m, ClassificationMetricConfigBase) for m in metrics
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _compile_tree(
         self, individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
     ) -> Callable[..., pd.Series]:
         try:
-            # gp.compile is untyped; explicitly cast to expected signature
             return cast(Callable[..., pd.Series], gp.compile(individual, pset))
         except Exception as e:
             raise TreeEvaluationError(
@@ -60,7 +93,7 @@ class IndividualEvaluatorBase(ABC):
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
     ) -> pd.Series:
-        """Compile a GP tree and evaluate it on OHLCV data.
+        """Compile and execute a GP tree on OHLCV data.
 
         Args:
             individual: GP tree to compile.
@@ -71,112 +104,75 @@ class IndividualEvaluatorBase(ABC):
             Boolean ``pd.Series`` indexed like ``df``.
 
         Raises:
-            TreeEvaluationError: If tree compilation fails, execution produces
-                unexpected output type, or result is not a boolean Series.
+            TreeEvaluationError: On compilation failure, wrong output type, or
+                non-boolean result.
         """
-
         func = self._compile_tree(individual, pset)
+        raw: object = None
         try:
-            y_pred = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
+            raw = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
         except Exception as e:
             raise TreeEvaluationError(
                 "Failed to execute tree.",
                 tree=individual,
-                signals=y_pred,
                 err=e,
             ) from e
 
-        # Scalar output can happen for small trees composed entirely by
-        # the auxiliary boolean terminals.
-        if isinstance(y_pred, (bool, int, float, np.bool_)):
-            return pd.Series([bool(y_pred)] * len(df), index=df.index)
+        # Scalar boolean output can occur for small constant trees.
+        if isinstance(raw, (bool, int, float, np.bool_)):
+            return pd.Series([bool(raw)] * len(df), index=df.index)
 
-        if not isinstance(y_pred, pd.Series):
+        if not isinstance(raw, pd.Series):
             raise TreeEvaluationError(
-                f"Expected tree execution to return a pd.Series, got {type(y_pred)}",
+                f"Expected tree execution to return a pd.Series, got {type(raw)}",
                 tree=individual,
-                signals=y_pred,
             )
 
-        if not pd.api.types.is_bool_dtype(y_pred):
+        if not pd.api.types.is_bool_dtype(raw):
             raise TreeEvaluationError(
-                f"Expected boolean Series, got dtype {y_pred.dtype}",
+                f"Expected boolean Series, got dtype {raw.dtype}",
                 tree=individual,
-                signals=y_pred,
+                signals=raw,
             )
 
-        return y_pred
+        return raw
 
-    @abstractmethod
-    def evaluate(
+    def run_vbt_backtest(
         self,
+        ohlcv: pd.DataFrame,
+        entries: pd.Series,
         individual: gp.PrimitiveTree,
-        *,
-        df: pd.DataFrame | dict[str, pd.DataFrame],
-        y_true: pd.Series | dict[str, pd.Series] | None = None,
-    ) -> tuple[float, ...]:
-        pass
+    ) -> vbt.Portfolio:
+        """Run a vectorbt backtest from entry signals and stop parameters.
 
+        Args:
+            ohlcv: OHLCV DataFrame with open, high, low, close columns.
+            entries: Boolean buy signal series.
+            tp_stop: Take-profit stop as a fraction (e.g., 0.02 = 2%).
+            sl_stop: Stop-loss stop as a fraction (e.g., 0.01 = 1%).
+            sl_trail: Whether to use a trailing stop-loss.
+            fees: Trading fee as a fraction (e.g., 0.001 = 0.1%).
+            init_cash: Initial cash for the portfolio.
 
-class BacktestEvaluator(IndividualEvaluatorBase):
-    """Evaluator for vectorbt backtest-based GP fitness.
-
-    Compiles the GP tree to an entry signal, runs a vectorbt portfolio
-    simulation with the parameters from the constructor, then calls each metric
-    config with the resulting portfolio to produce a fitness tuple.
-
-    Args:
-        pset: Primitive set for compilation (constant for the run).
-        metrics: Ordered tuple of backtest metric configs to compute.
-        tp_stop: Take profit stop.
-        sl_stop: Stop loss stop.
-        sl_trail: Trailing stop loss.
-        fees: Trading fees.
-        init_cash: Initial cash for the portfolio.
-    """
-
-    def __init__(
-        self,
-        pset: gp.PrimitiveSetTyped,
-        metrics: tuple[BacktestMetricConfigBase, ...],
-        tp_stop: float,
-        sl_stop: float,
-        sl_trail: bool,
-        fees: float,
-        init_cash: float,
-    ) -> None:
-        # constant context
-        self.pset = pset
-        self.metrics = metrics
-        # other parameters
-        self.tp_stop = tp_stop
-        self.sl_stop = sl_stop
-        self.sl_trail = sl_trail
-        self.fees = fees
-        self.init_cash = init_cash
-
-    def _eval_single(
-        self,
-        individual: gp.PrimitiveTree,
-        df: pd.DataFrame,
-    ) -> tuple[float, ...]:
-        """Helper that evaluates a single DataFrame and returns metrics.
-
-        This mirrors the previous implementation of ``evaluate`` and keeps
-        the outer method simple.
+        Returns:
+            VectorBT Portfolio object.
         """
-        entries = self._compile_tree_to_signals(individual, self.pset, df)
-
         try:
-            pf = run_vbt_backtest(
-                ohlcv=df,
+            return vbt.Portfolio.from_signals(
+                close=ohlcv["close"],
+                open=ohlcv["open"],
+                high=ohlcv["high"],
+                low=ohlcv["low"],
                 entries=entries,
                 tp_stop=self.tp_stop,
                 sl_stop=self.sl_stop,
                 sl_trail=self.sl_trail,
+                size=1.0,
+                accumulate=False,
                 fees=self.fees,
                 init_cash=self.init_cash,
             )
+
         except Exception as e:
             raise TreeEvaluationError(
                 f"Failed to run backtest: {e}",
@@ -185,113 +181,44 @@ class BacktestEvaluator(IndividualEvaluatorBase):
                 err=e,
             ) from e
 
-        result: list[float] = []
-        for m in self.metrics:
-            try:
-                val = m(pf)
-            except Exception as e:
-                raise MetricCalculationError(
-                    f"Metric {type(m).__name__} calculation failed.",
-                    tree=individual,
-                    metric=m,
-                    signals=entries,
-                    err=e,
-                ) from e
-
-            if not np.isfinite(val):
-                raise MetricCalculationError(
-                    f"Metric {type(m).__name__} returned non-finite value.",
-                    tree=individual,
-                    metric=m,
-                    value=val,
-                    signals=entries,
-                )
-
-            result.append(float(val))
-
-        return tuple(result)
-
-    def evaluate(
-        self,
-        individual: gp.PrimitiveTree,
-        *,
-        df: pd.DataFrame | dict[str, pd.DataFrame],
-        y_true: pd.Series | dict[str, pd.Series] | None = None,
-    ) -> tuple[float, ...]:
-        """Evaluate one individual using backtest metrics.
-
-        Supports either a single OHLCV DataFrame or a mapping of dfsets.
-        When given a mapping each entry is scored independently and the
-        resulting tuples are averaged component-wise.
-
-        Args:
-            individual: GP tree to evaluate.
-            df: OHLCV DataFrame or mapping of DataFrames.
-
-        Returns:
-            Tuple of floats, one per metric.
-
-        Raises:
-            TreeEvaluationError: If tree compilation or execution fails.
-            MetricCalculationError: If metric calculation fails or returns
-                non-finite value.
-        """
-        # Fail fast to avoid silent bugs where y_true is passed but ignored.
-        if y_true is not None:
-            raise ValueError("y_true is not used for backtest evaluation")
-        if isinstance(df, dict):
-            # aggregate across multiple dfsets
-            results: list[tuple[float, ...]] = []
-            for subdf in df.values():
-                results.append(self._eval_single(individual, subdf))
-            arr = np.array(results, dtype=float)
-            mean = arr.mean(axis=0)
-            return tuple(float(x) for x in mean)
-        else:
-            return self._eval_single(individual, df)
-
-
-class ClassificationEvaluator(IndividualEvaluatorBase):
-    """Evaluator for classification-based GP fitness.
-
-    Compiles the GP tree to a boolean prediction series, then calls each
-    metric config with ``(y_true, y_pred)`` to produce a fitness tuple.
-
-    Args:
-        pset: Primitive set for compilation (constant for the run).
-        metrics: Ordered tuple of classification metric configs.  These are
-            stored on the instance at construction so that ``evaluate``
-            no longer requires them as arguments.
-    """
-
-    def __init__(
-        self,
-        pset: gp.PrimitiveSetTyped,
-        metrics: tuple[ClassificationMetricConfigBase, ...],
-    ) -> None:
-        self.pset = pset
-        self.metrics = metrics
-
-    def _eval_single(
+    def _eval_dataset(
         self,
         individual: gp.PrimitiveTree,
         df: pd.DataFrame,
-        y_true: pd.Series,
+        y_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
-        """Evaluate individual on a single DataFrame/label pair."""
-        y_pred = self._compile_tree_to_signals(individual, self.pset, df)
+        """Evaluate one individual on a single DataFrame.
+
+        Args:
+            individual: GP tree to evaluate.
+            df: OHLCV DataFrame.
+            y_true: Ground-truth labels; required when ``_needs_labels`` is True.
+
+        Returns:
+            Tuple of floats, one per metric.
+        """
+        signals = self._compile_tree_to_signals(individual, self.pset, df)
+
+        # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
+        pf: vbt.Portfolio = None
+        if self._needs_backtest:
+            pf = self.run_vbt_backtest(df, signals, individual)
+        if self._needs_labels and y_true is None:
+            raise ValueError("y_true is required for classification metrics.")
 
         result: list[float] = []
         for m in self.metrics:
             try:
-                val = m(y_true, y_pred)
+                if isinstance(m, BacktestMetricConfigBase):
+                    val = m(pf)
+                else:
+                    val = m(y_true, signals)
             except Exception as e:
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} calculation failed.",
                     tree=individual,
                     metric=m,
-                    value=None,
-                    signals=y_pred,
+                    signals=signals,
                     err=e,
                 ) from e
 
@@ -301,12 +228,16 @@ class ClassificationEvaluator(IndividualEvaluatorBase):
                     tree=individual,
                     metric=m,
                     value=val,
-                    signals=y_pred,
+                    signals=signals,
                 )
 
             result.append(float(val))
 
         return tuple(result)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def evaluate(
         self,
@@ -315,38 +246,62 @@ class ClassificationEvaluator(IndividualEvaluatorBase):
         df: pd.DataFrame | dict[str, pd.DataFrame],
         y_true: pd.Series | dict[str, pd.Series] | None = None,
     ) -> tuple[float, ...]:
-        """Evaluate one individual using classification metrics.
+        """Evaluate one GP individual and return a fitness tuple.
 
-        Supports either a single OHLCV DataFrame/Series pair or mappings of
-        them.  When mappings are provided each entry is scored and the
-        fitness tuples are averaged.
+        Supports either a single OHLCV DataFrame or a mapping of DataFrames.
+        When a mapping is given each entry is scored independently and the
+        resulting fitness tuples are averaged component-wise.
 
         Args:
-                individual: GP tree to evaluate.
-            df: OHLCV DataFrame or mapping of DataFrames.
-            y_true: Ground-truth boolean Series or mapping.
+            individual: GP tree to evaluate.
+            df: OHLCV DataFrame or mapping of DataFrames keyed by dataset name.
+            y_true: Ground-truth label Series (or mapping).  Must be provided
+                when any metric is a ``ClassificationMetricConfigBase``.
+                Must be ``None`` when no classification metric is present.
 
         Returns:
             Tuple of floats, one per metric.
 
         Raises:
-            ValueError: If ``y_true`` is not provided.
+            ValueError: If ``y_true`` is ``None`` but classification metrics are
+                present, or if ``y_true`` is provided but no classification
+                metric is present.
             TreeEvaluationError: If tree compilation or execution fails.
-            MetricCalculationError: If metric calculation fails or returns
-                non-finite value.
+            MetricCalculationError: If a metric returns a non-finite value or
+                raises an unexpected exception.
         """
-        if y_true is None:
-            raise ValueError("y_true is required for classification evaluation")
+        if self._needs_labels and y_true is None:
+            raise ValueError(
+                "y_true is required for classification evaluation: "
+                "train_labels must be provided when classification metrics are included."
+            )
+        if not self._needs_labels and y_true is not None:
+            raise ValueError(
+                "y_true is not used when no classification metrics are present."
+            )
+
         if isinstance(df, dict):
-            assert isinstance(y_true, dict)
+            if self._needs_labels and not isinstance(y_true, dict):
+                raise ValueError(
+                    "y_true must be a dict when df is a dict and classification "
+                    "metrics are present."
+                )
             results: list[tuple[float, ...]] = []
             for key, subdf in df.items():
-                if key not in y_true:
-                    raise ValueError(f"Missing y_true for key {key}")
-                results.append(self._eval_single(individual, subdf, y_true[key]))
+                sub_y: pd.Series | None = None
+                if self._needs_labels:
+                    assert isinstance(y_true, dict)
+                    if key not in y_true:
+                        raise ValueError(f"Missing y_true for key {key!r}")
+                    sub_y = y_true[key]
+                results.append(self._eval_dataset(individual, subdf, sub_y))
             arr = np.array(results, dtype=float)
             mean = arr.mean(axis=0)
             return tuple(float(x) for x in mean)
-        else:
-            assert not isinstance(y_true, dict)
-            return self._eval_single(individual, df, y_true)
+
+        # Single DataFrame path
+        single_y: pd.Series | None = None
+        if self._needs_labels:
+            assert isinstance(y_true, pd.Series)
+            single_y = y_true
+        return self._eval_dataset(individual, df, single_y)

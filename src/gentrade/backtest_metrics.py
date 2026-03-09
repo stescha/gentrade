@@ -10,7 +10,6 @@ OHLCV data, boolean entry signals, and stop parameters, and returns a
 vectorbt ``Portfolio`` object ready for metric extraction.
 """
 
-import pandas as pd
 import vectorbt as vbt
 
 
@@ -98,45 +97,3 @@ class MeanPnlMetric(BacktestMetricBase):
             return 0.0
         trades = portfolio.trades.records_readable
         return float(trades["PnL"].mean()) if len(trades) > 0 else 0.0
-
-
-def run_vbt_backtest(
-    ohlcv: pd.DataFrame,
-    entries: pd.Series,
-    tp_stop: float,
-    sl_stop: float,
-    sl_trail: bool = True,
-    fees: float = 0.001,
-    init_cash: float = 100_000.0,
-) -> vbt.Portfolio:
-    """Run a vectorbt backtest from entry signals and stop parameters.
-
-    Args:
-        ohlcv: OHLCV DataFrame with open, high, low, close columns.
-        entries: Boolean buy signal series.
-        tp_stop: Take-profit stop as a fraction (e.g., 0.02 = 2%).
-        sl_stop: Stop-loss stop as a fraction (e.g., 0.01 = 1%).
-        sl_trail: Whether to use a trailing stop-loss.
-        fees: Trading fee as a fraction (e.g., 0.001 = 0.1%).
-        init_cash: Initial cash for the portfolio.
-
-    Returns:
-        VectorBT Portfolio object.
-    """
-    entries.index = ohlcv.index
-    return vbt.Portfolio.from_signals(
-        close=ohlcv["close"],
-        open=ohlcv["open"],
-        high=ohlcv["high"],
-        low=ohlcv["low"],
-        entries=entries,
-        exits=False,
-        tp_stop=tp_stop,
-        sl_stop=sl_stop,
-        sl_trail=sl_trail,
-        size=1.0,
-        accumulate=False,
-        fees=fees,
-        init_cash=init_cash,
-        freq=1,
-    )

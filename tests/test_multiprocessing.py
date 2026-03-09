@@ -10,7 +10,6 @@ import pytest
 
 from gentrade._defaults import KEY_OHLCV
 from gentrade.config import (
-    ClassificationEvaluatorConfig,
     EvolutionConfig,
     F1MetricConfig,
     OnePointCrossoverConfig,
@@ -21,7 +20,7 @@ from gentrade.config import (
     ZigzagMediumPsetConfig,
 )
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.eval_ind import IndividualEvaluatorBase
+from gentrade.eval_ind import IndividualEvaluator
 from gentrade.evolve import run_evolution
 from gentrade.minimal_pset import zigzag_pivots
 
@@ -36,7 +35,6 @@ def _make_cfg(processes: int) -> RunConfig:
         tree=TreeConfig(
             tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
         ),
-        evaluator=ClassificationEvaluatorConfig(),
         metrics=(F1MetricConfig(),),
         pset=ZigzagMediumPsetConfig(),
         mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
@@ -100,7 +98,7 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
 
     from gentrade.eval_pop import WorkerContext, init_worker, worker_evaluate
 
-    class DummyEval(IndividualEvaluatorBase):
+    class DummyEval(IndividualEvaluator):
         def evaluate(
             self, individual: Any, df: Any, y_true: Any | None = None
         ) -> tuple[float, ...]:
@@ -130,15 +128,14 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
 
 
 def test_classification_evaluator_mapping() -> None:
-    """ClassificationEvaluator should average metric results across datasets."""
+    """IndividualEvaluator should average classification metric results across datasets."""
     import pandas as pd
     from deap import gp
 
     from gentrade.config import F1MetricConfig, ZigzagMediumPsetConfig
-    from gentrade.eval_ind import ClassificationEvaluator
 
     pset = ZigzagMediumPsetConfig().func()
-    evaluator = ClassificationEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+    evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
 
     # minimal datasets with one row each
     cols = {"open": [0], "high": [0], "low": [0], "close": [0], "volume": [1]}

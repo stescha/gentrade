@@ -6,11 +6,7 @@ from multiprocessing import pool
 import pandas as pd
 from deap import gp
 
-from gentrade.eval_ind import (
-    BacktestEvaluator,
-    ClassificationEvaluator,
-    IndividualEvaluatorBase,
-)
+from gentrade.eval_ind import IndividualEvaluator
 
 
 # The multiprocessing module serializes (pickles) any objects that are
@@ -43,7 +39,7 @@ class WorkerContext:
     functions then reference ``_worker_ctx`` to access it.
     """
 
-    evaluator: IndividualEvaluatorBase
+    evaluator: IndividualEvaluator
     train_data: dict[str, pd.DataFrame]
     train_labels: dict[str, pd.Series] | None
 
@@ -68,7 +64,7 @@ def init_worker(ctx: WorkerContext) -> None:
 
 def create_pool(
     processes: int,
-    evaluator: BacktestEvaluator | ClassificationEvaluator,
+    evaluator: IndividualEvaluator,
     train_data: dict[str, pd.DataFrame],
     train_labels: dict[str, pd.Series] | None,
 ) -> pool.Pool:

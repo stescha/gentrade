@@ -12,7 +12,6 @@ drive how the operator is wired without any isinstance checks.
 
 import operator
 import random
-from typing import overload
 
 import numpy as np
 import pandas as pd
@@ -22,73 +21,43 @@ from gentrade._defaults import KEY_OHLCV
 from gentrade.algorithms import eaMuPlusLambdaGentrade
 from gentrade.config import (
     TREE_GEN_FUNCS,
-    BacktestEvaluatorConfig,
-    ClassificationEvaluatorConfig,
-    EvaluatorConfigBase,
+    ClassificationMetricConfigBase,
     MetricConfigBase,
     RunConfig,
 )
-from gentrade.eval_ind import (
-    BacktestEvaluator,
-    ClassificationEvaluator,
-)
+from gentrade.eval_ind import IndividualEvaluator
 from gentrade.eval_pop import create_pool
 from gentrade.growtree import genFull
 
 # moved to data module to centralise data helpers
 
 
-@overload
 def _make_evaluator(
-    evaluator_cfg: BacktestEvaluatorConfig,
     pset: gp.PrimitiveSetTyped,
     metrics: tuple[MetricConfigBase, ...],
-) -> BacktestEvaluator: ...
-
-
-@overload
-def _make_evaluator(
-    evaluator_cfg: ClassificationEvaluatorConfig,
-    pset: gp.PrimitiveSetTyped,
-    metrics: tuple[MetricConfigBase, ...],
-) -> ClassificationEvaluator: ...
-
-
-@overload
-def _make_evaluator(
-    evaluator_cfg: EvaluatorConfigBase,
-    pset: gp.PrimitiveSetTyped,
-    metrics: tuple[MetricConfigBase, ...],
-) -> ClassificationEvaluator | BacktestEvaluator: ...
-
-
-def _make_evaluator(
-    evaluator_cfg: EvaluatorConfigBase,
-    pset: gp.PrimitiveSetTyped,
-    metrics: tuple[MetricConfigBase, ...],
-) -> ClassificationEvaluator | BacktestEvaluator:
-    """Construct an evaluator instance from its config.
+    cfg: RunConfig,
+) -> IndividualEvaluator:
+    """Factory for ``IndividualEvaluator`` from a ``RunConfig``.
 
     Args:
-        evaluator_cfg: Evaluator config from ``RunConfig``.
         pset: the primitive set used during the run.
         metrics: ordered tuple of metric configs used for fitness.
+        cfg: full run configuration (backtest params read from
+            ``cfg.backtest``).
 
     Returns:
-        Concrete evaluator instance ready to call ``.evaluate()``.
+        ``IndividualEvaluator`` ready to call ``.evaluate()``.
     """
-    if isinstance(evaluator_cfg, BacktestEvaluatorConfig):
-        # pass pset and metrics as first args before portfolio params
-        # metrics variable has a broad type; mypy cannot infer which
-        # concrete metric base class is appropriate for the evaluator.
-        return BacktestEvaluator(
-            pset=pset,
-            metrics=metrics,  # type: ignore[arg-type]
-            **evaluator_cfg.model_dump(exclude={"type"}),
-        )
-    # classification evaluator currently carries no other parameters
-    # metrics might be classification metrics; ignore for now
-    return ClassificationEvaluator(pset=pset, metrics=metrics)  # type: ignore[arg-type]
+    bt = cfg.backtest
+    return IndividualEvaluator(
+        pset=pset,
+        metrics=metrics,
+        tp_stop=bt.tp_stop,
+        sl_stop=bt.sl_stop,
+        sl_trail=bt.sl_trail,
+        fees=bt.fees,
+        init_cash=bt.init_cash,
+    )
 
 
 def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
@@ -268,28 +237,28 @@ def run_evolution(
         np.random.seed(cfg.seed)
 
     # ── 1b. Validate data / config consistency ─────────────────
-    if (
-        isinstance(cfg.evaluator, ClassificationEvaluatorConfig)
-        and train_labels is None
-    ):
+    train_needs_labels = any(
+        isinstance(m, ClassificationMetricConfigBase) for m in cfg.metrics
+    )
+    if train_needs_labels and train_labels is None:
         raise ValueError(
-            "train_labels must be provided when using ClassificationEvaluatorConfig. "
-            "Compute labels outside run_evolution and pass them in."
+            "train_labels must be provided when classification metrics are "
+            "included. Compute labels outside run_evolution and pass them in."
         )
     if val_data is not None and cfg.metrics_val is None:
         raise ValueError(
             "cfg.metrics_val must be set in RunConfig when val_data is provided. "
             "Add metrics_val=(...,) to your RunConfig."
         )
-    if (
-        val_data is not None
-        and isinstance(cfg.evaluator, ClassificationEvaluatorConfig)
-        and val_labels is None
-    ):
-        raise ValueError(
-            "val_labels must be provided when val_data is used with "
-            "ClassificationEvaluatorConfig."
+    if val_data is not None and cfg.metrics_val is not None:
+        val_needs_labels = any(
+            isinstance(m, ClassificationMetricConfigBase) for m in cfg.metrics_val
         )
+        if val_needs_labels and val_labels is None:
+            raise ValueError(
+                "val_labels must be provided when val_data is used with "
+                "classification metrics."
+            )
 
     is_multiobjective = len(cfg.metrics) > 1
 
@@ -302,7 +271,14 @@ def run_evolution(
         "Multi-objective" if is_multiobjective else "Single-objective",
     )
     print(f"Metrics: [{metric_summary}]")
-    print(f"Evaluator: {cfg.evaluator.type}")
+    # Derive evaluator mode description from the metric types.
+    _has_bt = any(isinstance(m, ClassificationMetricConfigBase) for m in cfg.metrics)
+    _eval_mode = "classification" if _has_bt else "backtest"
+    if any(isinstance(m, ClassificationMetricConfigBase) for m in cfg.metrics) and any(
+        not isinstance(m, ClassificationMetricConfigBase) for m in cfg.metrics
+    ):
+        _eval_mode = "mixed"
+    print(f"Evaluator mode: {_eval_mode}")
     print(
         f"Evolution: mu={cfg.evolution.mu}, λ={cfg.evolution.lambda_}, "
         f"gen={cfg.evolution.generations}, cxpb={cfg.evolution.cxpb}, "
@@ -337,12 +313,22 @@ def run_evolution(
     # ── 5. DEAP toolbox ────────────────────────────────────
     toolbox = create_toolbox(cfg, pset)
 
-    # ── 6. Evaluation — dispatch based on evaluator type ─────
+    # ── 6. Evaluation ──────────────────────────────────────────
     # Use picklable callable objects (not local lambdas) so evaluation
     # can be distributed to multiprocessing worker processes.
-    evaluator = _make_evaluator(cfg.evaluator, pset=pset, metrics=cfg.metrics)
+    evaluator = _make_evaluator(pset=pset, metrics=cfg.metrics, cfg=cfg)
 
-    toolbox.register("evaluate_val", evaluator.evaluate, df=val_data, y_true=val_labels)
+    # Build a separate val evaluator using cfg.metrics_val so the validation
+    # phase uses the correct metric set.
+    val_evaluator: IndividualEvaluator | None = None
+    if val_data is not None and cfg.metrics_val is not None:
+        val_evaluator = _make_evaluator(pset=pset, metrics=cfg.metrics_val, cfg=cfg)
+        toolbox.register(
+            "evaluate_val",
+            val_evaluator.evaluate,
+            df=val_data,
+            y_true=val_labels,
+        )
 
     # ── 6b. Multiprocessing ────────────────────────────────
     # Use multiprocessing even if processes=1 to simplify code paths.
