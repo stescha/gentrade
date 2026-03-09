@@ -76,7 +76,7 @@ def create_pool(
     refer to this shared context rather than carrying the data themselves.
 
     Args:
-        processes: number of worker processes to start (may be 1).
+        processes: number of worker processes to start.
         evaluator: evaluator instance containing ``pset`` and ``metrics``.
         train_data: mapping of dataset keys to OHLCV DataFrames.
         train_labels: optional mapping of dataset keys to label series for

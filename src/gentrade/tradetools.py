@@ -5,6 +5,7 @@ from typing import Literal, Optional, cast, overload
 
 import pandas as pd
 import tables
+from deap import gp
 
 DATAFOLDER = "~/PyProj/tradetools/data"
 
@@ -196,3 +197,91 @@ def get_pairs() -> list[str]:
     )
     # folder = '/home/stuff/PyProj/tradetools/data/ohlcv/*.h5'
     return [f.split("_")[-2] for f in glob(folder)]
+
+
+def plot_signals(
+    train_data: pd.DataFrame,
+    val_data: Optional[pd.DataFrame],
+    tree: gp.PrimitiveTree,
+    pset: gp.PrimitiveSetTyped,
+    buy_sell: int = 1,
+) -> None:
+    """Visualise a GP signal tree against price data.
+
+    The close price is drawn as a line and the boolean signal produced by
+    ``tree`` is shown as markers (green upward for buy when ``buy_sell`` is
+    ``1``, red downward for sell when ``buy_sell`` is ``-1``).  If
+    ``val_data`` is provided a vertical dashed line marks the transition
+    from training to validation data.
+
+    Args:
+        train_data: OHLCV DataFrame used for training.
+        val_data: Optional validation DataFrame; used only for drawing the
+            split line and to extend the signal plot when present.
+        tree: A DEAP ``PrimitiveTree`` that takes an OHLCV DataFrame and
+            returns a boolean ``pd.Series`` signal when compiled.
+        pset: The primitive set that was used to construct ``tree``.  It
+            is required for compilation.
+        buy_sell: +1 interpret ``True`` as buy signals, -1 as sell signals.
+    """
+    # local import to avoid a top‑level matplotlib dependency unless used
+    import matplotlib.pyplot as plt
+    from deap import gp
+
+    # combine data so signals cover both train and validation if available
+    if val_data is not None:
+        data = pd.concat([train_data, val_data])
+    else:
+        data = train_data
+
+    # compile and execute tree; use same interface as evaluator
+    func = gp.compile(tree, pset=pset)
+    try:
+        sig = func(
+            data["open"],
+            data["high"],
+            data["low"],
+            data["close"],
+            data["volume"],
+        )
+    except Exception as exc:  # pragma: no cover - plotting convenience
+        raise RuntimeError("failed to execute tree on data") from exc
+
+    # convert output to boolean Series same as _compile_tree_to_signals
+    sig_bool = pd.Series(sig)
+    print("signal count: ", sig_bool.sum())
+    price = data["close"]
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    price.plot(ax=ax, label="close")
+
+    # determine marker style based on buy_sell flag
+    if buy_sell >= 0:
+        marker = "^"
+        color = "lightgreen"
+        label = "buy"
+    else:
+        marker = "v"
+        color = "r"
+        label = "sell"
+
+    if sig_bool.any():
+        ax.scatter(
+            price.index[sig_bool],
+            price[sig_bool],
+            c=color,
+            marker=marker,
+            label=label,
+            zorder=5,
+        )
+
+    if val_data is not None and not val_data.empty:
+        split_x = val_data.index[0]
+        ax.axvline(x=split_x, color="k", linestyle="--", label="train/val split")
+
+    ax.legend()
+    ax.set_title("Strategy signals vs close price")
+    ax.set_xlabel("date")
+    ax.set_ylabel("price")
+    plt.tight_layout()
+    plt.show()
