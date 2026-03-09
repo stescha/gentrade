@@ -101,7 +101,7 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
     from gentrade.eval_pop import WorkerContext, init_worker, worker_evaluate
 
     class DummyEval(IndividualEvaluator):
-        def evaluate(
+        def evaluate(  # type: ignore[override]
             self, individual: Any, ohlcvs: Any, signals: Any | None = None
         ) -> tuple[float, ...]:
 

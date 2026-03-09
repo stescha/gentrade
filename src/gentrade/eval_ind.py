@@ -13,7 +13,7 @@ or metric calculation are wrapped in domain-specific exceptions and re-raised.
 This ensures bugs and misconfigurations surface immediately.
 """
 
-from typing import Callable, cast
+from typing import Callable, Literal, cast, overload
 
 import numpy as np
 import pandas as pd
@@ -238,6 +238,25 @@ class IndividualEvaluator:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    @overload
+    def evaluate(
+        self,
+        individual: gp.PrimitiveTree,
+        *,
+        ohlcvs: list[pd.DataFrame],
+        signals: list[pd.Series] | None = None,
+        aggregate: Literal[True] = True,
+    ) -> tuple[float, ...]: ...
+
+    @overload
+    def evaluate(
+        self,
+        individual: gp.PrimitiveTree,
+        *,
+        ohlcvs: list[pd.DataFrame],
+        signals: list[pd.Series] | None = None,
+        aggregate: Literal[False],
+    ) -> list[tuple[float, ...]]: ...
 
     def evaluate(
         self,
@@ -245,7 +264,8 @@ class IndividualEvaluator:
         *,
         ohlcvs: list[pd.DataFrame],
         signals: list[pd.Series] | None = None,
-    ) -> tuple[float, ...]:
+        aggregate: bool = True,
+    ) -> tuple[float, ...] | list[tuple[float, ...]]:
         """Evaluate one GP individual and return a fitness tuple.
 
         Supports either a single OHLCV DataFrame or a mapping of DataFrames.
@@ -284,13 +304,6 @@ class IndividualEvaluator:
         if signals is not None and len(signals) != len(ohlcvs):
             raise ValueError("Length of y_true list must match number of datasets")
 
-        if len(ohlcvs) == 1:
-            return self._eval_dataset(
-                individual,
-                ohlcvs[0],
-                signals[0] if signals is not None else None,
-            )
-
         # multi-dataset averaging
         results: list[tuple[float, ...]] = []
         for i, subdf in enumerate(ohlcvs):
@@ -298,6 +311,12 @@ class IndividualEvaluator:
             if signals is not None:
                 sub_y = signals[i]
             results.append(self._eval_dataset(individual, subdf, sub_y))
-        arr = np.array(results, dtype=float)
+        return self.aggregate_fitness(results) if aggregate else results
+
+    def aggregate_fitness(
+        self, fitnesses: list[tuple[float, ...]]
+    ) -> tuple[float, ...]:
+        """Aggregate multiple fitness tuples into one by averaging component-wise."""
+        arr = np.array(fitnesses, dtype=float)
         mean = arr.mean(axis=0)
         return tuple(float(x) for x in mean)

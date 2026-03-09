@@ -179,7 +179,6 @@ def _validate_and_listify_data_and_labels(
         strings with the same order as ``data_list``.  For anonymous inputs the
         canonical name ``gentrade._defaults.KEY_OHLCV`` is used.
     """
-    from gentrade._defaults import KEY_OHLCV
 
     # Handle absence first – caller will decide if labels are required later.
     if data is None:
@@ -332,7 +331,7 @@ def run_evolution(
     # original keys when the caller supplied mappings and are used purely for
     # human-readable logging.  The helper also performs the detailed consistency
     # checks described in the module docstring.
-    train_data_list, train_labels_list, df_names_train = (
+    train_data_list, train_labels_list, ohlcv_names_train = (
         _validate_and_listify_data_and_labels(
             train_data,
             train_labels,
@@ -342,10 +341,12 @@ def run_evolution(
     if val_data is not None:
         # we discard dataset names since they are used only for top-layer
         # logging and we already printed training info above
-        val_data_list, val_labels_list, _ = _validate_and_listify_data_and_labels(
-            val_data,
-            val_labels,
-            "val",
+        val_data_list, val_labels_list, ohlcv_names_val = (
+            _validate_and_listify_data_and_labels(
+                val_data,
+                val_labels,
+                "val",
+            )
         )
     else:
         val_data_list = []
@@ -417,15 +418,6 @@ def run_evolution(
     print(f"Tree gen: {cfg.tree.tree_gen}")
     # show size of first dataset as representative; note that when
     # multiple datasets are supplied fitness is averaged across all of them.
-    if df_names_train:
-        first_key = df_names_train[0]
-    else:
-        first_key = KEY_OHLCV
-    print(
-        f"Data rows ({first_key}): {len(train_data_list[0]) if train_data_list else 0} "
-        "(representative; fitness is averaged across datasets)"
-    )
-    print()
 
     # ── 3. Build pset ──────────────────────────────────────
     pset: gp.PrimitiveSetTyped = cfg.pset.func()
@@ -448,13 +440,6 @@ def run_evolution(
     val_evaluator: IndividualEvaluator | None = None
     if val_data_list and cfg.metrics_val is not None:
         val_evaluator = _make_evaluator(pset=pset, metrics=cfg.metrics_val, cfg=cfg)
-        toolbox.register(
-            "evaluate_val",
-            val_evaluator.evaluate,
-            ohlcvs=val_data_list,
-            signals=val_labels_list,
-        )
-
     # ── 6b. Multiprocessing ────────────────────────────────
     # Use multiprocessing even if processes=1 to simplify code paths.
     # The avoidable overhead is acceptable because running only one process
@@ -486,7 +471,7 @@ def run_evolution(
         hof = tools.HallOfFame(cfg.evolution.hof_size)
 
     # ── 7b. Validation logbook ─────────────────────────────────
-    if val_data is not None:
+    if val_evaluator is not None:
 
         def _val_callback(
             gen: int, ngen: int, population: list[gp.PrimitiveTree]
@@ -496,8 +481,14 @@ def run_evolution(
             if (gen - 1) % interval != 0 and gen != ngen:
                 return
             best_ind = toolbox.sel_best(population)[0]
-            val_score = toolbox.evaluate_val(best_ind)
-            print("val score:", ",".join(map(str, val_score)))
+            val_fitnesses = val_evaluator.evaluate(
+                best_ind, ohlcvs=val_data_list, signals=val_labels_list, aggregate=False
+            )
+            print("Validation results:")
+            for fitness, ohlcv_name in zip(val_fitnesses, ohlcv_names_val, strict=True):
+                print(f"{ohlcv_name}: {fitness}")
+            val_score_agg = evaluator.aggregate_fitness(val_fitnesses)
+            print("aggregated:", ",".join(map(str, val_score_agg)))
 
     # ── 9. Initial population ──────────────────────────────
     pop = toolbox.population(n=cfg.evolution.mu)
