@@ -18,6 +18,7 @@ from typing import Any, Callable, Literal
 import pytest
 from deap import base, gp, tools
 
+from gentrade._defaults import KEY_OHLCV
 from gentrade.config import (
     TREE_GEN_FUNCS,
     BacktestEvaluatorConfig,
@@ -285,6 +286,8 @@ class TestRunConfigValidation:
         with pytest.raises(ValueError, match="train_labels must be provided"):
             # omit cfg to exercise default-initialisation branch
             run_evolution(df, None, None, None, None)
+        with pytest.raises(ValueError, match="train_labels must be provided"):
+            run_evolution({KEY_OHLCV: df}, None, None, None, None)
 
     def test_val_data_without_metrics_val_raises(
         self, cfg_test_default: RunConfig
@@ -305,6 +308,14 @@ class TestRunConfigValidation:
         with pytest.raises(ValueError, match="cfg.metrics_val must be set"):
             # use default config which has metrics_val=None
             run_evolution(train_df, train_labels, val_df, None, None)
+        with pytest.raises(ValueError, match="cfg.metrics_val must be set"):
+            run_evolution(
+                {KEY_OHLCV: train_df},
+                {KEY_OHLCV: train_labels},
+                {KEY_OHLCV: val_df},
+                None,
+                None,
+            )
 
     def test_val_labels_missing_classification_raises(
         self, cfg_test_default: RunConfig
@@ -324,6 +335,14 @@ class TestRunConfigValidation:
 
         with pytest.raises(ValueError, match="val_labels must be provided"):
             run_evolution(train_df, train_labels, val_df, None, cfg)
+        with pytest.raises(ValueError, match="val_labels must be provided"):
+            run_evolution(
+                {KEY_OHLCV: train_df},
+                {KEY_OHLCV: train_labels},
+                {KEY_OHLCV: val_df},
+                None,
+                cfg,
+            )
 
 
 @pytest.mark.unit

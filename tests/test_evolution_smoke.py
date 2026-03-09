@@ -10,7 +10,9 @@ via tree size comparisons rather than fitness values.
 
 import pytest
 
+from gentrade._defaults import KEY_OHLCV
 from gentrade.config import (
+    F1MetricConfig,
     NSGA2SelectionConfig,
     PrecisionMetricConfig,
     RecallMetricConfig,
@@ -67,6 +69,50 @@ class TestEvolutionSmoke:
 
         # Tree node counts are deterministic given the same seed
         assert [len(ind) for ind in pop1] == [len(ind) for ind in pop2]
+
+    def test_dict_input_equivalent(self, cfg_e2e_quick: RunConfig) -> None:
+        """Passing a single DataFrame or a dict yields identical structural results."""
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
+
+        pop1, logbook1, hof1 = run_evolution(df, labels, None, None, cfg_e2e_quick)
+        pop2, logbook2, hof2 = run_evolution(
+            {KEY_OHLCV: df}, {KEY_OHLCV: labels}, None, None, cfg_e2e_quick
+        )
+
+        assert len(pop1) == len(pop2) == cfg_e2e_quick.evolution.mu
+        assert len(logbook1) == len(logbook2) == cfg_e2e_quick.evolution.generations + 1
+        assert len(hof1) == len(hof2)
+
+    def test_validation_with_val_data(self, cfg_e2e_quick: RunConfig) -> None:
+        """Providing val_data and val_labels runs without error and respects cfg.metrics_val."""
+        # configure a simple validation metric; backing config has no metrics_val
+        cfg = cfg_e2e_quick.model_copy(update={"metrics_val": (F1MetricConfig(),)})
+        df = generate_synthetic_ohlcv(1000, 42)
+        labels = zigzag_pivots(df["close"], 0.01, -1)
+        split = int(len(df) * 0.8)
+        train_df, val_df = df.iloc[:split], df.iloc[split:]
+        train_labels, val_labels = labels.iloc[:split], labels.iloc[split:]
+
+        pop, logbook, hof = run_evolution(
+            train_df, train_labels, val_df, val_labels, cfg
+        )
+        # also exercise dict variant for both train and validation data
+        pop2, logbook2, hof2 = run_evolution(
+            {KEY_OHLCV: train_df},
+            {KEY_OHLCV: train_labels},
+            {KEY_OHLCV: val_df},
+            {KEY_OHLCV: val_labels},
+            cfg,
+        )
+
+        assert len(pop) == cfg.evolution.mu
+        assert len(logbook) == cfg.evolution.generations + 1
+        assert all(ind.fitness.valid for ind in pop)
+
+        assert len(pop2) == cfg.evolution.mu
+        assert len(logbook2) == cfg.evolution.generations + 1
+        assert all(ind.fitness.valid for ind in pop2)
 
 
 @pytest.mark.e2e

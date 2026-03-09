@@ -107,18 +107,22 @@ now:
 
 ```python
 run_evolution(
-    train_data: pd.DataFrame,
-    train_labels: pd.Series | None = None,
-    val_data: pd.DataFrame | None = None,
-    val_labels: pd.Series | None = None,
+    train_data: pd.DataFrame | dict[str, pd.DataFrame],
+    train_labels: pd.Series | dict[str, pd.Series] | None = None,
+    val_data: pd.DataFrame | dict[str, pd.DataFrame] | None = None,
+    val_labels: pd.Series | dict[str, pd.Series] | None = None,
     cfg: RunConfig | None = None,
 ) -> tuple[list[gp.PrimitiveTree], tools.Logbook, tools.HallOfFame]
 ```
 
-All data/label arguments except `train_data` are optional.  When using a
-classification evaluator the caller must supply the corresponding
-`*_labels` Series.  If `val_data` is provided `cfg.metrics_val` must also
-be set or a `ValueError` is raised.  Data loading/generation is
+All data/label arguments except ``train_data`` are optional.  When
+using a classification evaluator the caller must supply the corresponding
+``*_labels`` Series.  If ``val_data`` is provided ``cfg.metrics_val`` must
+also be set or a ``ValueError`` is raised.  Callers may now supply a
+mapping of dataset names to DataFrames/Series; a single object is
+wrapped under the canonical key ``gentrade._defaults.KEY_OHLCV``.  The
+evaluation machinery will use ``KEY_OHLCV`` if present, otherwise it
+falls back to the first entry in the mapping.  Data loading/generation is
 performed externally.
 
 

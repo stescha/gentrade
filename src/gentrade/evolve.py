@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from deap import base, creator, gp, tools
 
+from gentrade._defaults import KEY_OHLCV
 from gentrade.algorithms import eaMuPlusLambdaGentrade
 from gentrade.config import (
     TREE_GEN_FUNCS,
@@ -186,10 +187,10 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
 
 
 def run_evolution(
-    train_data: pd.DataFrame,
-    train_labels: pd.Series | None = None,
-    val_data: pd.DataFrame | None = None,
-    val_labels: pd.Series | None = None,
+    train_data: pd.DataFrame | dict[str, pd.DataFrame],
+    train_labels: pd.Series | dict[str, pd.Series] | None = None,
+    val_data: pd.DataFrame | dict[str, pd.DataFrame] | None = None,
+    val_labels: pd.Series | dict[str, pd.Series] | None = None,
     cfg: RunConfig | None = None,
 ) -> tuple[list[gp.PrimitiveTree], tools.Logbook, tools.HallOfFame]:
     """Run GP evolution with the given configuration and data.
@@ -207,16 +208,29 @@ def run_evolution(
     determined by ``cfg``.
 
     Args:
-        train_data: OHLCV DataFrame used for training fitness evaluation. Must
-            have ``open``, ``high``, ``low``, ``close`` and ``volume`` columns.
-        val_data: Optional OHLCV DataFrame for validation evaluation. When
+        train_data: OHLCV DataFrame used for training fitness evaluation or
+            a mapping from string keys to DataFrames.  A single DataFrame is
+            automatically wrapped in a dict under the canonical key
+            ``gentrade._defaults.KEY_OHLCV``.  When a mapping is supplied the
+            evaluator will score each individual on every DataFrame and
+            aggregate the resulting metric tuples by arithmetic mean.  The
+            canonical key is still used when printing dataset size, but all
+            entries contribute to fitness.  Each DataFrame must have
+            ``open``, ``high``, ``low``, ``close`` and ``volume`` columns.
+        val_data: Optional OHLCV DataFrame or mapping for validation
+            evaluation.  Single DataFrame inputs are wrapped using the default
+            key as for ``train_data``; when a mapping is supplied every
+            DataFrame is scored and the scores are averaged.  The canonical key
+            is still used for printing the representative size.  When
             provided, ``cfg.metrics_val`` must also be set.
-        train_labels: Ground-truth boolean ``pd.Series`` for the training set.
-            Required when ``cfg.evaluator`` is a
+        train_labels: Ground-truth boolean ``pd.Series`` or mapping of
+            Series keyed by dataset name.  A single Series is wrapped under the
+            default key.  Required when ``cfg.evaluator`` is a
             ``ClassificationEvaluatorConfig``.
-        val_labels: Ground-truth boolean ``pd.Series`` for the validation set.
-            Required when ``val_data`` is provided and the evaluator is
-            ``ClassificationEvaluatorConfig``.
+        val_labels: Ground-truth boolean ``pd.Series`` or mapping keyed by
+            dataset name for the validation set.  Single values are wrapped
+            under the default key.  Required when ``val_data`` is provided and
+            the evaluator is ``ClassificationEvaluatorConfig``.
         cfg: Complete run configuration.  Defaults to :class:`RunConfig` if
             omitted or ``None``.
 
@@ -235,6 +249,18 @@ def run_evolution(
 
     if cfg is None:
         cfg = RunConfig()
+
+    # normalise data inputs into dictionaries keyed by a canonical name
+    # so that the evaluation machinery can treat multiple datasets
+    # uniformly.  callers may still pass a single DataFrame for convenience.
+    if not isinstance(train_data, dict):
+        train_data = {KEY_OHLCV: train_data}
+    if train_labels is not None and not isinstance(train_labels, dict):
+        train_labels = {KEY_OHLCV: train_labels}
+    if val_data is not None and not isinstance(val_data, dict):
+        val_data = {KEY_OHLCV: val_data}
+    if val_labels is not None and not isinstance(val_labels, dict):
+        val_labels = {KEY_OHLCV: val_labels}
 
     # ── 1. Seed ────────────────────────────────────────────
     if cfg.seed is not None:
@@ -291,7 +317,13 @@ def run_evolution(
     print(f"Crossover: {cfg.crossover.type}")
     print(f"Selection: {cfg.selection.type}")
     print(f"Tree gen: {cfg.tree.tree_gen}")
-    print(f"Data rows: {len(train_data)}")
+    # show size of first dataset as representative; note that when
+    # multiple datasets are supplied fitness is averaged across all of them.
+    first_key = next(iter(train_data))
+    print(
+        f"Data rows ({first_key}): {len(train_data[first_key])} "
+        "(representative; fitness is averaged across datasets)"
+    )
     print()
 
     # ── 3. Build pset ──────────────────────────────────────
@@ -311,19 +343,13 @@ def run_evolution(
     evaluator = _make_evaluator(cfg.evaluator, pset=pset, metrics=cfg.metrics)
 
     if val_data is not None:
+        # evaluator.evaluate now handles both single DataFrame and mapping
         if isinstance(cfg.evaluator, BacktestEvaluatorConfig):
-            toolbox.register(
-                "evaluate_val",
-                evaluator.evaluate,
-                df=val_data,
-            )
-
+            toolbox.register("evaluate_val", evaluator.evaluate, df=val_data)
         else:
+            assert val_labels is not None
             toolbox.register(
-                "evaluate_val",
-                evaluator.evaluate,
-                df=val_data,
-                y_true=val_labels,
+                "evaluate_val", evaluator.evaluate, df=val_data, y_true=val_labels
             )
 
     # ── 6b. Multiprocessing ────────────────────────────────

@@ -53,8 +53,10 @@ class TestEvolutionStructure:
     def test_run_completes_structure(self, cfg_e2e_quick):
         # generate data once and pass it to the API
         df = generate_synthetic_ohlcv(cfg_e2e_quick.data.n, cfg_e2e_quick.seed)
-        # note the new argument order: data first, optional val_data, then
-        # train_labels/val_labels, followed by the configuration object.
+        # arguments are `(train_data, train_labels, val_data, val_labels, cfg)`;
+        # datasets may be passed as either a single ``DataFrame``/``Series`` or a
+        # mapping keyed by strings (the canonical key
+        # ``gentrade._defaults.KEY_OHLCV`` will be selected automatically).
         pop, logbook, hof = run_evolution(df, None, None, None, cfg_e2e_quick)
         # the config argument may be omitted entirely to use all defaults:
         # pop, logbook, hof = run_evolution(df)

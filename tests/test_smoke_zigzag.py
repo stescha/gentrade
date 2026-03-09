@@ -10,6 +10,7 @@ import warnings
 
 import pytest
 
+from gentrade._defaults import KEY_OHLCV
 from gentrade.config import RunConfig
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.evolve import run_evolution
@@ -32,6 +33,14 @@ class TestZigzagIntegration:
         df = generate_synthetic_ohlcv(1000, 42)
         labels = zigzag_pivots(df["close"], 0.01, -1)
         pop, logbook, hof = run_evolution(df, labels, None, None, cfg)
+        pop2, logbook2, hof2 = run_evolution(
+            {KEY_OHLCV: df}, {KEY_OHLCV: labels}, None, None, cfg
+        )
+
+        # results shape should match
+        assert len(pop2) == len(pop)
+        assert len(logbook2) == len(logbook)
+        assert len(hof2) == len(hof)
 
         zigzag_found = any("zigzag_pivots" in str(ind) for ind in hof)
 

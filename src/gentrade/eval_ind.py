@@ -132,25 +132,15 @@ class BacktestEvaluator:
         self.fees = fees
         self.init_cash = init_cash
 
-    def evaluate(
+    def _eval_single(
         self,
         individual: gp.PrimitiveTree,
-        *,
         df: pd.DataFrame,
     ) -> tuple[float, ...]:
-        """Evaluate one individual using backtest metrics.
+        """Helper that evaluates a single DataFrame and returns metrics.
 
-        Args:
-            individual: GP tree to evaluate.
-            df: OHLCV DataFrame.
-
-        Returns:
-            Tuple of floats, one per metric.
-
-        Raises:
-            TreeEvaluationError: If tree compilation or execution fails.
-            MetricCalculationError: If metric calculation fails or returns
-                non-finite value.
+        This mirrors the previous implementation of ``evaluate`` and keeps
+        the outer method simple.
         """
         entries = _compile_tree_to_signals(individual, self.pset, df)
 
@@ -198,6 +188,41 @@ class BacktestEvaluator:
 
         return tuple(result)
 
+    def evaluate(
+        self,
+        individual: gp.PrimitiveTree,
+        *,
+        df: pd.DataFrame | dict[str, pd.DataFrame],
+    ) -> tuple[float, ...]:
+        """Evaluate one individual using backtest metrics.
+
+        Supports either a single OHLCV DataFrame or a mapping of datasets.
+        When given a mapping each entry is scored independently and the
+        resulting tuples are averaged component-wise.
+
+        Args:
+            individual: GP tree to evaluate.
+            df: OHLCV DataFrame or mapping of DataFrames.
+
+        Returns:
+            Tuple of floats, one per metric.
+
+        Raises:
+            TreeEvaluationError: If tree compilation or execution fails.
+            MetricCalculationError: If metric calculation fails or returns
+                non-finite value.
+        """
+        if isinstance(df, dict):
+            # aggregate across multiple datasets
+            results: list[tuple[float, ...]] = []
+            for subdf in df.values():
+                results.append(self._eval_single(individual, subdf))
+            arr = np.array(results, dtype=float)
+            mean = arr.mean(axis=0)
+            return tuple(float(x) for x in mean)
+        else:
+            return self._eval_single(individual, df)
+
 
 class ClassificationEvaluator:
     """Evaluator for classification-based GP fitness.
@@ -220,28 +245,13 @@ class ClassificationEvaluator:
         self.pset = pset
         self.metrics = metrics
 
-    def evaluate(
+    def _eval_single(
         self,
         individual: gp.PrimitiveTree,
-        *,
         df: pd.DataFrame,
         y_true: pd.Series,
     ) -> tuple[float, ...]:
-        """Evaluate one individual using classification metrics.
-
-        Args:
-                individual: GP tree to evaluate.
-            df: OHLCV DataFrame.
-            y_true: Ground-truth boolean series.
-
-        Returns:
-            Tuple of floats, one per metric.
-
-        Raises:
-            TreeEvaluationError: If tree compilation or execution fails.
-            MetricCalculationError: If metric calculation fails or returns
-                non-finite value.
-        """
+        """Evaluate individual on a single DataFrame/label pair."""
         y_pred = _compile_tree_to_signals(individual, self.pset, df)
 
         result: list[float] = []
@@ -270,3 +280,43 @@ class ClassificationEvaluator:
             result.append(float(val))
 
         return tuple(result)
+
+    def evaluate(
+        self,
+        individual: gp.PrimitiveTree,
+        *,
+        df: pd.DataFrame | dict[str, pd.DataFrame],
+        y_true: pd.Series | dict[str, pd.Series],
+    ) -> tuple[float, ...]:
+        """Evaluate one individual using classification metrics.
+
+        Supports either a single OHLCV DataFrame/Series pair or mappings of
+        them.  When mappings are provided each entry is scored and the
+        fitness tuples are averaged.
+
+        Args:
+                individual: GP tree to evaluate.
+            df: OHLCV DataFrame or mapping of DataFrames.
+            y_true: Ground-truth boolean Series or mapping.
+
+        Returns:
+            Tuple of floats, one per metric.
+
+        Raises:
+            TreeEvaluationError: If tree compilation or execution fails.
+            MetricCalculationError: If metric calculation fails or returns
+                non-finite value.
+        """
+        if isinstance(df, dict):
+            assert isinstance(y_true, dict)
+            results: list[tuple[float, ...]] = []
+            for key, subdf in df.items():
+                if key not in y_true:
+                    raise ValueError(f"Missing y_true for key {key}")
+                results.append(self._eval_single(individual, subdf, y_true[key]))
+            arr = np.array(results, dtype=float)
+            mean = arr.mean(axis=0)
+            return tuple(float(x) for x in mean)
+        else:
+            assert not isinstance(y_true, dict)
+            return self._eval_single(individual, df, y_true)

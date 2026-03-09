@@ -22,20 +22,26 @@ from gentrade.eval_ind import BacktestEvaluator, ClassificationEvaluator
 class WorkerContext:
     """Immutable bundle of per-run state passed to each worker process.
 
-    * ``evaluator`` – pre‑constructed evaluator instance (already holds
+    The context replaces the older approach of pickling a large data
+    structure for every individual evaluation. Instead the pool
+    initializer sends a single ``WorkerContext`` instance to each process.
+    This context stores every worker depenedency that is constant across
+    the full run.
+
+    * ``evaluator`` – pre‑constructed evaluator instance (holds
       ``pset`` and ``metrics``).
-    * ``train_data`` – DataFrame containing the OHLCV series used for
-      every evaluation.
-    * ``train_labels`` – optional label series required when the evaluator
-      is a ``ClassificationEvaluator``.
+    * ``train_data`` – mapping from dataset keys to OHLCV ``DataFrame``
+      objects.
+    * ``train_labels`` – optional mapping from the same keys to label
+      ``Series`` objects used by :class:`ClassificationEvaluator`.
 
     The pool initializer sends this object once to each worker; evaluation
     functions then reference ``_worker_ctx`` to access it.
     """
 
     evaluator: BacktestEvaluator | ClassificationEvaluator
-    train_data: pd.DataFrame
-    train_labels: pd.Series | None
+    train_data: dict[str, pd.DataFrame]
+    train_labels: dict[str, pd.Series] | None
 
 
 _worker_ctx: WorkerContext | None = None
@@ -59,12 +65,12 @@ def init_worker(ctx: WorkerContext) -> None:
 def create_pool(
     processes: int,
     evaluator: BacktestEvaluator | ClassificationEvaluator,
-    train_data: pd.DataFrame,
-    train_labels: pd.Series | None,
+    train_data: dict[str, pd.DataFrame],
+    train_labels: dict[str, pd.Series] | None,
 ) -> pool.Pool:
     """Convenience wrapper for ``multiprocessing.Pool`` configured for GP.
 
-    The supplied ``evaluator`` and dataset are packaged into a
+    The supplied ``evaluator`` and datasets are packaged into a
     :class:`WorkerContext` and provided to the worker processes via the
     ``initializer`` mechanism.  All evaluation tasks will subsequently
     refer to this shared context rather than carrying the data themselves.
@@ -72,8 +78,9 @@ def create_pool(
     Args:
         processes: number of worker processes to start (may be 1).
         evaluator: evaluator instance containing ``pset`` and ``metrics``.
-        train_data: OHLCV DataFrame for fitness evaluation.
-        train_labels: optional labels for classification runs.
+        train_data: mapping of dataset keys to OHLCV DataFrames.
+        train_labels: optional mapping of dataset keys to label series for
+            classification runs.
 
     Returns:
         A started :class:`multiprocessing.Pool`.
@@ -89,32 +96,29 @@ def create_pool(
 def worker_evaluate(individual: gp.PrimitiveTree) -> tuple[float, ...]:
     """Top-level evaluation callback used with ``Pool.map``.
 
-    The only argument is the individual to score; all other data comes
-    from ``_worker_ctx`` which was populated by ``init_worker``.  This
-    function dispatches to either the backtest or classification evaluator
-    depending on the runtime type stored in the context.
+    Delegates directly to the evaluator stored in the global context.  The
+    evaluator is now responsible for handling either a single DataFrame or a
+    mapping of dataframes, so this wrapper stays small and stable.
 
     Raises:
         RuntimeError: if called before the worker context has been set.
-        ValueError: if a classification evaluator is used but no labels are
-            available.
+        ValueError: if a classification evaluator is used but no labels were
+            provided in the context.
     """
     if _worker_ctx is None:
         raise RuntimeError("Worker context not initialized")
-    if isinstance(_worker_ctx.evaluator, ClassificationEvaluator):
+
+    evaluator = _worker_ctx.evaluator
+    if isinstance(evaluator, ClassificationEvaluator):
         if _worker_ctx.train_labels is None:
             raise ValueError("ClassificationEvaluator requires train_labels")
-        return _worker_ctx.evaluator.evaluate(
+        return evaluator.evaluate(
             individual,
             df=_worker_ctx.train_data,
             y_true=_worker_ctx.train_labels,
         )
     else:
-        # BacktestEvaluator does not use labels, so pass None explicitly
-        return _worker_ctx.evaluator.evaluate(
-            individual,
-            df=_worker_ctx.train_data,
-        )
+        return evaluator.evaluate(individual, df=_worker_ctx.train_data)
 
 
 def evaluate_population(
