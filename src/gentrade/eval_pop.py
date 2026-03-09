@@ -30,18 +30,17 @@ class WorkerContext:
 
     * ``evaluator`` – pre‑constructed evaluator instance (holds
       ``pset`` and ``metrics``).
-    * ``train_data`` – mapping from dataset keys to OHLCV ``DataFrame``
-      objects.
-    * ``train_labels`` – optional mapping from the same keys to label
-      ``Series`` objects used by :class:`ClassificationEvaluator`.
+    * ``train_data`` – list of OHLCV ``DataFrame`` objects.
+    * ``train_labels`` – optional list of ``Series`` aligned with
+      ``train_data`` for classification runs.
 
     The pool initializer sends this object once to each worker; evaluation
     functions then reference ``_worker_ctx`` to access it.
     """
 
     evaluator: IndividualEvaluator
-    train_data: dict[str, pd.DataFrame]
-    train_labels: dict[str, pd.Series] | None
+    train_data: list[pd.DataFrame]
+    train_labels: list[pd.Series] | None
 
 
 _worker_ctx: WorkerContext | None = None
@@ -65,8 +64,8 @@ def init_worker(ctx: WorkerContext) -> None:
 def create_pool(
     processes: int,
     evaluator: IndividualEvaluator,
-    train_data: dict[str, pd.DataFrame],
-    train_labels: dict[str, pd.Series] | None,
+    train_data: list[pd.DataFrame],
+    train_labels: list[pd.Series] | None,
 ) -> pool.Pool:
     """Convenience wrapper for ``multiprocessing.Pool`` configured for GP.
 
@@ -78,9 +77,8 @@ def create_pool(
     Args:
         processes: number of worker processes to start.
         evaluator: evaluator instance containing ``pset`` and ``metrics``.
-        train_data: mapping of dataset keys to OHLCV DataFrames.
-        train_labels: optional mapping of dataset keys to label series for
-            classification runs.
+        train_data: list of OHLCV DataFrames.
+        train_labels: optional list of label Series aligned with ``train_data``
 
     Returns:
         A started :class:`multiprocessing.Pool`.
@@ -97,8 +95,8 @@ def worker_evaluate(individual: gp.PrimitiveTree) -> tuple[float, ...]:
     """Top-level evaluation callback used with ``Pool.map``.
 
     Delegates directly to the evaluator stored in the global context.  The
-    evaluator is now responsible for handling either a single DataFrame or a
-    mapping of dataframes, so this wrapper stays small and stable.
+    evaluator is responsible for handling the data, so this wrapper stays small
+    and stable.
 
     Raises:
         RuntimeError: if called before the worker context has been set.
@@ -110,7 +108,7 @@ def worker_evaluate(individual: gp.PrimitiveTree) -> tuple[float, ...]:
 
     evaluator = _worker_ctx.evaluator
     return evaluator.evaluate(
-        individual, df=_worker_ctx.train_data, y_true=_worker_ctx.train_labels
+        individual, ohlcvs=_worker_ctx.train_data, signals=_worker_ctx.train_labels
     )
 
 

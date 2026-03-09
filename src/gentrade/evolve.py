@@ -155,6 +155,107 @@ def create_toolbox(cfg: RunConfig, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
     return toolbox
 
 
+def _validate_and_listify_data_and_labels(
+    data: pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame] | None,
+    labels: pd.Series | dict[str, pd.Series] | list[pd.Series] | None,
+    dataset_name: str,
+) -> tuple[list[pd.DataFrame], list[pd.Series] | None, list[str]]:
+    """Normalise and validate dataset inputs for ``run_evolution``.
+
+    ``data`` may be one of:
+    * ``pd.DataFrame`` – single dataset
+    * mapping of strings to DataFrames – keyed datasets whose names are used
+      only for logging
+    * list of DataFrames – treated as an ordered collection with no useful
+      names
+    * ``None`` – treated as an empty list
+
+    ``labels`` must mirror ``data`` in structure when provided.  When the
+    argument types mismatch or keys/lengths disagree a ``ValueError`` is raised.
+    We also verify that any paired DataFrame/Series share identical indexes.
+
+    Returns:
+        ``(data_list, label_list_or_None, names)`` where ``names`` is a list of
+        strings with the same order as ``data_list``.  For anonymous inputs the
+        canonical name ``gentrade._defaults.KEY_OHLCV`` is used.
+    """
+    from gentrade._defaults import KEY_OHLCV
+
+    # Handle absence first – caller will decide if labels are required later.
+    if data is None:
+        return [], None, []
+
+    # Convenience helpers
+    def _check_index_match(df: pd.DataFrame, ser: pd.Series, key: str) -> None:
+        if not df.index.equals(ser.index):
+            raise ValueError(
+                "Index mismatch between "
+                f"{dataset_name}_data and {dataset_name}_labels "
+                f"for key {key!r}."
+            )
+
+    # Convert mapping to ordered lists, keeping key order for names
+    if isinstance(data, dict):
+        if labels is not None and not isinstance(labels, dict):
+            raise ValueError(
+                "When {dataset_name}_data is a dict, "
+                "{dataset_name}_labels must also be a dict."
+            )
+        keys = list(data.keys())
+        data_list = [data[k] for k in keys]
+        names = keys.copy()
+        label_list: list[pd.Series] | None = None
+        if labels is not None:
+            if set(labels.keys()) != set(keys):
+                raise ValueError(
+                    f"{dataset_name}_data and {dataset_name}_labels "
+                    "must have the same keys. "
+                    f"got {keys!r} vs {list(labels.keys())!r}"
+                )
+            # preserve order of data keys
+            label_list = [labels[k] for k in keys]
+            # verify index alignment
+            for k, df_ in data.items():
+                _check_index_match(df_, labels[k], k)
+        return data_list, label_list, names
+
+    # Non-dict inputs: either DataFrame or list
+    if isinstance(data, list):
+        data_list = data
+        names = [KEY_OHLCV] * len(data_list)
+        if labels is not None:
+            if not isinstance(labels, list):
+                raise ValueError(
+                    "When {dataset_name}_data is a list, "
+                    "{dataset_name}_labels must also be a list."
+                )
+            if len(labels) != len(data_list):
+                raise ValueError(
+                    "Length mismatch between {dataset_name}_data "
+                    "and {dataset_name}_labels"
+                )
+            for i, (df_, lab) in enumerate(zip(data_list, labels, strict=True)):
+                _check_index_match(df_, lab, str(i))
+        return data_list, labels if isinstance(labels, list) else None, names
+
+    # Single DataFrame
+    if isinstance(data, pd.DataFrame):
+        data_list = [data]
+        names = [KEY_OHLCV]
+        if labels is not None:
+            if not isinstance(labels, pd.Series):
+                raise ValueError(
+                    "When {dataset_name}_data is a DataFrame, "
+                    "{dataset_name}_labels must be a Series."
+                )
+            _check_index_match(data, labels, KEY_OHLCV)
+            return data_list, [labels], names
+        return data_list, None, names
+
+    # We shouldn't reach here because typing restricts input, but guard anyway
+    raise TypeError(f"Unsupported type for {dataset_name}_data: {type(data)}")
+
+
 def run_evolution(
     train_data: pd.DataFrame | dict[str, pd.DataFrame],
     train_labels: pd.Series | dict[str, pd.Series] | None = None,
@@ -177,29 +278,36 @@ def run_evolution(
     determined by ``cfg``.
 
     Args:
-        train_data: OHLCV DataFrame used for training fitness evaluation or
-            a mapping from string keys to DataFrames.  A single DataFrame is
-            automatically wrapped in a dict under the canonical key
-            ``gentrade._defaults.KEY_OHLCV``.  When a mapping is supplied the
-            evaluator will score each individual on every DataFrame and
-            aggregate the resulting metric tuples by arithmetic mean.  The
-            canonical key is still used when printing dataset size, but all
-            entries contribute to fitness.  Each DataFrame must have
-            ``open``, ``high``, ``low``, ``close`` and ``volume`` columns.
-        val_data: Optional OHLCV DataFrame or mapping for validation
-            evaluation.  Single DataFrame inputs are wrapped using the default
-            key as for ``train_data``; when a mapping is supplied every
-            DataFrame is scored and the scores are averaged.  The canonical key
-            is still used for printing the representative size.  When
-            provided, ``cfg.metrics_val`` must also be set.
-        train_labels: Ground-truth boolean ``pd.Series`` or mapping of
-            Series keyed by dataset name.  A single Series is wrapped under the
-            default key.  Required when ``cfg.evaluator`` is a
+        train_data: OHLCV data to use for training.  The function accepts any
+            of the following forms:
+
+            * a single ``pd.DataFrame``
+            * a ``list`` of DataFrames
+            * a mapping from string keys to DataFrames (keys are used only for
+              logging and are discarded before evaluation)
+
+            When a *mapping* is supplied the evaluator will score each
+            individual on every DataFrame and aggregate the resulting metric
+            tuples by arithmetic mean.  The canonical key
+            ``gentrade._defaults.KEY_OHLCV``
+            is used when a single DataFrame is provided for convenience.  Each
+            DataFrame must have ``open``, ``high``, ``low``, ``close`` and
+            ``volume`` columns.
+        val_data: Optional OHLCV data for validation.  The same forms described
+            above are accepted.  When provided, ``cfg.metrics_val`` must also be
+            set.
+        train_labels: Ground-truth boolean labels corresponding to ``train_data``.
+            If ``train_data`` is a DataFrame or list the labels must be a
+            single ``pd.Series`` or a list of Series of matching length,
+            respectively.  When a mapping is used the labels must be a mapping
+            with the same keys; run_evolution will enforce that the two key
+            sets match and that each paired DataFrame/Series share an index.
+            Required when ``cfg.evaluator`` is a
             ``ClassificationEvaluatorConfig``.
-        val_labels: Ground-truth boolean ``pd.Series`` or mapping keyed by
-            dataset name for the validation set.  Single values are wrapped
-            under the default key.  Required when ``val_data`` is provided and
-            the evaluator is ``ClassificationEvaluatorConfig``.
+        val_labels: Ground-truth boolean labels for the validation set.  Input
+            structure mirrors ``val_data`` and similar validation rules apply.
+            Required when ``val_data`` is provided and the evaluator is
+            ``ClassificationEvaluatorConfig``.
         cfg: Complete run configuration.  Defaults to :class:`RunConfig` if
             omitted or ``None``.
 
@@ -219,17 +327,31 @@ def run_evolution(
     if cfg is None:
         cfg = RunConfig()
 
-    # normalise data inputs into dictionaries keyed by a canonical name
-    # so that the evaluation machinery can treat multiple datasets
-    # uniformly.  callers may still pass a single DataFrame for convenience.
-    if not isinstance(train_data, dict):
-        train_data = {KEY_OHLCV: train_data}
-    if train_labels is not None and not isinstance(train_labels, dict):
-        train_labels = {KEY_OHLCV: train_labels}
-    if val_data is not None and not isinstance(val_data, dict):
-        val_data = {KEY_OHLCV: val_data}
-    if val_labels is not None and not isinstance(val_labels, dict):
-        val_labels = {KEY_OHLCV: val_labels}
+    # normalise and validate datasets & labels, converting everything into
+    # simple lists for downstream consumption.  ``df_names_*`` preserve the
+    # original keys when the caller supplied mappings and are used purely for
+    # human-readable logging.  The helper also performs the detailed consistency
+    # checks described in the module docstring.
+    train_data_list, train_labels_list, df_names_train = (
+        _validate_and_listify_data_and_labels(
+            train_data,
+            train_labels,
+            "train",
+        )
+    )
+    if val_data is not None:
+        # we discard dataset names since they are used only for top-layer
+        # logging and we already printed training info above
+        val_data_list, val_labels_list, _ = _validate_and_listify_data_and_labels(
+            val_data,
+            val_labels,
+            "val",
+        )
+    else:
+        val_data_list = []
+        val_labels_list = None
+
+    # ── 1. Seed ────────────────────────────────────────────
 
     # ── 1. Seed ────────────────────────────────────────────
     if cfg.seed is not None:
@@ -295,9 +417,12 @@ def run_evolution(
     print(f"Tree gen: {cfg.tree.tree_gen}")
     # show size of first dataset as representative; note that when
     # multiple datasets are supplied fitness is averaged across all of them.
-    first_key = next(iter(train_data))
+    if df_names_train:
+        first_key = df_names_train[0]
+    else:
+        first_key = KEY_OHLCV
     print(
-        f"Data rows ({first_key}): {len(train_data[first_key])} "
+        f"Data rows ({first_key}): {len(train_data_list[0]) if train_data_list else 0} "
         "(representative; fitness is averaged across datasets)"
     )
     print()
@@ -321,13 +446,13 @@ def run_evolution(
     # Build a separate val evaluator using cfg.metrics_val so the validation
     # phase uses the correct metric set.
     val_evaluator: IndividualEvaluator | None = None
-    if val_data is not None and cfg.metrics_val is not None:
+    if val_data_list and cfg.metrics_val is not None:
         val_evaluator = _make_evaluator(pset=pset, metrics=cfg.metrics_val, cfg=cfg)
         toolbox.register(
             "evaluate_val",
             val_evaluator.evaluate,
-            df=val_data,
-            y_true=val_labels,
+            ohlcvs=val_data_list,
+            signals=val_labels_list,
         )
 
     # ── 6b. Multiprocessing ────────────────────────────────
@@ -337,8 +462,8 @@ def run_evolution(
     pool = create_pool(
         cfg.evolution.processes,
         evaluator=evaluator,
-        train_data=train_data,
-        train_labels=train_labels,
+        train_data=train_data_list,
+        train_labels=train_labels_list,
     )
 
     # ── 7. Statistics ──────────────────────────────────────

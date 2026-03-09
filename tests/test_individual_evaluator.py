@@ -147,7 +147,10 @@ class TestConstructorFlags:
 
 @pytest.mark.unit
 class TestYTrueValidation:
-    """evaluate() raises ValueError for y_true mismatches before any computation."""
+    """evaluate() raises ValueError for y_true mismatches before any computation.
+
+    All calls supply ``df`` as a list; non-list inputs are considered invalid.
+    """
 
     def test_classification_without_y_true_raises(
         self,
@@ -158,7 +161,7 @@ class TestYTrueValidation:
         """Classification evaluator raises when y_true is None."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         with pytest.raises(ValueError, match="train_labels must be provided"):
-            ev.evaluate(valid_individual, df=df)
+            ev.evaluate(valid_individual, ohlcvs=[df])
 
     def test_backtest_with_y_true_raises(
         self,
@@ -170,35 +173,31 @@ class TestYTrueValidation:
         """Backtest-only evaluator raises when y_true is unexpectedly provided."""
         ev = IndividualEvaluator(pset=pset, metrics=(SharpeMetricConfig(),))
         with pytest.raises(ValueError, match="y_true is not used"):
-            ev.evaluate(valid_individual, df=df, y_true=labels)
+            ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
 
-    def test_dict_classification_without_dict_y_true_raises(
+    def test_list_classification_length_mismatch_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: deap_gp.PrimitiveTree,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
-        """When df is a dict and metrics need labels, y_true must also be a dict."""
+        """When df is a list of multiple datasets, y_true must be a list of the same length."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
-        with pytest.raises(ValueError, match="y_true must be a dict"):
-            ev.evaluate(valid_individual, df={"a": df}, y_true=labels)
+        with pytest.raises(ValueError, match="Length of y_true list must match"):
+            ev.evaluate(valid_individual, ohlcvs=[df, df], signals=[labels])
 
-    def test_missing_y_true_key_raises(
+    def test_dict_input_not_supported(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: deap_gp.PrimitiveTree,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
-        """evaluate() raises when df has a key absent from y_true dict."""
+        """Passing a dict to evaluate now raises a clear error."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
-        with pytest.raises(ValueError, match="Missing y_true"):
-            ev.evaluate(
-                valid_individual,
-                df={"a": df, "b": df},
-                y_true={"a": labels},
-            )
+        with pytest.raises(ValueError, match="df must be a list of DataFrames"):
+            ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +218,7 @@ class TestSingleDataFrameEvaluation:
     ) -> None:
         """Classification evaluation returns a finite float tuple of length 1."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
-        result = ev.evaluate(valid_individual, df=df, y_true=labels)
+        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert isinstance(result, tuple)
         assert len(result) == 1
         assert isinstance(result[0], float)
@@ -234,7 +233,7 @@ class TestSingleDataFrameEvaluation:
     ) -> None:
         """Stub metric returns its fixed value via the classification path."""
         ev = IndividualEvaluator(pset=pset, metrics=(_ConstClassMetric(0.75),))
-        result = ev.evaluate(valid_individual, df=df, y_true=labels)
+        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert result == pytest.approx((0.75,))
 
     def test_const_backtest_metric_returns_constant(
@@ -245,7 +244,7 @@ class TestSingleDataFrameEvaluation:
     ) -> None:
         """Stub backtest metric returns its fixed value via the backtest path."""
         ev = IndividualEvaluator(pset=pset, metrics=(_ConstBacktestMetric(0.42),))
-        result = ev.evaluate(valid_individual, df=df)
+        result = ev.evaluate(valid_individual, ohlcvs=[df])
         assert result == pytest.approx((0.42,))
 
     def test_tuple_length_matches_metric_count(
@@ -264,7 +263,7 @@ class TestSingleDataFrameEvaluation:
                 _ConstClassMetric(0.3),
             ),
         )
-        result = ev.evaluate(valid_individual, df=df, y_true=labels)
+        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert len(result) == 3
         assert result == pytest.approx((0.1, 0.2, 0.3))
 
@@ -278,14 +277,14 @@ class TestSingleDataFrameEvaluation:
 class TestDictEvaluation:
     """evaluate() with dict inputs averages results across datasets."""
 
-    def test_classification_dict_averages(
+    def test_list_averages(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: deap_gp.PrimitiveTree,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
-        """Dict input: fitness is the mean across all dataset scores."""
+        """List input: fitness is the mean across all dataset scores."""
 
         # Use stub metrics with deterministic per-call result based on y_true sum.
         class _SumMetric(ClassificationMetricConfigBase):
@@ -297,20 +296,18 @@ class TestDictEvaluation:
         y1 = pd.Series([True, False], index=df.index[:2])
         y2 = pd.Series([False, False], index=df.index[:2])
         df2 = df.iloc[:2]
-        single1 = ev.evaluate(valid_individual, df=df2, y_true=y1)[0]
-        single2 = ev.evaluate(valid_individual, df=df2, y_true=y2)[0]
-        avg = ev.evaluate(
-            valid_individual, df={"a": df2, "b": df2}, y_true={"a": y1, "b": y2}
-        )[0]
+        single1 = ev.evaluate(valid_individual, ohlcvs=[df2], signals=[y1])[0]
+        single2 = ev.evaluate(valid_individual, ohlcvs=[df2], signals=[y2])[0]
+        avg = ev.evaluate(valid_individual, ohlcvs=[df2, df2], signals=[y1, y2])[0]
         assert avg == pytest.approx((single1 + single2) / 2)
 
-    def test_backtest_dict_averages(
+    def test_backtest_list_averages(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: deap_gp.PrimitiveTree,
         df: pd.DataFrame,
     ) -> None:
-        """Dict backtest input: fitness is the mean across all dataset scores."""
+        """List backtest input: fitness is the mean across all dataset scores."""
         call_count = 0
 
         class _CountingMetric(BacktestMetricConfigBase):
@@ -320,7 +317,7 @@ class TestDictEvaluation:
                 return float(call_count)
 
         ev = IndividualEvaluator(pset=pset, metrics=(_CountingMetric(),))
-        result = ev.evaluate(valid_individual, df={"a": df, "b": df})
+        result = ev.evaluate(valid_individual, ohlcvs=[df, df])
         # call_count == 2 after two evaluations; mean of (1.0, 2.0) == 1.5
         assert result == pytest.approx((1.5,))
         assert call_count == 2
@@ -345,7 +342,7 @@ class TestBacktestGating:
         """run_vbt_backtest is never invoked for a classification-only evaluator."""
         with patch.object(IndividualEvaluator, "run_vbt_backtest") as mock_bt:
             ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
-            ev.evaluate(valid_individual, df=df, y_true=labels)
+            ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         mock_bt.assert_not_called()
 
     def test_backtest_called_once_for_multiple_backtest_metrics(
@@ -360,7 +357,7 @@ class TestBacktestGating:
                 pset=pset,
                 metrics=(_ConstBacktestMetric(0.1), _ConstBacktestMetric(0.2)),
             )
-            ev.evaluate(valid_individual, df=df)
+            ev.evaluate(valid_individual, ohlcvs=[df])
         mock_bt.assert_called_once()
 
 
@@ -385,7 +382,7 @@ class TestMixedMetrics:
             pset=pset,
             metrics=(_ConstClassMetric(0.3), _ConstBacktestMetric(0.7)),
         )
-        result = ev.evaluate(valid_individual, df=df, y_true=labels)
+        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert len(result) == 2
 
     def test_mixed_metrics_values_correct(
@@ -400,7 +397,7 @@ class TestMixedMetrics:
             pset=pset,
             metrics=(_ConstClassMetric(0.3), _ConstBacktestMetric(0.7)),
         )
-        result = ev.evaluate(valid_individual, df=df, y_true=labels)
+        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert result == pytest.approx((0.3, 0.7))
 
     def test_mixed_requires_y_true(
@@ -415,4 +412,4 @@ class TestMixedMetrics:
             metrics=(_ConstClassMetric(), _ConstBacktestMetric()),
         )
         with pytest.raises(ValueError, match="train_labels must be provided"):
-            ev.evaluate(valid_individual, df=df)
+            ev.evaluate(valid_individual, ohlcvs=[df])

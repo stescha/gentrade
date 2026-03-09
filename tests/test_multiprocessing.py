@@ -6,7 +6,9 @@ produces structurally valid results equivalent to single-process mode.
 
 from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
+from deap import gp
 
 from gentrade._defaults import KEY_OHLCV
 from gentrade.config import (
@@ -91,7 +93,7 @@ class TestMultiprocessingEvolution:
 
 
 def test_worker_evaluate_aggregates_across_scenarios() -> None:
-    """The multiprocessing helper should average fitness over all provided dataframes."""
+    """Helper should average fitness over provided dataframes."""
     from typing import Any
 
     import pandas as pd
@@ -100,14 +102,11 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
 
     class DummyEval(IndividualEvaluator):
         def evaluate(
-            self, individual: Any, df: Any, y_true: Any | None = None
+            self, individual: Any, ohlcvs: Any, signals: Any | None = None
         ) -> tuple[float, ...]:
-            # support either a single DataFrame or a mapping; compute the
-            # mean of the 'close' column's first element in each frame.
-            if isinstance(df, dict):
-                vals = [float(d["close"].iloc[0]) for d in df.values()]
-                return (sum(vals) / len(vals),)
-            return (float(df["close"].iloc[0]),)
+
+            vals = [float(d["close"].iloc[0]) for d in ohlcvs]
+            return (sum(vals) / len(vals),)
 
     # two tiny dataframes with distinguishable 'close' values
     df1 = pd.DataFrame(
@@ -118,7 +117,7 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
     )
     ctx = WorkerContext(
         evaluator=DummyEval(pset=MagicMock(), metrics=(MagicMock(),)),
-        train_data={"a": df1, "b": df2},
+        train_data=[df1, df2],
         train_labels=None,
     )
     init_worker(ctx)
@@ -128,11 +127,7 @@ def test_worker_evaluate_aggregates_across_scenarios() -> None:
 
 
 def test_classification_evaluator_mapping() -> None:
-    """IndividualEvaluator should average classification metric results across datasets."""
-    import pandas as pd
-    from deap import gp
-
-    from gentrade.config import F1MetricConfig, ZigzagMediumPsetConfig
+    """Evaluator should average classification results across datasets."""
 
     pset = ZigzagMediumPsetConfig().func()
     evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
@@ -146,12 +141,8 @@ def test_classification_evaluator_mapping() -> None:
 
     tree_true = gp.PrimitiveTree.from_string("True", pset)  # type: ignore[attr-defined]
 
-    single1 = evaluator.evaluate(tree_true, df=df1, y_true=y1)[0]
-    single2 = evaluator.evaluate(tree_true, df=df2, y_true=y2)[0]
-    mapped = evaluator.evaluate(
-        tree_true, df={"a": df1, "b": df2}, y_true={"a": y1, "b": y2}
-    )[0]
-
-    assert single1 == 1.0
+    single1 = evaluator.evaluate(tree_true, ohlcvs=[df1], signals=[y1])[0]
+    single2 = evaluator.evaluate(tree_true, ohlcvs=[df2], signals=[y2])[0]
+    mapped = evaluator.evaluate(tree_true, ohlcvs=[df1, df2], signals=[y1, y2])[0]
     assert single2 == 0.0
     assert mapped == pytest.approx((single1 + single2) / 2)

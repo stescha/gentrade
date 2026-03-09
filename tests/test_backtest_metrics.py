@@ -299,7 +299,7 @@ class TestBacktestEvaluator:
         df = self._make_df()
         evaluator = self._make_evaluator(metrics=(SharpeMetricConfig(min_trades=0),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(individual, df=df)
+            evaluator.evaluate(individual, ohlcvs=[df])
         print(excinfo.value)
 
     def test_min_trades_guard_returns_zero(self) -> None:
@@ -309,7 +309,7 @@ class TestBacktestEvaluator:
         evaluator = self._make_evaluator(
             metrics=(SharpeMetricConfig(min_trades=999999),)
         )
-        result = evaluator.evaluate(individual, df=df)
+        result = evaluator.evaluate(individual, ohlcvs=[df])
         assert result == (0.0,)
 
     def test_exception_raises_tree_evaluation_error(self) -> None:
@@ -318,7 +318,7 @@ class TestBacktestEvaluator:
         df = self._make_df()
         evaluator = self._make_evaluator(metrics=(SharpeMetricConfig(),))
         with pytest.raises(TreeEvaluationError):
-            evaluator.evaluate(individual, df=df)
+            evaluator.evaluate(individual, ohlcvs=[df])
 
     def test_nonfinite_raises_metric_calculation_error(self) -> None:
         """IndividualEvaluator raises MetricCalculationError when metric returns NaN."""
@@ -331,7 +331,7 @@ class TestBacktestEvaluator:
         df = self._make_df()
         evaluator = self._make_evaluator(metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(individual, df=df)
+            evaluator.evaluate(individual, ohlcvs=[df])
         assert excinfo.value.tree is individual
         assert excinfo.value.metric is not None
         assert excinfo.value.signals is not None

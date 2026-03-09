@@ -69,7 +69,7 @@ class TestTreeEvaluationError:
         individual = gp.PrimitiveTree([])
         evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
-            evaluator.evaluate(individual, df=df, y_true=labels)
+            evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.tree is individual
         assert "Failed to compile tree" in str(excinfo.value)
 
@@ -80,7 +80,7 @@ class TestTreeEvaluationError:
         individual = gp.PrimitiveTree([])
         evaluator = IndividualEvaluator(pset=pset, metrics=(SharpeMetricConfig(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
-            evaluator.evaluate(individual, df=df)
+            evaluator.evaluate(individual, ohlcvs=[df])
         assert excinfo.value.tree is individual
         assert "Failed to compile tree" in str(excinfo.value)
 
@@ -91,7 +91,7 @@ class TestTreeEvaluationError:
         individual = gp.PrimitiveTree([])
         evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
-            evaluator.evaluate(individual, df=df, y_true=labels)
+            evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.tree is individual
 
     def test_exception_chaining_preserved(
@@ -101,7 +101,7 @@ class TestTreeEvaluationError:
         individual = gp.PrimitiveTree([])
         evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
-            evaluator.evaluate(individual, df=df, y_true=labels)
+            evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.__cause__ is not None
 
 
@@ -124,7 +124,7 @@ class TestMetricCalculationError:
 
         evaluator = IndividualEvaluator(pset=pset, metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(valid_individual, df=df, y_true=labels)
+            evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.tree is valid_individual
         assert excinfo.value.metric is not None
         assert "non-finite" in str(excinfo.value).lower()
@@ -144,7 +144,7 @@ class TestMetricCalculationError:
 
         evaluator = IndividualEvaluator(pset=pset, metrics=(_InfMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(valid_individual, df=df, y_true=labels)
+            evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert "non-finite" in str(excinfo.value).lower()
 
     def test_exception_metric_raises(
@@ -162,7 +162,7 @@ class TestMetricCalculationError:
 
         evaluator = IndividualEvaluator(pset=pset, metrics=(_ExceptionMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(valid_individual, df=df, y_true=labels)
+            evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.__cause__ is not None
         assert isinstance(excinfo.value.__cause__, ValueError)
 
@@ -181,7 +181,7 @@ class TestMetricCalculationError:
 
         evaluator = IndividualEvaluator(pset=pset, metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(valid_individual, df=df, y_true=labels)
+            evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.signals is not None
 
     def test_nan_backtest_metric_raises(
@@ -198,7 +198,7 @@ class TestMetricCalculationError:
 
         evaluator = IndividualEvaluator(pset=pset, metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(valid_individual, df=df)
+            evaluator.evaluate(valid_individual, ohlcvs=[df])
         assert "non-finite" in str(excinfo.value).lower()
 
 
@@ -215,7 +215,7 @@ class TestValidTreeEvaluation:
     ) -> None:
         """Valid tree evaluation returns a tuple of floats."""
         evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
-        result = evaluator.evaluate(valid_individual, df=df, y_true=labels)
+        result = evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert isinstance(result, tuple)
         assert len(result) == 1
         assert isinstance(result[0], float)
@@ -235,5 +235,5 @@ class TestValidTreeEvaluation:
                 return 0.0
 
         evaluator = IndividualEvaluator(pset=pset, metrics=(_ZeroMetric(),))
-        result = evaluator.evaluate(valid_individual, df=df, y_true=labels)
+        result = evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert result == (0.0,)

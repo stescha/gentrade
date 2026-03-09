@@ -197,15 +197,15 @@ class IndividualEvaluator:
         Returns:
             Tuple of floats, one per metric.
         """
+        if self._needs_labels and y_true is None:
+            raise ValueError("y_true is required for classification metrics.")
+
         signals = self._compile_tree_to_signals(individual, self.pset, df)
 
         # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
         pf: vbt.Portfolio = None
         if self._needs_backtest:
             pf = self.run_vbt_backtest(df, signals, individual)
-        if self._needs_labels and y_true is None:
-            raise ValueError("y_true is required for classification metrics.")
-
         result: list[float] = []
         for m in self.metrics:
             try:
@@ -243,8 +243,8 @@ class IndividualEvaluator:
         self,
         individual: gp.PrimitiveTree,
         *,
-        df: pd.DataFrame | dict[str, pd.DataFrame],
-        y_true: pd.Series | dict[str, pd.Series] | None = None,
+        ohlcvs: list[pd.DataFrame],
+        signals: list[pd.Series] | None = None,
     ) -> tuple[float, ...]:
         """Evaluate one GP individual and return a fitness tuple.
 
@@ -254,10 +254,10 @@ class IndividualEvaluator:
 
         Args:
             individual: GP tree to evaluate.
-            df: OHLCV DataFrame or mapping of DataFrames keyed by dataset name.
-            y_true: Ground-truth label Series (or mapping).  Must be provided
-                when any metric is a ``ClassificationMetricConfigBase``.
-                Must be ``None`` when no classification metric is present.
+            df: list of OHLCV DataFrames.
+            y_true: Optional list of label Series.  Must be provided when any
+                metric is a ``ClassificationMetricConfigBase`` and must have
+                the same length as ``df``.
 
         Returns:
             Tuple of floats, one per metric.
@@ -270,38 +270,34 @@ class IndividualEvaluator:
             MetricCalculationError: If a metric returns a non-finite value or
                 raises an unexpected exception.
         """
-        if self._needs_labels and y_true is None:
+        # Pre-checks common to both single- and multi-dataset modes.
+        if self._needs_labels and signals is None:
             raise ValueError(
                 "y_true is required for classification evaluation: "
                 "train_labels must be provided when classification metrics are included."
             )
-        if not self._needs_labels and y_true is not None:
+        if not self._needs_labels and signals is not None:
             raise ValueError(
                 "y_true is not used when no classification metrics are present."
             )
 
-        if isinstance(df, dict):
-            if self._needs_labels and not isinstance(y_true, dict):
-                raise ValueError(
-                    "y_true must be a dict when df is a dict and classification "
-                    "metrics are present."
-                )
-            results: list[tuple[float, ...]] = []
-            for key, subdf in df.items():
-                sub_y: pd.Series | None = None
-                if self._needs_labels:
-                    assert isinstance(y_true, dict)
-                    if key not in y_true:
-                        raise ValueError(f"Missing y_true for key {key!r}")
-                    sub_y = y_true[key]
-                results.append(self._eval_dataset(individual, subdf, sub_y))
-            arr = np.array(results, dtype=float)
-            mean = arr.mean(axis=0)
-            return tuple(float(x) for x in mean)
+        if signals is not None and len(signals) != len(ohlcvs):
+            raise ValueError("Length of y_true list must match number of datasets")
 
-        # Single DataFrame path
-        single_y: pd.Series | None = None
-        if self._needs_labels:
-            assert isinstance(y_true, pd.Series)
-            single_y = y_true
-        return self._eval_dataset(individual, df, single_y)
+        if len(ohlcvs) == 1:
+            return self._eval_dataset(
+                individual,
+                ohlcvs[0],
+                signals[0] if signals is not None else None,
+            )
+
+        # multi-dataset averaging
+        results: list[tuple[float, ...]] = []
+        for i, subdf in enumerate(ohlcvs):
+            sub_y: pd.Series | None = None
+            if signals is not None:
+                sub_y = signals[i]
+            results.append(self._eval_dataset(individual, subdf, sub_y))
+        arr = np.array(results, dtype=float)
+        mean = arr.mean(axis=0)
+        return tuple(float(x) for x in mean)
