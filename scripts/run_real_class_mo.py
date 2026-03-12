@@ -10,7 +10,6 @@ Run with: poetry run python scripts/run_zigzag.py
 from gentrade import config
 from gentrade.config import (
     DefaultLargePsetConfig,
-    DoubleTournamentSelectionConfig,
     EvolutionConfig,
     OnePointLeafBiasedCrossoverConfig,
     RunConfig,
@@ -24,32 +23,42 @@ cfg = RunConfig(
     # seed=42,
     metrics=(
         config.F1MetricConfig(),
-        # config.MeanPnlCppMetricConfig(),
+        # config.F1MetricConfig(),
+        config.MeanPnlCppMetricConfig(min_trades=3, weight=0.2),
     ),
     metrics_val=(
         config.F1MetricConfig(),
         config.MeanPnlMetricConfig(),
-        config.TotalReturnMetricConfig(),
+        config.MeanPnlCppMetricConfig(),
     ),
     pset=DefaultLargePsetConfig(),
     evolution=EvolutionConfig(
-        mu=100000, lambda_=30000, generations=30, cxpb=0.6, mutpb=0.3, processes=30
+        mu=10000, lambda_=1000, generations=30, cxpb=0.6, mutpb=0.3, processes=30
     ),
     tree=TreeConfig(max_depth=8, max_height=20, tree_gen="grow"),
     crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),
-    selection=DoubleTournamentSelectionConfig(
-        fitness_size=5,
-        parsimony_size=1.2,
+    selection=config.NSGA2SelectionConfig(),
+    # selection=config.SPEA2SelectionConfig(),
+    # selection=DoubleTournamentSelectionConfig(
+    #     fitness_size=5,
+    #     parsimony_size=1.2,
+    # ),
+    backtest=config.BacktestConfig(
+        tp_stop=0.005,
+        sl_stop=0.001,
+        sl_trail=True,
+        fees=0.0001,
+        init_cash=100_000_000_000_000.0,
     ),
 )
 
 
 if __name__ == "__main__":
     # Choose one configuration and make sure data is provided
-    start, count = 200000, 200_000
+    start, count = 200000, 100_000
     val_perc = 0.5
-    pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC", "MCOETH", "NEOBTC"]
-    # pairs = ["ETHUSDT"]
+    pairs = ["BTCUSDT", "ETHBTC", "ETHUSDT", "MCOETH", "NEOBTC"]
+    pairs = ["BTCUSDT", "ETHBTC", "ETHUSDT"]
     df_train = load_binance_ohlcvs(
         pairs,
         start=start,
@@ -67,10 +76,9 @@ if __name__ == "__main__":
     #     start=start,
     #     count=count,
     # )
+    val_pair = "ETHUSDT"
     df_val = load_binance_ohlcv(
-        # "BTCUSDT",
-        "ETHUSDT",
-        # "ETHBTC",
+        val_pair,
         start=start + count,
         count=int(count * val_perc),
     )
@@ -88,10 +96,10 @@ if __name__ == "__main__":
         cfg=cfg,
     )
     best = hof[0]
-    print(f"Best individual: {str(best)}\nFitness: {best.fitness.values}")
+
     plot_signals(
-        train_data=df_train["ETHUSDT"] if isinstance(df_train, dict) else df_train,
-        val_data=df_val["ETHUSDT"] if isinstance(df_val, dict) else df_val,
+        train_data=df_train[val_pair] if isinstance(df_train, dict) else df_train,
+        val_data=df_val[val_pair] if isinstance(df_val, dict) else df_val,
         tree=best,
         pset=cfg.pset.func(),
         buy_sell=1,

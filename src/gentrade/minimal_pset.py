@@ -48,13 +48,34 @@ from gentrade.pset.talib_primitives import (
 )
 
 
-def zigzag_pivots(close: pd.Series, threshold: float, label: int) -> pd.Series:
+def _calc_zigzag_pivots(
+    price: pd.Series,
+    threshold: float,
+    label: int,
+) -> pd.Series:
+    pivots = peak_valley_pivots(price.values, threshold, -threshold)
+    return pd.Series(pivots == label, index=price.index)
+
+
+def zigzag_pivots(
+    data: pd.Series | pd.DataFrame | dict[str, pd.DataFrame],
+    threshold: float,
+    label: int,
+    column: str = "close",
+) -> pd.Series | dict[str, pd.Series]:
     """Compute zigzag pivots and return boolean mask where pivot == label.
 
     Uses look-ahead — intentionally a 'cheat' primitive for smoke testing.
     """
-    pivots = peak_valley_pivots(close.values, threshold, -threshold)
-    return pd.Series(pivots == label, index=close.index)
+    if isinstance(data, pd.Series):
+        return _calc_zigzag_pivots(data, threshold, label)
+    elif isinstance(data, pd.DataFrame):
+        return _calc_zigzag_pivots(data[column], threshold, label)
+    elif isinstance(data, dict):
+        return {
+            key: _calc_zigzag_pivots(df[column], threshold, label)
+            for key, df in data.items()
+        }
 
 
 def not_(s: pd.Series) -> pd.Series:

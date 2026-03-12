@@ -8,7 +8,6 @@ Run with: poetry run python scripts/run_zigzag.py
 """
 
 from gentrade.config import (
-    ClassificationEvaluatorConfig,
     DoubleTournamentSelectionConfig,
     EvolutionConfig,
     F1MetricConfig,
@@ -28,7 +27,6 @@ from gentrade.tradetools import load_binance_ohlcv
 # F1 fitness, large pset, uniform mutation, one-point crossover,
 # tournament selection — equivalent to the original smoke_zigzag.py.
 cfg_default = RunConfig(
-    evaluator=ClassificationEvaluatorConfig(),
     metrics=(F1MetricConfig(),),
 )
 
@@ -39,7 +37,6 @@ cfg_default = RunConfig(
 # parsimony pressure against bloat.
 cfg_recall = RunConfig(
     seed=42,
-    evaluator=ClassificationEvaluatorConfig(),
     metrics=(FBetaMetricConfig(beta=3.0),),
     pset=ZigzagMediumPsetConfig(),
     evolution=EvolutionConfig(
@@ -59,7 +56,6 @@ cfg_recall = RunConfig(
 
 cfg_extensive = RunConfig(
     seed=42,
-    evaluator=ClassificationEvaluatorConfig(),
     metrics=(FBetaMetricConfig(beta=3.0),),
     pset=ZigzagMediumPsetConfig(),
     evolution=EvolutionConfig(
@@ -80,7 +76,6 @@ cfg_extensive = RunConfig(
 # structure better than uniform mutation.
 cfg_conservative = RunConfig(
     seed=2024,
-    evaluator=ClassificationEvaluatorConfig(),
     metrics=(MCCMetricConfig(),),
     evolution=EvolutionConfig(
         mu=100,

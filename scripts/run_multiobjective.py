@@ -16,7 +16,7 @@ Run with: poetry run python scripts/run_multiobjective.py
 
 from gentrade import config
 from gentrade.config import (
-    BacktestEvaluatorConfig,
+    BacktestConfig,
     BestSelectionConfig,
     DefaultLargePsetConfig,
     DoubleTournamentSelectionConfig,  # noqa: F401 (import for reference)
@@ -32,7 +32,7 @@ from gentrade.tradetools import load_binance_ohlcv
 1
 cfg = RunConfig(
     # seed=42,
-    evaluator=BacktestEvaluatorConfig(
+    backtest=BacktestConfig(
         tp_stop=0.02,
         sl_stop=0.01,
         sl_trail=True,
