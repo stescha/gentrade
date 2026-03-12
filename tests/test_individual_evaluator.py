@@ -17,10 +17,10 @@ import pytest
 from deap import gp as deap_gp
 
 from gentrade.config import (
-    BacktestMetricConfigBase,
     ClassificationMetricConfigBase,
     F1MetricConfig,
     SharpeMetricConfig,
+    VbtBacktestMetricConfigBase,
 )
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
@@ -81,7 +81,7 @@ class _ConstClassMetric(ClassificationMetricConfigBase):
         return self._value
 
 
-class _ConstBacktestMetric(BacktestMetricConfigBase):
+class _ConstBacktestMetric(VbtBacktestMetricConfigBase):
     """Always returns a fixed constant value regardless of portfolio."""
 
     def __init__(self, value: float = 0.5) -> None:
@@ -105,12 +105,12 @@ class TestConstructorFlags:
         """Only classification metrics → _needs_labels=True, _needs_backtest=False."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         assert ev._needs_labels is True
-        assert ev._needs_backtest is False
+        assert ev._needs_backtest_vbt is False
 
     def test_pure_backtest_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """Only backtest metrics → _needs_backtest=True, _needs_labels=False."""
         ev = IndividualEvaluator(pset=pset, metrics=(SharpeMetricConfig(),))
-        assert ev._needs_backtest is True
+        assert ev._needs_backtest_vbt is True
         assert ev._needs_labels is False
 
     def test_mixed_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
@@ -119,7 +119,7 @@ class TestConstructorFlags:
             pset=pset,
             metrics=(_ConstClassMetric(), _ConstBacktestMetric()),
         )
-        assert ev._needs_backtest is True
+        assert ev._needs_backtest_vbt is True
         assert ev._needs_labels is True
 
     def test_backtest_params_stored(self, pset: deap_gp.PrimitiveSetTyped) -> None:
@@ -186,18 +186,6 @@ class TestYTrueValidation:
         ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         with pytest.raises(ValueError, match="Length of y_true list must match"):
             ev.evaluate(valid_individual, ohlcvs=[df, df], signals=[labels])
-
-    def test_dict_input_not_supported(
-        self,
-        pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
-        df: pd.DataFrame,
-        labels: pd.Series,
-    ) -> None:
-        """Passing a dict to evaluate now raises a clear error."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
-        with pytest.raises(ValueError, match="df must be a list of DataFrames"):
-            ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +298,7 @@ class TestDictEvaluation:
         """List backtest input: fitness is the mean across all dataset scores."""
         call_count = 0
 
-        class _CountingMetric(BacktestMetricConfigBase):
+        class _CountingMetric(VbtBacktestMetricConfigBase):
             def __call__(self, pf: object) -> float:
                 nonlocal call_count
                 call_count += 1

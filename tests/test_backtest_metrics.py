@@ -12,12 +12,12 @@ from deap import gp as deap_gp
 from pydantic import ValidationError
 
 from gentrade.backtest_metrics import (
-    BacktestMetricBase,
     CalmarRatioMetric,
     MeanPnlMetric,
     SharpeRatioMetric,
     SortinoRatioMetric,
     TotalReturnMetric,
+    VbtBacktestMetricBase,
 )
 from gentrade.config import (
     BacktestConfig,
@@ -139,7 +139,7 @@ class TestBacktestMetricComputation:
     def test_base_raises_not_implemented(self) -> None:
         """BacktestMetricBase raises NotImplementedError when called."""
         with pytest.raises(NotImplementedError):
-            BacktestMetricBase()(None)
+            VbtBacktestMetricBase()(None)
 
 
 @pytest.mark.unit

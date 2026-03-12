@@ -21,20 +21,27 @@ import vectorbt as vbt
 from deap import gp
 
 from gentrade.config import (
-    BacktestMetricConfigBase,
     ClassificationMetricConfigBase,
+    CppBacktestMetricConfigBase,
     MetricConfigBase,
+    VbtBacktestMetricConfigBase,
 )
+from gentrade.eval_signals import eval as eval_cpp  # type: ignore
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
+from gentrade.types import BtResult
 
 
 class IndividualEvaluator:
     """Unified GP-tree evaluator supporting backtest and classification metrics.
 
     At construction time the ``metrics`` tuple is scanned once to set the
-    ``_needs_backtest`` and ``_needs_labels`` flags.  At evaluation time only
-    the branches that are needed are executed, so a pure-classification run
-    never pays the cost of a vectorbt simulation.
+    internal flags controlling which evaluation steps are required. The
+    evaluator supports two backtest backends: a fast C++ backtester (used
+    when a ``CppBacktestMetricConfigBase`` is present) which returns a
+    ``BtResult``, and a VectorBT-backed backtester (used by
+    ``VbtBacktestMetricConfigBase``) which returns a ``vbt.Portfolio``.
+    Only the branches needed for the configured metrics are executed, so
+    pure-classification runs do not pay the cost of any backtest.
 
     Args:
         pset: DEAP primitive set used to compile GP trees.
@@ -65,10 +72,14 @@ class IndividualEvaluator:
         self.init_cash = init_cash
 
         self._needs_backtest: bool = any(
-            isinstance(m, BacktestMetricConfigBase) for m in metrics
+            isinstance(m, CppBacktestMetricConfigBase) for m in metrics
+        )
+        self._needs_backtest_vbt: bool = any(
+            isinstance(m, VbtBacktestMetricConfigBase) for m in metrics
         )
         self._needs_labels: bool = any(
-            isinstance(m, ClassificationMetricConfigBase) for m in metrics
+            isinstance(m, (ClassificationMetricConfigBase, CppBacktestMetricConfigBase))
+            for m in metrics
         )
 
     # ------------------------------------------------------------------
@@ -79,7 +90,8 @@ class IndividualEvaluator:
         self, individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
     ) -> Callable[..., pd.Series]:
         try:
-            return cast(Callable[..., pd.Series], gp.compile(individual, pset))
+            func = gp.compile(individual, pset)
+            return cast(Callable[..., pd.Series], func)
         except Exception as e:
             raise TreeEvaluationError(
                 "Failed to compile tree.",
@@ -139,9 +151,9 @@ class IndividualEvaluator:
 
     def run_vbt_backtest(
         self,
+        individual: gp.PrimitiveTree,
         ohlcv: pd.DataFrame,
         entries: pd.Series,
-        individual: gp.PrimitiveTree,
     ) -> vbt.Portfolio:
         """Run a vectorbt backtest from entry signals and stop parameters.
 
@@ -181,6 +193,40 @@ class IndividualEvaluator:
                 err=e,
             ) from e
 
+    def run_cpp_backtest(
+        self,
+        individual: gp.PrimitiveTree,
+        ohlcv: pd.DataFrame,
+        entries: pd.Series,
+        exits: pd.Series,
+    ) -> BtResult:
+        """Run the C++ backtest and return a lightweight result wrapper.
+
+        The C++ backend performs a fast order-by-order simulation and the
+        returned value is wrapped into the ``BtResult`` dataclass which
+        contains arrays for buy/sell times, portfolio values, positions
+        and per-trade PnLs. This method raises ``TreeEvaluationError`` on
+        any failure during the native call.
+        """
+        try:
+            return BtResult(
+                *eval_cpp(
+                    ohlcv["open"].values,
+                    ohlcv["high"].values,
+                    entries.values,
+                    exits.values,
+                    self.fees,
+                    self.fees,
+                )
+            )
+        except Exception as e:
+            raise TreeEvaluationError(
+                f"Failed to run C++ backtest: {e}",
+                tree=individual,
+                signals=entries,
+                err=e,
+            ) from e
+
     def _eval_dataset(
         self,
         individual: gp.PrimitiveTree,
@@ -204,12 +250,20 @@ class IndividualEvaluator:
 
         # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
         pf: vbt.Portfolio = None
+        bt_result: BtResult | None = None
         if self._needs_backtest:
-            pf = self.run_vbt_backtest(df, signals, individual)
+            if y_true is None:
+                raise ValueError("y_true is required for backtest metrics.")
+            bt_result = self.run_cpp_backtest(individual, df, signals, y_true)
+        if self._needs_backtest_vbt:
+            pf = self.run_vbt_backtest(individual, df, signals)
+
         result: list[float] = []
         for m in self.metrics:
             try:
-                if isinstance(m, BacktestMetricConfigBase):
+                if isinstance(m, CppBacktestMetricConfigBase):
+                    val = m(bt_result)
+                elif isinstance(m, VbtBacktestMetricConfigBase):
                     val = m(pf)
                 else:
                     val = m(y_true, signals)

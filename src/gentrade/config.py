@@ -38,6 +38,7 @@ from pydantic import (
 
 from gentrade.backtest_metrics import (
     CalmarRatioMetric,
+    MeanPnlCppMetric,
     MeanPnlMetric,
     SharpeRatioMetric,
     SortinoRatioMetric,
@@ -195,6 +196,30 @@ class BacktestMetricConfigBase(MetricConfigBase):
         description="Minimum closed trades required; 0 disables the guard.",
     )
 
+    def __call__(self, *args: Any, **kwargs: Any) -> float:
+        raise NotImplementedError
+
+
+class CppBacktestMetricConfigBase(BacktestMetricConfigBase):
+    """Config base for metrics that consume the C++ backtester output.
+
+    Implementations should accept the same arguments returned by the
+    C++ backtester (wrapped as a ``BtResult`` in Python) and return a
+    single float score.
+    """
+
+    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+        raise NotImplementedError
+
+
+class VbtBacktestMetricConfigBase(BacktestMetricConfigBase):
+    """Config base for VectorBT-backed metrics.
+
+    Implementations receive a ``vbt.Portfolio`` instance and should
+    return a single float score. This separates VectorBT-based metrics
+    from the lightweight C++ metric configs.
+    """
+
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
         raise NotImplementedError
 
@@ -254,39 +279,51 @@ class JaccardMetricConfig(ClassificationMetricConfigBase):
         return JaccardMetric()(y_true, y_pred)
 
 
-class SharpeMetricConfig(BacktestMetricConfigBase):
+class SharpeMetricConfig(VbtBacktestMetricConfigBase):
     """Sharpe ratio: risk-adjusted return."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
         return SharpeRatioMetric(min_trades=self.min_trades)(portfolio)
 
 
-class SortinoMetricConfig(BacktestMetricConfigBase):
+class SortinoMetricConfig(VbtBacktestMetricConfigBase):
     """Sortino ratio: downside risk-adjusted return."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
         return SortinoRatioMetric(min_trades=self.min_trades)(portfolio)
 
 
-class CalmarMetricConfig(BacktestMetricConfigBase):
+class CalmarMetricConfig(VbtBacktestMetricConfigBase):
     """Calmar ratio: annualised return divided by maximum drawdown."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
         return CalmarRatioMetric(min_trades=self.min_trades)(portfolio)
 
 
-class TotalReturnMetricConfig(BacktestMetricConfigBase):
+class TotalReturnMetricConfig(VbtBacktestMetricConfigBase):
     """Total return: cumulative portfolio return over the evaluation period."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
         return TotalReturnMetric(min_trades=self.min_trades)(portfolio)
 
 
-class MeanPnlMetricConfig(BacktestMetricConfigBase):
+class MeanPnlMetricConfig(VbtBacktestMetricConfigBase):
     """Mean PnL: average profit and loss per closed trade."""
 
     def __call__(self, portfolio: "vbt.Portfolio") -> float:
         return MeanPnlMetric(min_trades=self.min_trades)(portfolio)
+
+
+class MeanPnlCppMetricConfig(CppBacktestMetricConfigBase):
+    """Configuration wrapper for the C++ Mean PnL metric.
+
+    Delegates to ``MeanPnlCppMetric`` which operates on a ``BtResult``.
+    """
+
+    """Mean PnL: average profit and loss per closed trade."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> float:
+        return MeanPnlCppMetric(min_trades=self.min_trades)(*args, **kwargs)
 
 
 # -- Pset configs -----------------------------------------------
@@ -426,7 +463,8 @@ class CrossoverConfigBase(_ComponentConfig):
     """Base for crossover operator configs.
 
     - ``func``: DEAP crossover function (excluded from serialization).
-    - Caller registers via ``toolbox.register("mate", cfg.crossover.func, **cfg.crossover.params)``.
+    - Caller registers via
+      ``toolbox.register("mate", cfg.crossover.func, **cfg.crossover.params)``.
     """
 
     _type_suffix: ClassVar[str] = "CrossoverConfig"

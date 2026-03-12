@@ -13,10 +13,10 @@ from deap import gp
 from deap import gp as deap_gp
 
 from gentrade.config import (
-    BacktestMetricConfigBase,
     ClassificationMetricConfigBase,
     F1MetricConfig,
     SharpeMetricConfig,
+    VbtBacktestMetricConfigBase,
 )
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
@@ -192,7 +192,7 @@ class TestMetricCalculationError:
     ) -> None:
         """Backtest evaluator raises MetricCalculationError for NaN result."""
 
-        class _NanMetric(BacktestMetricConfigBase):
+        class _NanMetric(VbtBacktestMetricConfigBase):
             def __call__(self, pf: object) -> float:
                 return float("nan")
 

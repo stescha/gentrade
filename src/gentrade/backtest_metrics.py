@@ -10,7 +10,10 @@ OHLCV data, boolean entry signals, and stop parameters, and returns a
 vectorbt ``Portfolio`` object ready for metric extraction.
 """
 
+import numpy as np
 import vectorbt as vbt
+
+from gentrade.types import BtResult
 
 
 class BacktestMetricBase:
@@ -31,13 +34,6 @@ class BacktestMetricBase:
     def __init__(self, min_trades: int = 0) -> None:
         self.min_trades = min_trades
 
-    def _fails_min_trades(self, portfolio: vbt.Portfolio) -> bool:
-        """Return ``True`` if the portfolio does not meet the minimum trades.
-
-        A zero ``min_trades`` value disables the check (always ``False``).
-        """
-        return self.min_trades > 0 and portfolio.trades.count() < self.min_trades
-
     def __call__(self, portfolio: vbt.Portfolio) -> float:
         """Compute metric score from a backtest portfolio.
 
@@ -50,7 +46,26 @@ class BacktestMetricBase:
         raise NotImplementedError
 
 
-class SharpeRatioMetric(BacktestMetricBase):
+class CppBacktestMetricBase(BacktestMetricBase):
+    """Base class for metrics that consume the C++ backtester result.
+
+    Subclasses should accept a ``BtResult`` instance (defined in
+    ``gentrade.types``) produced by the compiled C++ backtest and return a
+    single scalar score. This separates the lightweight C++ backtest output
+    from the VectorBT-based metrics which operate on ``vbt.Portfolio``.
+    """
+
+
+class VbtBacktestMetricBase(BacktestMetricBase):
+    def _fails_min_trades(self, portfolio: vbt.Portfolio) -> bool:
+        """Return ``True`` if the portfolio does not meet the minimum trades.
+
+        A zero ``min_trades`` value disables the check (always ``False``).
+        """
+        return self.min_trades > 0 and portfolio.trades.count() < self.min_trades
+
+
+class SharpeRatioMetric(VbtBacktestMetricBase):
     """Sharpe ratio: risk-adjusted return (mean return / return std deviation)."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -59,7 +74,7 @@ class SharpeRatioMetric(BacktestMetricBase):
         return float(portfolio.sharpe_ratio())
 
 
-class SortinoRatioMetric(BacktestMetricBase):
+class SortinoRatioMetric(VbtBacktestMetricBase):
     """Sortino ratio: downside risk-adjusted return."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -68,7 +83,7 @@ class SortinoRatioMetric(BacktestMetricBase):
         return float(portfolio.sortino_ratio())
 
 
-class CalmarRatioMetric(BacktestMetricBase):
+class CalmarRatioMetric(VbtBacktestMetricBase):
     """Calmar ratio: annualised return divided by maximum drawdown."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -77,7 +92,7 @@ class CalmarRatioMetric(BacktestMetricBase):
         return float(portfolio.calmar_ratio())
 
 
-class TotalReturnMetric(BacktestMetricBase):
+class TotalReturnMetric(VbtBacktestMetricBase):
     """Total return: cumulative portfolio return over the evaluation period."""
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
@@ -86,7 +101,7 @@ class TotalReturnMetric(BacktestMetricBase):
         return float(portfolio.total_return())
 
 
-class MeanPnlMetric(BacktestMetricBase):
+class MeanPnlMetric(VbtBacktestMetricBase):
     """Mean PnL per trade: average profit/loss across all closed trades.
 
     Returns ``0.0`` when there are no trades to avoid division-by-zero errors.
@@ -97,3 +112,15 @@ class MeanPnlMetric(BacktestMetricBase):
             return 0.0
         trades = portfolio.trades.records_readable
         return float(trades["PnL"].mean()) if len(trades) > 0 else 0.0
+
+
+class MeanPnlCppMetric(CppBacktestMetricBase):
+    """Mean PnL per trade: average profit/loss across all closed trades.
+
+    Returns ``0.0`` when there are no trades to avoid division-by-zero errors.
+    """
+
+    def __call__(self, bt_result: BtResult) -> float:
+        if len(bt_result.pnls) < self.min_trades:
+            return 0.0
+        return float(np.mean(bt_result.pnls)) if len(bt_result.pnls) > 0 else 0.0
