@@ -18,6 +18,29 @@ Evolve trading strategies using genetic programming (GP) on historical OHLCV cry
 
 **Repository layout:** source code lives under `src/gentrade`; scripts and tests import the package by name. Many helper folders (`archives`, `dist`, `.notes`, `sandbox`) are treated as ignored/ancillary and should not affect the core logic.
 
+## Repository Structure
+
+Compact mapping of key modules to responsibilities — designed for fast scanning by agents.
+
+gentrade/
+├─ src/gentrade/
+│  ├─ __init__.py        — package entry, public API
+│  ├─ config.py          — pydantic `RunConfig` and component configs (metrics, backtest, operators)
+│  ├─ eval_ind.py        — `IndividualEvaluator`: compile GP trees, run C++/VectorBT backtests, dispatch metrics
+│  ├─ eval_signals.cpp   — pybind11 C++ backtester (native `eval`): fast pair-strategy simulation
+│  ├─ backtest_metrics.py— metric classes for `vbt.Portfolio` and `BtResult` consumers
+│  ├─ types.py           — typed dataclasses (e.g. `BtResult`) wrapping native outputs
+    │  ├─ growtree.py       — typed GP tree generators (`genFull`/`genGrow`/`genHalfAndHalf`)
+    │  ├─ minimal_pset.py    — pset factory helpers
+    │  ├─ pset/              — primitive definitions and types
+    │  ├─ evolve.py          — `run_evolution` entrypoint and toolbox wiring
+    │  └─ data.py / tradetools.py — data generation & IO utilities
+├─ scripts/               — runnable experiment scripts
+├─ tests/                 — pytest unit/integration tests
+└─ vendor/                — bundled third-party code (zigzag, native ext sources)
+
+Keep this mapping updated when responsibilities move between files; prefer the tree for quick lookups and the above labels for short descriptions.
+
 
 ## Core Concept: GP Trees as Trading Strategies
 
@@ -77,6 +100,18 @@ Custom `genFull`, `genGrow`, and `genHalfAndHalf` replace DEAP's built-in genera
 - When implementing new metrics, always include a **minimum trade count** guard — strategies with fewer than ~10 trades should be penalized or invalidated to prevent overfitting.
 - Fitness is always returned as a **tuple** (DEAP convention), even for single-objective optimization.
 
+Note on backtest outputs:
+
+- The project now supports two backtest backends: the fast C++ backtester
+    (`eval_signals.cpp`) used primarily by the pair-strategy, and a
+    VectorBT-backed simulator used by the single-tree paradigm. The C++
+    backend returns a lightweight `BtResult` structure (wrapped by the
+    Python `gentrade.types.BtResult` dataclass) containing arrays for
+    buy/sell times, portfolio values, positions and per-trade PnLs. Some
+    metric implementations accept a `vbt.Portfolio`, others accept a
+    `BtResult` — configuration classes are split accordingly between
+    `VbtBacktestMetricConfigBase` and `CppBacktestMetricConfigBase`.
+
 ### Multi-objective & validation metrics
 
 The configuration now allows a tuple of metrics to be supplied, which
@@ -98,8 +133,9 @@ OHLCV DataFrame
     → compile tree(s) via gp.compile
     → execute compiled function → buy/sell pd.Series (boolean)
     → validate signals (misc.simulate)
-    → C++ backtester (eval_signals) → raw trade results
-    → LazyTradeStats → metric(s) → fitness tuple
+    → C++ backtester (eval_signals) or VectorBT → raw trade results
+    → optional wrapper (`LazyTradeStats` for VectorBT, or `BtResult` for C++)
+    → metric(s) → fitness tuple
 ```
 
 `run_evolution` is the main entry point for experiments; its signature is
@@ -115,15 +151,22 @@ run_evolution(
 ) -> tuple[list[gp.PrimitiveTree], tools.Logbook, tools.HallOfFame]
 ```
 
-All data/label arguments except ``train_data`` are optional.  When
-using a classification evaluator the caller must supply the corresponding
-``*_labels`` Series.  If ``val_data`` is provided ``cfg.metrics_val`` must
-also be set or a ``ValueError`` is raised.  Callers may now supply a
-mapping of dataset names to DataFrames/Series; a single object is
-wrapped under the canonical key ``gentrade._defaults.KEY_OHLCV``.  The
-evaluation machinery will use ``KEY_OHLCV`` if present, otherwise it
-falls back to the first entry in the mapping.  Data loading/generation is
-performed externally.
+All data/label arguments except ``train_data`` are optional. The set of
+metrics supplied in ``cfg.metrics`` (and ``cfg.metrics_val`` for
+validation) now determines runtime requirements:
+
+- If any classification-type metric is present, ``train_labels`` (and
+    ``val_labels`` when validating) must be provided; `run_evolution` will
+    raise a clear ``ValueError`` when labels are missing.
+- Backtest-style metrics read portfolio parameters from ``cfg.backtest``
+    (a ``BacktestConfig`` instance). If no backtest metric is present the
+    `backtest` values are ignored.
+
+Callers may supply a mapping of dataset names to DataFrames/Series; a
+single object is wrapped under the canonical key
+``gentrade._defaults.KEY_OHLCV``. The evaluation machinery will use
+``KEY_OHLCV`` if present, otherwise it falls back to the first entry in
+the mapping. Data loading/generation is performed externally.
 
 
 ## Conventions

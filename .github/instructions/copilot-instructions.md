@@ -13,35 +13,12 @@ These instructions describe how `user` and `copilot` collaborate in this reposit
 - Never present guesses as facts; mark uncertainties and suggest a small experiment to confirm.
 - When `user` asks for *Critical Reviewer Mode*, prepend **Critical Reviewer Mode: Activated** and provide blunt, defect-focused review (no praise) until `user` deactivates it.
 
-## Repository Structure
-
-```
-src/                # source root when installed
-  gentrade/         # main package
-    pset/           # Primitive set: type system, GP vocabulary, TA-Lib indicators
-    optimizers/     # Evolutionary optimizers (pair_strat, single_tree_strat)
-    algorithms.py   # Custom evolutionary algorithm loop
-    data_provider.py# Generation-aware OHLCV data abstraction
-    eval_signals.cpp# C++ pybind11 fast backtester
-    growtree.py     # Typed GP tree generation
-    metrics.py      # Fitness metrics and LazyTradeStats
-    metrics_vbt.py  # VectorBT-based metrics (experimental)
-    misc.py         # Core utilities: genetic operators, simulation, evaluation
-    pop_archive.py  # Population archiving (experimental)
-    tradetools.py   # HDF5 OHLCV data loading
-scripts/            # Run scripts and experiments
-tests/              # Unit tests
-archives/           # Archived experiment code (ignore)
-.notes/             # Personal, unmaintained notes (ignore)
-sandbox/            # Messy experiments (ignore)
-dist/               # built distributions (ignore)
-```
-
 ## Environment & What Copilot Must Not Do
 
 - `user` owns the Python environment and external services.
 - `copilot` must **never**: create/modify virtualenvs, install packages, start/stop containers, create databases, or change DB configuration.
 - If blocked by environment/DB issues, stop and ask `user` to resolve, then continue.
+- `copilot` must **never** compile native code, modify C/C++ sources in ways that change logic without explicit user approval, or attempt to build Python C-extensions in the user's environment. If changes to C++ sources are made, add or update comments and docstrings only; do not run the build or install steps.
 
 ## Workflows
 
