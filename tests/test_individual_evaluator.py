@@ -16,11 +16,13 @@ import pandas as pd
 import pytest
 from deap import gp as deap_gp
 
-from gentrade.config import (
-    ClassificationMetricConfigBase,
-    F1MetricConfig,
-    SharpeMetricConfig,
-    VbtBacktestMetricConfigBase,
+from gentrade.backtest_metrics import (
+    SharpeRatioMetric,
+    VbtBacktestMetricBase,
+)
+from gentrade.classification_metrics import (
+    ClassificationMetricBase,
+    F1Metric,
 )
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
@@ -70,7 +72,7 @@ def valid_individual() -> deap_gp.PrimitiveTree:
 # ---------------------------------------------------------------------------
 
 
-class _ConstClassMetric(ClassificationMetricConfigBase):
+class _ConstClassMetric(ClassificationMetricBase):
     """Always returns a fixed constant value."""
 
     def __init__(self, value: float = 0.5) -> None:
@@ -81,7 +83,7 @@ class _ConstClassMetric(ClassificationMetricConfigBase):
         return self._value
 
 
-class _ConstBacktestMetric(VbtBacktestMetricConfigBase):
+class _ConstBacktestMetric(VbtBacktestMetricBase):
     """Always returns a fixed constant value regardless of portfolio."""
 
     def __init__(self, value: float = 0.5) -> None:
@@ -103,13 +105,13 @@ class TestConstructorFlags:
 
     def test_pure_classification_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """Only classification metrics → _needs_labels=True, _needs_backtest=False."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         assert ev._needs_labels is True
         assert ev._needs_backtest_vbt is False
 
     def test_pure_backtest_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """Only backtest metrics → _needs_backtest=True, _needs_labels=False."""
-        ev = IndividualEvaluator(pset=pset, metrics=(SharpeMetricConfig(),))
+        ev = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),))
         assert ev._needs_backtest_vbt is True
         assert ev._needs_labels is False
 
@@ -123,21 +125,27 @@ class TestConstructorFlags:
         assert ev._needs_labels is True
 
     def test_backtest_params_stored(self, pset: deap_gp.PrimitiveSetTyped) -> None:
-        """Custom backtest params are stored on the instance."""
-        ev = IndividualEvaluator(
-            pset=pset,
-            metrics=(SharpeMetricConfig(),),
+        """BacktestConfig is stored on the instance."""
+        from gentrade.config import BacktestConfig
+
+        backtest = BacktestConfig(
             tp_stop=0.05,
             sl_stop=0.02,
             sl_trail=False,
             fees=0.0005,
             init_cash=50_000.0,
         )
-        assert ev.tp_stop == 0.05
-        assert ev.sl_stop == 0.02
-        assert ev.sl_trail is False
-        assert ev.fees == 0.0005
-        assert ev.init_cash == 50_000.0
+        ev = IndividualEvaluator(
+            pset=pset,
+            metrics=(SharpeRatioMetric(),),
+            backtest=backtest,
+        )
+        assert ev.backtest is backtest
+        assert ev.backtest.tp_stop == 0.05
+        assert ev.backtest.sl_stop == 0.02
+        assert ev.backtest.sl_trail is False
+        assert ev.backtest.fees == 0.0005
+        assert ev.backtest.init_cash == 50_000.0
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +167,7 @@ class TestYTrueValidation:
         df: pd.DataFrame,
     ) -> None:
         """Classification evaluator raises when y_true is None."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(ValueError, match="train_labels must be provided"):
             ev.evaluate(valid_individual, ohlcvs=[df])
 
@@ -171,7 +179,7 @@ class TestYTrueValidation:
         labels: pd.Series,
     ) -> None:
         """Backtest-only evaluator raises when y_true is unexpectedly provided."""
-        ev = IndividualEvaluator(pset=pset, metrics=(SharpeMetricConfig(),))
+        ev = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),))
         with pytest.raises(ValueError, match="y_true is not used"):
             ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
 
@@ -183,7 +191,7 @@ class TestYTrueValidation:
         labels: pd.Series,
     ) -> None:
         """When df is a list of datasets, y_true must match the list length."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(ValueError, match="Length of y_true list must match"):
             ev.evaluate(valid_individual, ohlcvs=[df, df], signals=[labels])
 
@@ -205,7 +213,7 @@ class TestSingleDataFrameEvaluation:
         labels: pd.Series,
     ) -> None:
         """Classification evaluation returns a finite float tuple of length 1."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert isinstance(result, tuple)
         assert len(result) == 1
@@ -275,7 +283,7 @@ class TestDictEvaluation:
         """List input: fitness is the mean across all dataset scores."""
 
         # Use stub metrics with deterministic per-call result based on y_true sum.
-        class _SumMetric(ClassificationMetricConfigBase):
+        class _SumMetric(ClassificationMetricBase):
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 # Return a predictable value so we can verify averaging.
                 return float(y_true.sum())
@@ -298,7 +306,7 @@ class TestDictEvaluation:
         """List backtest input: fitness is the mean across all dataset scores."""
         call_count = 0
 
-        class _CountingMetric(VbtBacktestMetricConfigBase):
+        class _CountingMetric(VbtBacktestMetricBase):
             def __call__(self, pf: object) -> float:
                 nonlocal call_count
                 call_count += 1
@@ -329,7 +337,7 @@ class TestBacktestGating:
     ) -> None:
         """run_vbt_backtest is never invoked for a classification-only evaluator."""
         with patch.object(IndividualEvaluator, "run_vbt_backtest") as mock_bt:
-            ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+            ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
             ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         mock_bt.assert_not_called()
 

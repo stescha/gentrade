@@ -21,14 +21,6 @@ from gentrade.backtest_metrics import (
 )
 from gentrade.config import (
     BacktestConfig,
-    BacktestMetricConfigBase,
-    CalmarMetricConfig,
-    F1MetricConfig,
-    MCCMetricConfig,
-    MeanPnlMetricConfig,
-    SharpeMetricConfig,
-    SortinoMetricConfig,
-    TotalReturnMetricConfig,
 )
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
@@ -143,74 +135,6 @@ class TestBacktestMetricComputation:
 
 
 @pytest.mark.unit
-class TestBacktestMetricConfig:
-    """Backtest metric config classes have correct type tags and inheritance."""
-
-    def test_model_dump_includes_type(self) -> None:
-        """SharpeMetricConfig.model_dump() contains key 'type' with value 'sharpe'."""
-        cfg = SharpeMetricConfig()
-        dump = cfg.model_dump()
-        assert dump.get("type") == "sharpe"
-
-    def test_model_dump_excludes_func_attribute(self) -> None:
-        """SharpeMetricConfig.model_dump() does not contain a 'func' key."""
-        dump = SharpeMetricConfig().model_dump()
-        assert "func" not in dump
-
-    def test_is_backtest_metric_config_base(self) -> None:
-        """SharpeMetricConfig is an instance of BacktestMetricConfigBase."""
-        assert isinstance(SharpeMetricConfig(), BacktestMetricConfigBase)
-
-    @pytest.mark.parametrize("config_cls", [F1MetricConfig, MCCMetricConfig])
-    def test_classification_configs_are_not_backtest(self, config_cls: type) -> None:
-        """F1MetricConfig is not a BacktestMetricConfigBase."""
-        assert not isinstance(config_cls(), BacktestMetricConfigBase)
-
-    @pytest.mark.parametrize(
-        "config_cls",
-        [
-            SharpeMetricConfig,
-            SortinoMetricConfig,
-            CalmarMetricConfig,
-            TotalReturnMetricConfig,
-            MeanPnlMetricConfig,
-        ],
-    )
-    def test_all_backtest_configs_callable(self, config_cls: type) -> None:
-        """All 5 backtest config classes are callable with a portfolio."""
-        pf = _make_portfolio_rnd()
-        result = config_cls()(pf)
-        assert isinstance(result, float)
-
-    @pytest.mark.parametrize(
-        "config_cls, expected_type",
-        [
-            (SharpeMetricConfig, "sharpe"),
-            (SortinoMetricConfig, "sortino"),
-            (CalmarMetricConfig, "calmar"),
-            (TotalReturnMetricConfig, "total_return"),
-            (MeanPnlMetricConfig, "mean_pnl"),
-        ],
-    )
-    def test_type_tags(self, config_cls: type, expected_type: str) -> None:
-        """Each backtest config has the correct auto-derived type tag."""
-        assert config_cls().type == expected_type
-
-    def test_min_trades_field_defaults_and_dump(self) -> None:
-        """Backtest metric configs expose min_trades with default 0 in dump."""
-        cfg = SharpeMetricConfig()
-        assert cfg.min_trades == 0
-        dump = cfg.model_dump()
-        assert dump.get("min_trades") == 0
-
-    def test_min_trades_passes_to_underlying(self) -> None:
-        """Config value is forwarded to the metric object returned by __call__."""
-        pf = _make_portfolio_rnd()
-        cfg = SharpeMetricConfig(min_trades=3)
-        assert cfg(pf) == SharpeRatioMetric(min_trades=3)(pf)
-
-
-@pytest.mark.unit
 class TestBacktestConfig:
     """BacktestConfig validates fields and defaults correctly."""
 
@@ -286,18 +210,14 @@ class TestBacktestEvaluator:
         return IndividualEvaluator(
             pset=self._make_pset(),
             metrics=metrics,
-            tp_stop=bt.tp_stop,
-            sl_stop=bt.sl_stop,
-            sl_trail=bt.sl_trail,
-            fees=bt.fees,
-            init_cash=bt.init_cash,
+            backtest=bt,
         )
 
     def test_raises_for_nan_metric(self) -> None:
         """IndividualEvaluator raises MetricCalculationError when metric is NaN."""
         individual = self._make_individual()
         df = self._make_df()
-        evaluator = self._make_evaluator(metrics=(SharpeMetricConfig(min_trades=0),))
+        evaluator = self._make_evaluator(metrics=(SharpeRatioMetric(min_trades=0),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df])
         print(excinfo.value)
@@ -307,7 +227,7 @@ class TestBacktestEvaluator:
         individual = self._make_individual()
         df = self._make_df()
         evaluator = self._make_evaluator(
-            metrics=(SharpeMetricConfig(min_trades=999999),)
+            metrics=(SharpeRatioMetric(min_trades=999999),)
         )
         result = evaluator.evaluate(individual, ohlcvs=[df])
         assert result == (0.0,)
@@ -316,15 +236,15 @@ class TestBacktestEvaluator:
         """IndividualEvaluator raises TreeEvaluationError for corrupt individual."""
         individual = deap_gp.PrimitiveTree([])
         df = self._make_df()
-        evaluator = self._make_evaluator(metrics=(SharpeMetricConfig(),))
+        evaluator = self._make_evaluator(metrics=(SharpeRatioMetric(),))
         with pytest.raises(TreeEvaluationError):
             evaluator.evaluate(individual, ohlcvs=[df])
 
     def test_nonfinite_raises_metric_calculation_error(self) -> None:
         """IndividualEvaluator raises MetricCalculationError when metric returns NaN."""
 
-        class _NanMetric(BacktestMetricConfigBase):
-            def __call__(self: Self, pf: object) -> float:
+        class _NanMetric(VbtBacktestMetricBase):
+            def __call__(self: Self, pf: vbt.Portfolio) -> float:
                 return float("nan")
 
         individual = self._make_individual()

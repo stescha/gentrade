@@ -1,124 +1,135 @@
 """Shared fixtures for gentrade test suite."""
 
-import pytest
-from deap import creator
+from typing import Generator
 
+import pandas as pd
+import pytest
+from deap import gp, tools
+
+from gentrade.backtest_metrics import (
+    MeanPnlCppMetric,
+    SharpeRatioMetric,
+)
+from gentrade.classification_metrics import F1Metric
 from gentrade.config import (
     BacktestConfig,
-    DoubleTournamentSelectionConfig,
-    EvolutionConfig,
-    F1MetricConfig,
-    FBetaMetricConfig,
-    OnePointCrossoverConfig,
-    OnePointLeafBiasedCrossoverConfig,
-    RunConfig,
-    SharpeMetricConfig,
-    TournamentSelectionConfig,
-    TreeConfig,
-    UniformMutationConfig,
-    ZigzagMediumPsetConfig,
 )
+from gentrade.data import generate_synthetic_ohlcv
+from gentrade.minimal_pset import (
+    create_pset_default_medium,
+    create_pset_zigzag_medium,
+    zigzag_pivots,
+)
+from gentrade.optimizer import TreeOptimizer, reset_creator
 
 
 @pytest.fixture(autouse=True)
-def _reset_deap_creator() -> None:
-    """Reset DEAP creator classes before each test.
+def _reset_deap_creator() -> Generator[None, None, None]:
+    """Reset DEAP creator types before and after each test.
 
     Prevents weight-mismatch errors when single-objective and multi-objective
-    tests run in the same pytest session. See NOTE in evolve.py create_toolbox.
+    tests run in the same pytest session.
     """
-    if hasattr(creator, "FitnessMax"):
-        del creator.FitnessMax
-    if hasattr(creator, "Individual"):
-        del creator.Individual
+    reset_creator()
+    yield
+    reset_creator()
 
 
 @pytest.fixture
-def cfg_test_default() -> RunConfig:
-    """Minimal config for fast unit-level tests.
+def pset_medium() -> gp.PrimitiveSetTyped:
+    """Medium pset without zigzag for tests that don't need zigzag."""
+    return create_pset_default_medium()
 
-    Intentionally small: mu=10, gen=2, n=100. Not suited for e2e tests.
-    """
-    return RunConfig(
+
+@pytest.fixture
+def pset_zigzag_medium() -> gp.PrimitiveSetTyped:
+    """Medium pset with zigzag for classification tests."""
+    return create_pset_zigzag_medium()
+
+
+@pytest.fixture
+def opt_unit(pset_zigzag_medium: gp.PrimitiveSetTyped) -> TreeOptimizer:
+    """Minimal TreeOptimizer for fast unit tests (no evolution)."""
+    return TreeOptimizer(
+        pset=pset_zigzag_medium,
+        metrics=(F1Metric(),),
+        mu=10,
+        lambda_=20,
+        generations=2,
         seed=42,
-        evolution=EvolutionConfig(mu=10, lambda_=20, generations=2, verbose=False),
-        tree=TreeConfig(
-            tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
-        ),
-        metrics=(F1MetricConfig(),),
-        pset=ZigzagMediumPsetConfig(),
-        mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
-        crossover=OnePointCrossoverConfig(),
-        selection=TournamentSelectionConfig(tournsize=3),
+        verbose=False,
     )
 
 
 @pytest.fixture
-def cfg_e2e_quick() -> RunConfig:
-    """Config for e2e tests: realistic but fast (~10-15s).
-
-    Uses smaller population and fewer generations than production defaults.
-    """
-    return RunConfig(
+def opt_e2e_quick() -> TreeOptimizer:
+    """TreeOptimizer for e2e tests: realistic but fast (~10-15s)."""
+    return TreeOptimizer(
+        pset=create_pset_default_medium,  # factory callable
+        metrics=(F1Metric(),),
+        mu=50,
+        lambda_=100,
+        generations=10,
         seed=42,
-        evolution=EvolutionConfig(mu=50, lambda_=100, generations=10, verbose=False),
-        tree=TreeConfig(
-            tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
-        ),
-        metrics=(F1MetricConfig(),),
-        pset=ZigzagMediumPsetConfig(),
-        mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
-        crossover=OnePointCrossoverConfig(),
-        selection=TournamentSelectionConfig(tournsize=3),
+        verbose=False,
     )
 
 
 @pytest.fixture
-def cfg_e2e_fbeta(cfg_e2e_quick: RunConfig) -> RunConfig:
-    """E2E variant: FBeta fitness, leaf-biased crossover, double tournament selection."""
-    return cfg_e2e_quick.model_copy(
-        update={
-            "seed": 43,
-            "metrics": (FBetaMetricConfig(beta=3.0),),
-            "crossover": OnePointLeafBiasedCrossoverConfig(termpb=0.1),
-            "selection": DoubleTournamentSelectionConfig(
-                fitness_size=5, parsimony_size=1.4
-            ),
-        }
+def opt_e2e_cpp() -> TreeOptimizer:
+    """TreeOptimizer with C++ backtest metric for e2e tests."""
+    return TreeOptimizer(
+        pset=create_pset_default_medium,
+        metrics=(MeanPnlCppMetric(min_trades=5),),
+        backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
+        mu=20,
+        lambda_=40,
+        generations=3,
+        seed=42,
+        verbose=False,
     )
 
 
 @pytest.fixture
-def cfg_backtest_unit() -> RunConfig:
-    """Minimal RunConfig with Sharpe backtest fitness for unit-level tests.
-
-    Small data (n=200), tiny population (mu=10, gen=2). Fast.
-    """
-    return RunConfig(
-        seed=42,
-        evolution=EvolutionConfig(mu=10, lambda_=20, generations=2, verbose=False),
-        tree=TreeConfig(
-            tree_gen="half_and_half", min_depth=2, max_depth=6, max_height=17
-        ),
+def opt_e2e_multiobjective() -> TreeOptimizer:
+    """TreeOptimizer with multi-objective metrics for e2e tests."""
+    return TreeOptimizer(
+        pset=create_pset_default_medium,
+        metrics=(F1Metric(), MeanPnlCppMetric(min_trades=5)),
         backtest=BacktestConfig(),
-        metrics=(SharpeMetricConfig(),),
-        pset=ZigzagMediumPsetConfig(),
-        mutation=UniformMutationConfig(expr_min_depth=0, expr_max_depth=2),
-        crossover=OnePointCrossoverConfig(),
-        selection=TournamentSelectionConfig(tournsize=3),
+        selection=tools.selNSGA2,  # type: ignore[attr-defined]
+        mu=20,
+        lambda_=40,
+        generations=3,
+        seed=42,
+        verbose=False,
     )
 
 
 @pytest.fixture
-def cfg_e2e_quick_with_val(cfg_e2e_quick: RunConfig) -> RunConfig:
-    """E2E variant: F1 metric for both training and validation phases.
-
-    Extends ``cfg_e2e_quick`` with ``metrics_val=(F1MetricConfig(),)`` and
-    default ``select_best``. Use this fixture when testing validation-set
-    support in :func:`run_evolution`.
-    """
-    return cfg_e2e_quick.model_copy(
-        update={
-            "metrics_val": (F1MetricConfig(),),
-        }
+def opt_backtest_unit() -> TreeOptimizer:
+    """Minimal TreeOptimizer with Sharpe backtest fitness for unit-level tests."""
+    return TreeOptimizer(
+        pset=create_pset_zigzag_medium,
+        metrics=(SharpeRatioMetric(),),
+        backtest=BacktestConfig(),
+        mu=10,
+        lambda_=20,
+        generations=2,
+        seed=42,
+        verbose=False,
     )
+
+
+@pytest.fixture
+def synthetic_df() -> pd.DataFrame:
+    """Generate synthetic OHLCV data for tests."""
+    return generate_synthetic_ohlcv(1000, 42)
+
+
+@pytest.fixture
+def zigzag_labels(synthetic_df: pd.DataFrame) -> pd.Series:
+    """Compute zigzag labels from synthetic data."""
+    result = zigzag_pivots(synthetic_df["close"], 0.01, -1)
+    assert isinstance(result, pd.Series)
+    return result

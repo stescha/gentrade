@@ -12,12 +12,11 @@ import pytest
 from deap import gp
 from deap import gp as deap_gp
 
-from gentrade.config import (
-    ClassificationMetricConfigBase,
-    F1MetricConfig,
-    SharpeMetricConfig,
-    VbtBacktestMetricConfigBase,
+from gentrade.backtest_metrics import (
+    SharpeRatioMetric,
+    VbtBacktestMetricBase,
 )
+from gentrade.classification_metrics import ClassificationMetricBase, F1Metric
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
@@ -67,7 +66,7 @@ class TestTreeEvaluationError:
     ) -> None:
         """Empty PrimitiveTree raises TreeEvaluationError (classification path)."""
         individual = gp.PrimitiveTree([])
-        evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        evaluator = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.tree is individual
@@ -78,7 +77,7 @@ class TestTreeEvaluationError:
     ) -> None:
         """Empty PrimitiveTree raises TreeEvaluationError (backtest path)."""
         individual = gp.PrimitiveTree([])
-        evaluator = IndividualEvaluator(pset=pset, metrics=(SharpeMetricConfig(),))
+        evaluator = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df])
         assert excinfo.value.tree is individual
@@ -89,7 +88,7 @@ class TestTreeEvaluationError:
     ) -> None:
         """TreeEvaluationError.tree is the same object as the input individual."""
         individual = gp.PrimitiveTree([])
-        evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        evaluator = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.tree is individual
@@ -99,7 +98,7 @@ class TestTreeEvaluationError:
     ) -> None:
         """Original exception is preserved in __cause__."""
         individual = gp.PrimitiveTree([])
-        evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        evaluator = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
         assert excinfo.value.__cause__ is not None
@@ -118,7 +117,7 @@ class TestMetricCalculationError:
     ) -> None:
         """Classification evaluator raises for NaN metric result."""
 
-        class _NanMetric(ClassificationMetricConfigBase):
+        class _NanMetric(ClassificationMetricBase):
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return float("nan")
 
@@ -138,7 +137,7 @@ class TestMetricCalculationError:
     ) -> None:
         """Classification evaluator raises for infinite metric result."""
 
-        class _InfMetric(ClassificationMetricConfigBase):
+        class _InfMetric(ClassificationMetricBase):
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return float("inf")
 
@@ -156,7 +155,7 @@ class TestMetricCalculationError:
     ) -> None:
         """Classification evaluator raises when metric raises an exception."""
 
-        class _ExceptionMetric(ClassificationMetricConfigBase):
+        class _ExceptionMetric(ClassificationMetricBase):
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 raise ValueError("Simulated metric error")
 
@@ -175,7 +174,7 @@ class TestMetricCalculationError:
     ) -> None:
         """MetricCalculationError captures the computed signals."""
 
-        class _NanMetric(ClassificationMetricConfigBase):
+        class _NanMetric(ClassificationMetricBase):
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return float("nan")
 
@@ -192,7 +191,7 @@ class TestMetricCalculationError:
     ) -> None:
         """Backtest evaluator raises MetricCalculationError for NaN result."""
 
-        class _NanMetric(VbtBacktestMetricConfigBase):
+        class _NanMetric(VbtBacktestMetricBase):
             def __call__(self, pf: object) -> float:
                 return float("nan")
 
@@ -214,7 +213,7 @@ class TestValidTreeEvaluation:
         labels: pd.Series,
     ) -> None:
         """Valid tree evaluation returns a tuple of floats."""
-        evaluator = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
+        evaluator = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         result = evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
         assert isinstance(result, tuple)
         assert len(result) == 1
@@ -230,7 +229,7 @@ class TestValidTreeEvaluation:
     ) -> None:
         """A metric returning 0.0 does not raise."""
 
-        class _ZeroMetric(ClassificationMetricConfigBase):
+        class _ZeroMetric(ClassificationMetricBase):
             def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
                 return 0.0
 
