@@ -5,12 +5,10 @@ These exceptions preserve the full context (individual tree, signals, etc.)
 for debugging and allow the caller to decide how to handle failures.
 """
 
+from typing import Any
+
 import pandas as pd
 from deap import gp
-
-from gentrade.config import (
-    MetricConfigBase,
-)
 
 
 class TreeErrorBase(Exception):
@@ -26,7 +24,7 @@ class TreeErrorBase(Exception):
         self,
         message: str,
         *,
-        tree: gp.PrimitiveTree,
+        tree: gp.PrimitiveTree | None,
         signals: pd.Series | None = None,
         err: Exception | None = None,
     ) -> None:
@@ -34,7 +32,7 @@ class TreeErrorBase(Exception):
 
         Args:
             message: Human-readable error description.
-            tree: The faulty GP tree (individual).
+            tree: The faulty GP tree (individual), if available.
             signals: The calculated signals at the point of failure.
             err: The original exception that caused the error (if any).
         """
@@ -45,10 +43,13 @@ class TreeErrorBase(Exception):
         self.err = err
 
     def _format_message(
-        self, message: str, tree: gp.PrimitiveTree, err: Exception | None = None
+        self, message: str, tree: gp.PrimitiveTree | None, err: Exception | None = None
     ) -> str:
         """Format the error message with tree and error details."""
-        base_message = f"{message}\nTree: {tree}"
+        if tree is None:
+            base_message = message
+        else:
+            base_message = f"{message}\nTree: {tree}"
         if err is not None:
             return f"{base_message}\nOriginal error: {err}"
         return base_message
@@ -78,8 +79,8 @@ class MetricCalculationError(TreeErrorBase):
         self,
         message: str,
         *,
-        tree: gp.PrimitiveTree,
-        metric: MetricConfigBase | MetricConfigBase,
+        tree: gp.PrimitiveTree | None = None,
+        metric: Any | None = None,
         value: float | int | None = None,
         signals: pd.Series | None = None,
         err: Exception | None = None,

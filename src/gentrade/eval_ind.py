@@ -13,21 +13,25 @@ or metric calculation are wrapped in domain-specific exceptions and re-raised.
 This ensures bugs and misconfigurations surface immediately.
 """
 
-from typing import Callable, Literal, cast, overload
+from typing import TYPE_CHECKING, Callable, Literal, cast, overload
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
 from deap import gp
 
-from gentrade.config import (
-    ClassificationMetricConfigBase,
-    CppBacktestMetricConfigBase,
-    MetricConfigBase,
-    VbtBacktestMetricConfigBase,
-)
+if TYPE_CHECKING:
+    from gentrade.config import BacktestConfig
+else:
+    from typing import Any
+
+    BacktestConfig = Any
+
+from gentrade.backtest_metrics import CppBacktestMetricBase, VbtBacktestMetricBase
+from gentrade.classification_metrics import ClassificationMetricBase
 from gentrade.eval_signals import eval as eval_cpp  # type: ignore
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
+from gentrade.optimizer.types import Metric
 from gentrade.types import BtResult
 
 
@@ -37,48 +41,36 @@ class IndividualEvaluator:
     At construction time the ``metrics`` tuple is scanned once to set the
     internal flags controlling which evaluation steps are required. The
     evaluator supports two backtest backends: a fast C++ backtester (used
-    when a ``CppBacktestMetricConfigBase`` is present) which returns a
+    when a ``CppBacktestMetricBase`` is present) which returns a
     ``BtResult``, and a VectorBT-backed backtester (used by
-    ``VbtBacktestMetricConfigBase``) which returns a ``vbt.Portfolio``.
+    ``VbtBacktestMetricBase``) which returns a ``vbt.Portfolio``.
     Only the branches needed for the configured metrics are executed, so
     pure-classification runs do not pay the cost of any backtest.
 
     Args:
         pset: DEAP primitive set used to compile GP trees.
         metrics: Ordered tuple of metric configs; determines fitness tuple length.
-        tp_stop: Take-profit fraction (ignored when ``_needs_backtest`` is False).
-        sl_stop: Stop-loss fraction (ignored when ``_needs_backtest`` is False).
-        sl_trail: Use trailing stop-loss.
-        fees: Round-trip trading fee fraction.
-        init_cash: Initial portfolio cash.
+        backtest: Backtest simulation parameters.
     """
 
     def __init__(
         self,
         pset: gp.PrimitiveSetTyped,
-        metrics: tuple[MetricConfigBase, ...],
-        tp_stop: float = 0.02,
-        sl_stop: float = 0.01,
-        sl_trail: bool = True,
-        fees: float = 0.001,
-        init_cash: float = 100_000.0,
+        metrics: tuple[Metric, ...],
+        backtest: BacktestConfig | None = None,
     ) -> None:
         self.pset = pset
         self.metrics = metrics
-        self.tp_stop = tp_stop
-        self.sl_stop = sl_stop
-        self.sl_trail = sl_trail
-        self.fees = fees
-        self.init_cash = init_cash
+        self.backtest = backtest
 
         self._needs_backtest: bool = any(
-            isinstance(m, CppBacktestMetricConfigBase) for m in metrics
+            isinstance(m, CppBacktestMetricBase) for m in metrics
         )
         self._needs_backtest_vbt: bool = any(
-            isinstance(m, VbtBacktestMetricConfigBase) for m in metrics
+            isinstance(m, VbtBacktestMetricBase) for m in metrics
         )
         self._needs_labels: bool = any(
-            isinstance(m, (ClassificationMetricConfigBase, CppBacktestMetricConfigBase))
+            isinstance(m, (ClassificationMetricBase, CppBacktestMetricBase))
             for m in metrics
         )
 
@@ -158,17 +150,20 @@ class IndividualEvaluator:
         """Run a vectorbt backtest from entry signals and stop parameters.
 
         Args:
+            individual: GP tree that produced the signals.
             ohlcv: OHLCV DataFrame with open, high, low, close columns.
             entries: Boolean buy signal series.
-            tp_stop: Take-profit stop as a fraction (e.g., 0.02 = 2%).
-            sl_stop: Stop-loss stop as a fraction (e.g., 0.01 = 1%).
-            sl_trail: Whether to use a trailing stop-loss.
-            fees: Trading fee as a fraction (e.g., 0.001 = 0.1%).
-            init_cash: Initial cash for the portfolio.
 
         Returns:
             VectorBT Portfolio object.
         """
+        # Default backtest parameters if none provided
+        tp_stop = self.backtest.tp_stop if self.backtest else 0.02
+        sl_stop = self.backtest.sl_stop if self.backtest else 0.01
+        sl_trail = self.backtest.sl_trail if self.backtest else True
+        fees = self.backtest.fees if self.backtest else 0.001
+        init_cash = self.backtest.init_cash if self.backtest else 100_000.0
+
         try:
             return vbt.Portfolio.from_signals(
                 close=ohlcv["close"],
@@ -176,13 +171,13 @@ class IndividualEvaluator:
                 high=ohlcv["high"],
                 low=ohlcv["low"],
                 entries=entries,
-                tp_stop=self.tp_stop,
-                sl_stop=self.sl_stop,
-                sl_trail=self.sl_trail,
+                tp_stop=tp_stop,
+                sl_stop=sl_stop,
+                sl_trail=sl_trail,
                 size=1.0,
                 accumulate=False,
-                fees=self.fees,
-                init_cash=self.init_cash,
+                fees=fees,
+                init_cash=init_cash,
             )
 
         except Exception as e:
@@ -208,6 +203,10 @@ class IndividualEvaluator:
         and per-trade PnLs. This method raises ``TreeEvaluationError`` on
         any failure during the native call.
         """
+
+        if self.backtest is None:
+            raise ValueError("Backtest configuration is required for backtest metrics.")
+
         try:
             return BtResult(
                 *eval_cpp(
@@ -215,8 +214,8 @@ class IndividualEvaluator:
                     ohlcv["high"].values,
                     entries.values,
                     exits.values,
-                    self.fees,
-                    self.fees,
+                    self.backtest.fees,
+                    self.backtest.fees,
                 )
             )
         except Exception as e:
@@ -249,8 +248,7 @@ class IndividualEvaluator:
         signals = self._compile_tree_to_signals(individual, self.pset, df)
 
         # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
-        pf: vbt.Portfolio = None
-        bt_result: BtResult | None = None
+        bt_result: BtResult | vbt.Portfolio | None = None
         if self._needs_backtest:
             if y_true is None:
                 raise ValueError("y_true is required for backtest metrics.")
@@ -261,12 +259,16 @@ class IndividualEvaluator:
         result: list[float] = []
         for m in self.metrics:
             try:
-                if isinstance(m, CppBacktestMetricConfigBase):
+                if isinstance(m, ClassificationMetricBase):
+                    assert y_true is not None  # Guarded by pre-check.
+                    # Narrow to the classification metric branch.
+                    val = m(y_true, signals)
+                elif isinstance(m, CppBacktestMetricBase):
                     val = m(bt_result)
-                elif isinstance(m, VbtBacktestMetricConfigBase):
+                elif isinstance(m, VbtBacktestMetricBase):
                     val = m(pf)
                 else:
-                    val = m(y_true, signals)
+                    raise TypeError(f"Unsupported metric type: {type(m).__name__}.")
             except Exception as e:
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} calculation failed.",

@@ -83,7 +83,7 @@ def eaMuPlusLambdaGentrade(
     stats: tools.Statistics | None = None,
     halloffame: tools.HallOfFame | None = None,
     verbose: bool = __debug__,
-    val_callback: Callable[[int, int, list[Any]], None] | None = None,
+    val_callback: Callable[[int, int, list[Any], Any | None], None] | None = None,
 ) -> tuple[list[Any], tools.Logbook]:
     r"""This is the :math:`(\mu + \lambda)` evolutionary algorithm.
 
@@ -178,7 +178,8 @@ def eaMuPlusLambdaGentrade(
             )
             print(logbook.stream)
 
+        best_ind = toolbox.select_best(population, k=1)[0]
         if val_callback is not None:
-            val_callback(gen, ngen, population)
+            val_callback(gen, ngen, population, best_ind)
 
     return population, logbook

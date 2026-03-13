@@ -653,7 +653,6 @@ class RunConfig(BaseModel):
             "are present in ``metrics``."
         ),
     )
-
     # Metric configs
     metrics: tuple[SerializeAsAny[MetricConfigBase], ...] = Field(
         default_factory=cast(
@@ -689,7 +688,7 @@ class RunConfig(BaseModel):
         default_factory=cast(Callable[[], SelectionConfigBase], BestSelectionConfig),
         description=(
             "Selection operator used to pick the single best individual for the "
-            "validation phase. Registered on the toolbox as sel_best with k=1."
+            "validation phase. Registered on the toolbox as select_best with k=1."
         ),
     )
 

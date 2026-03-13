@@ -29,10 +29,14 @@ class BacktestMetricBase:
         Minimum number of closed trades required for a nonzero score. A value
         of zero disables the guard; when the portfolio has fewer closed trades
         than this threshold the metric returns ``0.0`` immediately.
+
+    weight: float
+        DEAP fitness weight. Higher means more important.
     """
 
-    def __init__(self, min_trades: int = 0) -> None:
+    def __init__(self, min_trades: int = 0, weight: float = 1.0) -> None:
         self.min_trades = min_trades
+        self.weight = weight
 
     def __call__(self, portfolio: vbt.Portfolio) -> float:
         """Compute metric score from a backtest portfolio.
@@ -54,6 +58,8 @@ class CppBacktestMetricBase(BacktestMetricBase):
     single scalar score. This separates the lightweight C++ backtest output
     from the VectorBT-based metrics which operate on ``vbt.Portfolio``.
     """
+
+    pass
 
 
 class VbtBacktestMetricBase(BacktestMetricBase):

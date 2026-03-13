@@ -26,7 +26,12 @@ class ClassificationMetricBase:
     - Callable interface: ``fitness_fn(y_true, y_pred) -> float``.
     - Subclasses must implement ``__call__``.
     - All scores are in ``[0, 1]``; higher means better.
+
+    The optimizer uses ``metric.weight`` for DEAP fitness weighting.
     """
+
+    def __init__(self, weight: float = 1.0) -> None:
+        self.weight = weight
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         """Compute fitness score from ground-truth and predicted labels.
@@ -67,6 +72,12 @@ class F1Metric(ClassificationMetricBase):
     for binary classification tasks where both error types carry similar cost.
     """
 
+    def __init__(self, weight: float = 1.0) -> None:
+        """Args:
+        weight: DEAP fitness weight.
+        """
+        super().__init__(weight=weight)
+
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, _ = _confusion_counts(y_true, y_pred)
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
@@ -85,10 +96,12 @@ class FBetaMetric(ClassificationMetricBase):
       false alarms (e.g., missing a market pivot).
     """
 
-    def __init__(self, beta: float = 2.0) -> None:
+    def __init__(self, beta: float = 2.0, weight: float = 1.0) -> None:
         """Args:
-            beta: Weight of recall relative to precision.
+        beta: Weight of recall relative to precision.
+        weight: DEAP fitness weight.
         """
+        super().__init__(weight=weight)
         self._beta = beta
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
@@ -111,6 +124,12 @@ class MCCMetric(ClassificationMetricBase):
     because it considers all four quadrants of the confusion matrix.
     """
 
+    def __init__(self, weight: float = 1.0) -> None:
+        """Args:
+        weight: DEAP fitness weight.
+        """
+        super().__init__(weight=weight)
+
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, tn = _confusion_counts(y_true, y_pred)
         denom_sq = (tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)
@@ -130,6 +149,12 @@ class BalancedAccuracyMetric(ClassificationMetricBase):
     the model is no better than chance.
     """
 
+    def __init__(self, weight: float = 1.0) -> None:
+        """Args:
+        weight: DEAP fitness weight.
+        """
+        super().__init__(weight=weight)
+
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, tn = _confusion_counts(y_true, y_pred)
         sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0.0  # TPR / recall
@@ -145,6 +170,12 @@ class PrecisionMetric(ClassificationMetricBase):
     sparse predictions — combine with a minimum-prediction-rate guard if needed.
     """
 
+    def __init__(self, weight: float = 1.0) -> None:
+        """Args:
+        weight: DEAP fitness weight.
+        """
+        super().__init__(weight=weight)
+
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, _, _ = _confusion_counts(y_true, y_pred)
         return tp / (tp + fp) if (tp + fp) > 0 else 0.0
@@ -157,6 +188,12 @@ class RecallMetric(ClassificationMetricBase):
     a false alarm. May converge to all-true predictions — combine with a
     minimum-precision guard or use ``FBetaFitness`` instead.
     """
+
+    def __init__(self, weight: float = 1.0) -> None:
+        """Args:
+        weight: DEAP fitness weight.
+        """
+        super().__init__(weight=weight)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, _, fn, _ = _confusion_counts(y_true, y_pred)
@@ -171,6 +208,12 @@ class JaccardMetric(ClassificationMetricBase):
     without any compensation from true negatives. Rewards tight, precise
     predictions over broad, high-recall ones.
     """
+
+    def __init__(self, weight: float = 1.0) -> None:
+        """Args:
+        weight: DEAP fitness weight.
+        """
+        super().__init__(weight=weight)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, _ = _confusion_counts(y_true, y_pred)
