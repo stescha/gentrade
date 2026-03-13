@@ -182,7 +182,7 @@ class TestYTrueValidation:
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
-        """When df is a list of multiple datasets, y_true must be a list of the same length."""
+        """When df is a list of datasets, y_true must match the list length."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1MetricConfig(),))
         with pytest.raises(ValueError, match="Length of y_true list must match"):
             ev.evaluate(valid_individual, ohlcvs=[df, df], signals=[labels])

@@ -1,5 +1,4 @@
 import random
-import sys
 from typing import Callable, List, Optional, Type, Union
 
 from deap import gp
@@ -81,13 +80,12 @@ def add_terminal(
 ) -> None:
     try:
         term = random.choice(pset.terminals[type_])
-    except IndexError:
-        _, _, traceback = sys.exc_info()
+    except IndexError as err:
         raise IndexError(
             "The gp.generate function tried to add "
             "a terminal of type '%s', but there is "
             "none available." % (type_,)
-        ).with_traceback(traceback)
+        ) from err
 
     # Call ephemeral constants (they are callable)
     if callable(term):

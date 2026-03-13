@@ -41,7 +41,8 @@ def load_binance_ohlcv(
 ) -> pd.DataFrame | tuple[str, pd.DataFrame]:
     if len([i for i in (start, stop, count) if i is not None]) > 2:
         raise ValueError(
-            "Of the three parameters: start, stop and count, maximal two can be specified"
+            "Of the three parameters: start, stop and count, "
+            "maximal two can be specified"
         )
     if start is None and count is not None:
         if stop is None:
@@ -57,12 +58,17 @@ def load_binance_ohlcv(
         filename = path.join(
             DATAFOLDER, "ohlcv", "binance", "1min", "binance_ohlcv_%s_1min.h5" % (pair,)
         )
-    # start, stop = map(lambda d: pd.to_datetime(d) if isinstance(d, str) else d, [start, stop])
-    start_mapped = start
-    stop_mapped = stop
-    for d in [start, stop]:
-        if isinstance(d, (str, datetime)):
-            d = pd.to_datetime(d)  # noqa: F841
+
+    if isinstance(start, (str, datetime)):
+        start_mapped = pd.to_datetime(start)
+    else:
+        start_mapped = start
+
+    if isinstance(stop, (str, datetime)):
+        stop_mapped = pd.to_datetime(stop)
+    else:
+        stop_mapped = stop
+
     if (isinstance(start_mapped, int) or start_mapped is None) and (
         isinstance(stop_mapped, int) or stop_mapped is None
     ):
@@ -71,27 +77,36 @@ def load_binance_ohlcv(
             pd.read_hdf(filename, key="/ohlcv", start=start_mapped, stop=stop_mapped),
         )
     elif isinstance(start_mapped, pd.Timestamp) and stop_mapped is None:
-        start_date = str(start_mapped)
-        ohlcv = cast(
-            pd.DataFrame,
-            pd.read_hdf(filename, key="/ohlcv", where="(index >= start_date)"),
-        )
-    elif isinstance(stop_mapped, pd.Timestamp) and start_mapped is None:
-        stop_date = str(stop_mapped)
-        ohlcv = cast(
-            pd.DataFrame,
-            pd.read_hdf(filename, key="/ohlcv", where="(index < stop_date)"),
-        )
-    elif isinstance(start_mapped, pd.Timestamp) and isinstance(
-        stop_mapped, pd.Timestamp
-    ):
-        start_date, stop_date = str(start_mapped), str(stop_mapped)
+        start_date = start_mapped.isoformat()
         ohlcv = cast(
             pd.DataFrame,
             pd.read_hdf(
                 filename,
                 key="/ohlcv",
-                where="(index >= start_date) & (index < stop_date)",
+                where=f"(index >= '{start_date}')",
+            ),
+        )
+    elif isinstance(stop_mapped, pd.Timestamp) and start_mapped is None:
+        stop_date = stop_mapped.isoformat()
+        ohlcv = cast(
+            pd.DataFrame,
+            pd.read_hdf(
+                filename,
+                key="/ohlcv",
+                where=f"(index < '{stop_date}')",
+            ),
+        )
+    elif isinstance(start_mapped, pd.Timestamp) and isinstance(
+        stop_mapped, pd.Timestamp
+    ):
+        start_date = start_mapped.isoformat()
+        stop_date = stop_mapped.isoformat()
+        ohlcv = cast(
+            pd.DataFrame,
+            pd.read_hdf(
+                filename,
+                key="/ohlcv",
+                where=f"(index >= '{start_date}') & (index < '{stop_date}')",
             ),
         )
     else:
@@ -128,9 +143,13 @@ def resample_ohlcv(ohlcv: pd.DataFrame, period: str) -> pd.DataFrame:
 
 # def ohlcv_time_split(ohlcv, val_perc, test_perc=0):
 #     val_start = int(len(ohlcv)*(1 - (val_perc + test_perc)))
-#     test_start = int(len(ohlcv)*(1 - test_perc))
+#     test_start = int(len(ohlcv) * (1 - test_perc))
 #     if test_perc > 0:
-#         return ohlcv.iloc[: val_start], ohlcv.iloc[val_start: test_start], ohlcv.iloc[test_start:]
+#         return (
+#             ohlcv.iloc[:val_start],
+#             ohlcv.iloc[val_start:test_start],
+#             ohlcv.iloc[test_start:],
+#         )
 #     else:
 #         raise Exception('not tested')
 #         return ohlcv.iloc[: val_start], ohlcv.iloc[val_start: ]

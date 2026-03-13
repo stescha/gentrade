@@ -348,7 +348,8 @@ class IndividualEvaluator:
         if self._needs_labels and signals is None:
             raise ValueError(
                 "y_true is required for classification evaluation: "
-                "train_labels must be provided when classification metrics are included."
+                "train_labels must be provided when classification metrics "
+                "are included."
             )
         if not self._needs_labels and signals is not None:
             raise ValueError(

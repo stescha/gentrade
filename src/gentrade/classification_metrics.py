@@ -14,9 +14,10 @@ Design notes:
   label distributions (e.g., rare zigzag pivots).
 """
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
-from typing import cast
 
 
 class ClassificationMetricBase:
