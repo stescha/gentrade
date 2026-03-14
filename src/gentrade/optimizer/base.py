@@ -290,7 +290,7 @@ class BaseOptimizer(ABC):
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
-    ) -> Algorithm:
+    ) -> "Algorithm[Any]":
         """Return algorithm instance to execute the evolutionary loop.
 
         Subclasses must return a configured :class:`Algorithm` instance that

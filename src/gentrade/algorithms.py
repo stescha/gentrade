@@ -1,11 +1,12 @@
 import random
 from collections.abc import Callable
 from multiprocessing import pool
-from typing import Any
+from typing import Any, Generic
 
 from deap import base, tools
 
 from .eval_pop import evaluate_population
+from .optimizer.types import IndividualT
 
 
 def varOr(
@@ -185,14 +186,15 @@ def eaMuPlusLambdaGentrade(
     return population, logbook
 
 
-class EaMuPlusLambda:
+class EaMuPlusLambda(Generic[IndividualT]):
     """Wrapper around :func:`eaMuPlusLambdaGentrade` implementing the ``Algorithm``
     interface.
 
     Stores all algorithm configuration at construction time and exposes a
     single :meth:`run` method that accepts a population and returns the
     ``(population, logbook)`` pair produced by the underlying evolutionary
-    algorithm.
+    algorithm. The type parameter ``IndividualT`` preserves the individual
+    type through :meth:`run`.
     """
 
     def __init__(
@@ -208,7 +210,10 @@ class EaMuPlusLambda:
         stats: tools.Statistics | None = None,
         halloffame: tools.HallOfFame | None = None,
         verbose: bool = True,
-        val_callback: Callable[[int, int, list[Any], Any | None], None] | None = None,
+        val_callback: Callable[
+            [int, int, list[IndividualT], IndividualT | None], None
+        ]
+        | None = None,
     ) -> None:
         """Store all parameters needed to run the evolutionary algorithm.
 
@@ -237,7 +242,9 @@ class EaMuPlusLambda:
         self.verbose = verbose
         self.val_callback = val_callback
 
-    def run(self, population: list[Any]) -> tuple[list[Any], tools.Logbook]:
+    def run(
+        self, population: list[IndividualT]
+    ) -> tuple[list[IndividualT], tools.Logbook]:
         """Execute the evolutionary algorithm on the given population.
 
         Args:

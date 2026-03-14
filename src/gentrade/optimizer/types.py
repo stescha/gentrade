@@ -9,18 +9,22 @@ from gentrade.backtest_metrics import BacktestMetricBase
 from gentrade.classification_metrics import ClassificationMetricBase
 
 T_co = TypeVar("T_co", covariant=True)
+IndividualT = TypeVar("IndividualT")
 Metric = Union[ClassificationMetricBase, BacktestMetricBase]
 OperatorKwargs = Dict[str, Any]
 
 
-class Algorithm(Protocol):
+class Algorithm(Protocol[IndividualT]):
     """Structural interface for evolutionary algorithms.
 
     Implementations are configured via constructor. `run` accepts a
-    population list and returns (population, logbook).
+    population list and returns (population, logbook). The type parameter
+    ``IndividualT`` preserves the individual type through input and output.
     """
 
-    def run(self, population: list[Any]) -> tuple[list[Any], tools.Logbook]: ...
+    def run(
+        self, population: list[IndividualT]
+    ) -> tuple[list[IndividualT], tools.Logbook]: ...
 
 
 class SelectionOp(Protocol[T_co]):

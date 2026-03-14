@@ -256,7 +256,7 @@ class TreeOptimizer(BaseOptimizer):
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
-    ) -> Algorithm:
+    ) -> Algorithm[TreeIndividual]:
         """Return an :class:`EaMuPlusLambda` configured from optimizer attributes.
 
         Args:

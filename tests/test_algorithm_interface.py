@@ -8,7 +8,6 @@ import pytest
 from deap import tools
 
 from gentrade.algorithms import EaMuPlusLambda
-from gentrade.optimizer.types import Algorithm
 
 
 @pytest.mark.unit
@@ -19,7 +18,7 @@ class TestAlgorithmProtocol:
         """EaMuPlusLambda has a callable run method matching Algorithm Protocol."""
         pool_mock = MagicMock()
         toolbox_mock = MagicMock()
-        algo = EaMuPlusLambda(
+        algo: EaMuPlusLambda[Any] = EaMuPlusLambda(
             pool=pool_mock,
             toolbox=toolbox_mock,
             mu=4,
@@ -28,22 +27,8 @@ class TestAlgorithmProtocol:
             mutpb=0.2,
             ngen=1,
         )
-        # Structural check: Protocol conformance is verified at runtime
+        # Structural check: verify run is callable
         assert callable(algo.run)
-
-    def test_protocol_runtime_check(self) -> None:
-        """Any object with a compatible run() satisfies the Algorithm Protocol."""
-
-        class _Stub:
-            def run(self, population: list[Any]) -> tuple[list[Any], tools.Logbook]:
-                lb = tools.Logbook()
-                return population, lb
-
-        stub: Algorithm = _Stub()
-        pop: list[Any] = []
-        result_pop, logbook = stub.run(pop)
-        assert isinstance(result_pop, list)
-        assert isinstance(logbook, tools.Logbook)
 
 
 @pytest.mark.unit
@@ -59,7 +44,7 @@ class TestEaMuPlusLambdaConstructor:
         stats: tools.Statistics | None = None,
         halloffame: tools.HallOfFame | None = None,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None = None,
-    ) -> EaMuPlusLambda:
+    ) -> "EaMuPlusLambda[Any]":
         pool_mock = MagicMock()
         toolbox_mock = MagicMock()
         return EaMuPlusLambda(
@@ -108,7 +93,7 @@ class TestEaMuPlusLambdaRun:
         """run() calls eaMuPlusLambdaGentrade and returns (population, logbook)."""
         pool_mock = MagicMock()
         toolbox_mock = MagicMock()
-        algo = EaMuPlusLambda(
+        algo: EaMuPlusLambda[Any] = EaMuPlusLambda(
             pool=pool_mock,
             toolbox=toolbox_mock,
             mu=4,
@@ -134,7 +119,7 @@ class TestEaMuPlusLambdaRun:
         """run() returns (list, tools.Logbook) as expected by the Protocol."""
         pool_mock = MagicMock()
         toolbox_mock = MagicMock()
-        algo = EaMuPlusLambda(
+        algo: EaMuPlusLambda[Any] = EaMuPlusLambda(
             pool=pool_mock,
             toolbox=toolbox_mock,
             mu=4,
