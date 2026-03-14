@@ -21,7 +21,6 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.algorithms import EaMuPlusLambda
 from gentrade.classification_metrics import ClassificationMetricBase
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.eval_pop import create_pool
@@ -284,20 +283,21 @@ class BaseOptimizer(ABC):
             if selection in SELECTION_MULTI_OBJ:
                 pass
 
+    @abstractmethod
     def create_algorithm(
         self,
-        pool: pool.Pool,
+        worker_pool: "pool.Pool",
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
     ) -> Algorithm:
         """Return algorithm instance to execute the evolutionary loop.
 
-        Default: `EaMuPlusLambda` configured from optimizer attributes.
-        Subclasses may override to provide different algorithms.
+        Subclasses must return a configured :class:`Algorithm` instance that
+        accepts a population list and returns ``(population, logbook)``.
 
         Args:
-            pool: Multiprocessing pool for parallel individual evaluation.
+            worker_pool: Multiprocessing pool for parallel individual evaluation.
             stats: DEAP statistics object for logging per-generation metrics.
             halloffame: Hall of fame tracking best individuals.
             val_callback: Optional callback invoked after each generation.
@@ -305,19 +305,7 @@ class BaseOptimizer(ABC):
         Returns:
             A configured :class:`Algorithm` instance ready to call ``run()``.
         """
-        return EaMuPlusLambda(
-            pool=pool,
-            toolbox=self.toolbox_,
-            mu=self.mu,
-            lambda_=self.lambda_,
-            cxpb=self.cxpb,
-            mutpb=self.mutpb,
-            ngen=self.generations,
-            stats=stats,
-            halloffame=halloffame,
-            verbose=self.verbose,
-            val_callback=val_callback,
-        )
+        ...
 
     def fit(
         self,
