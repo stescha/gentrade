@@ -4,27 +4,27 @@
 Run with: poetry run python scripts/example_multi_objective.py
 """
 
-from gentrade.config import (
-    BacktestConfig,
-    F1MetricConfig,
-    MeanPnlCppMetricConfig,
-    MeanPnlMetricConfig,
-    NSGA2SelectionConfig,
-    OnePointLeafBiasedCrossoverConfig,
-    UniformMutationConfig,
-)
+from typing import cast
+
+from deap import gp, tools
+
+from gentrade.backtest_metrics import MeanPnlCppMetric, MeanPnlMetric
+from gentrade.classification_metrics import F1Metric
+from gentrade.config import BacktestConfig
 from gentrade.minimal_pset import create_pset_default_large, zigzag_pivots
 from gentrade.optimizer import TreeOptimizer
+from gentrade.optimizer.types import MutationOp
 from gentrade.tradetools import load_binance_ohlcv
 
 opt = TreeOptimizer(
     pset=create_pset_default_large,
-    metrics=(F1MetricConfig(), MeanPnlCppMetricConfig(min_trades=10)),
-    metrics_val=(MeanPnlMetricConfig(min_trades=0),),
+    metrics=(F1Metric(), MeanPnlCppMetric(min_trades=10)),
+    metrics_val=(MeanPnlMetric(min_trades=0),),
     backtest=BacktestConfig(tp_stop=0.01, sl_stop=0.005),
-    mutation=UniformMutationConfig(),
-    crossover=OnePointLeafBiasedCrossoverConfig(termpb=0.1),
-    selection=NSGA2SelectionConfig(),
+    mutation=cast(MutationOp[gp.PrimitiveTree], gp.mutUniform),
+    crossover=gp.cxOnePointLeafBiased,
+    crossover_params={"termpb": 0.1},
+    selection=tools.selNSGA2,  # type: ignore
     mu=500,
     lambda_=200,
     generations=20,

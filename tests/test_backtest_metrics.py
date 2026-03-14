@@ -26,6 +26,7 @@ from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
 from gentrade.minimal_pset import create_pset_zigzag_medium
+from gentrade.optimizer.individual import TreeIndividual
 from gentrade.pset.pset_types import BooleanSeries, NumericSeries
 
 # -- Module-level helpers ------------------------------------------
@@ -185,11 +186,12 @@ class TestBacktestConfig:
 class TestBacktestEvaluator:
     """IndividualEvaluator correctly wraps the backtest pipeline for DEAP."""
 
-    def _make_individual(self) -> deap_gp.PrimitiveTree:
+    def _make_individual(self) -> TreeIndividual:
         """Build a minimal always-false GP tree for testing."""
         # "gt(close, close)" will always return False, so the resulting portfolio should
         # have zero trades and trigger the min_trades guards in the metrics
-        return deap_gp.PrimitiveTree(
+        # Use per-instance fitness weights
+        tree = deap_gp.PrimitiveTree(
             [
                 deap_gp.Primitive(
                     name="gt", args=[NumericSeries, NumericSeries], ret=BooleanSeries
@@ -198,6 +200,7 @@ class TestBacktestEvaluator:
                 deap_gp.Terminal(terminal="close", symbolic=False, ret=NumericSeries),
             ]
         )
+        return TreeIndividual([tree], weights=(1.0,))
 
     def _make_df(self) -> pd.DataFrame:
         return generate_synthetic_ohlcv(500, 42)
@@ -234,7 +237,7 @@ class TestBacktestEvaluator:
 
     def test_exception_raises_tree_evaluation_error(self) -> None:
         """IndividualEvaluator raises TreeEvaluationError for corrupt individual."""
-        individual = deap_gp.PrimitiveTree([])
+        individual = TreeIndividual([deap_gp.PrimitiveTree([])], weights=(1.0,))
         df = self._make_df()
         evaluator = self._make_evaluator(metrics=(SharpeRatioMetric(),))
         with pytest.raises(TreeEvaluationError):
@@ -252,6 +255,6 @@ class TestBacktestEvaluator:
         evaluator = self._make_evaluator(metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df])
-        assert excinfo.value.tree is individual
+        assert excinfo.value.tree is individual.tree
         assert excinfo.value.metric is not None
         assert excinfo.value.signals is not None

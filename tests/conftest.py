@@ -1,7 +1,5 @@
 """Shared fixtures for gentrade test suite."""
 
-from typing import Generator
-
 import pandas as pd
 import pytest
 from deap import gp, tools
@@ -20,19 +18,7 @@ from gentrade.minimal_pset import (
     create_pset_zigzag_medium,
     zigzag_pivots,
 )
-from gentrade.optimizer import TreeOptimizer, reset_creator
-
-
-@pytest.fixture(autouse=True)
-def _reset_deap_creator() -> Generator[None, None, None]:
-    """Reset DEAP creator types before and after each test.
-
-    Prevents weight-mismatch errors when single-objective and multi-objective
-    tests run in the same pytest session.
-    """
-    reset_creator()
-    yield
-    reset_creator()
+from gentrade.optimizer import TreeOptimizer
 
 
 @pytest.fixture

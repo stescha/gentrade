@@ -1,20 +1,18 @@
-import logging
 import operator
+from functools import partial
 from typing import Any, Callable, Literal
 
 from deap import base, gp, tools
 
-from gentrade.optimizer.callbacks import Callback
-
-try:
-    from deap import creator
-except ImportError:
-    # Handle environment where creator is populated dynamically
-    import deap.creator as creator  # type: ignore
-
 from gentrade.config import BacktestConfig
+from gentrade.eval_ind import IndividualEvaluator
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.optimizer.base import BaseOptimizer
+from gentrade.optimizer.callbacks import Callback
+from gentrade.optimizer.individual import (
+    TreeIndividual,
+    apply_operators,
+)
 from gentrade.optimizer.types import (
     CrossoverOp,
     Metric,
@@ -22,8 +20,6 @@ from gentrade.optimizer.types import (
     OperatorKwargs,
     SelectionOp,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _create_tree_toolbox(
@@ -41,14 +37,44 @@ def _create_tree_toolbox(
     tree_max_depth: int,
     tree_max_height: int,
     tree_gen: str,
+    inidividual_cls: type[TreeIndividual],
 ) -> base.Toolbox:
+    """Create and configure a DEAP toolbox for tree-based GP optimization.
+
+    Constructs a toolbox with registered functions for:
+    - Individual and population creation (wrapping trees in `TreeIndividual`)
+    - Selection, crossover, and mutation operators adapted for `TreeIndividual`
+    - Tree compilation and height-limit decorators
+
+    Operators are wrapped with :func:`apply_operators` to work on
+    :class:`TreeIndividual` instances transparently.
+
+    Args:
+        pset: Primitive set for tree generation and compilation.
+        metrics: Tuple of metrics; determines fitness weights and tuple length.
+        mutation: Tree-level mutation operator from DEAP.
+        mutation_params: Additional keyword arguments for mutation.
+        crossover: Tree-level crossover operator from DEAP.
+        crossover_params: Additional keyword arguments for crossover.
+        selection: Selection operator from DEAP.
+        selection_params: Additional keyword arguments for selection.
+        select_best: Best-selection operator (often `tools.selBest`).
+        select_best_params: Additional keyword arguments for best selection.
+        tree_min_depth: Minimum tree depth for initialization.
+        tree_max_depth: Maximum tree depth for initialization.
+        tree_max_height: Maximum tree height after operators (enforced via
+            static limit).
+        tree_gen: Tree generation method: 'half_and_half', 'full', or 'grow'.
+        inidividual_cls: Individual class (typically `TreeIndividual`).
+
+    Returns:
+        A configured :class:`deap.base.Toolbox` ready for evolution.
+    """
     toolbox = base.Toolbox()
 
+    # Build a fresh individual class with a Fitness class for these weights.
     weights = tuple(m.weight for m in metrics)
-    if not hasattr(creator, "Fitness"):
-        creator.create("Fitness", base.Fitness, weights=weights)
-    if not hasattr(creator, "Individual"):
-        creator.create("Individual", gp.PrimitiveTree, fitness=creator.Fitness)  # type: ignore
+    # IndividualCls = make_individual_class(weights)
 
     if tree_gen == "half_and_half":
         toolbox.register(
@@ -67,50 +93,70 @@ def _create_tree_toolbox(
             "expr", genGrow, pset=pset, min_=tree_min_depth, max_=tree_max_depth
         )
 
-    toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.expr)
+    def _make_individual() -> TreeIndividual:
+        # toolbox.expr() returns a list of DEAP nodes; wrap it in a PrimitiveTree
+        # first, then place the tree inside the individual container.
+        nodes = toolbox.expr()
+        return inidividual_cls([gp.PrimitiveTree(nodes)], weights)
+
+    toolbox.register("individual", _make_individual)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("compile", gp.compile, pset=pset)
 
     toolbox.register("select", selection, **(selection_params or {}))
     toolbox.register("select_best", select_best, **(select_best_params or {}))
-    toolbox.register("mate", crossover, **(crossover_params or {}))
 
     mut_params = (mutation_params or {}).copy()
     mutation_name = getattr(mutation, "__name__", "")
     if mutation_name == "mutUniform":
         if "expr" not in mut_params:
-            toolbox.register("expr_mut", genGrow, min_=1, max_=2)
-            mut_params["expr"] = toolbox.expr_mut
+            # toolbox.register("expr_mut", genGrow, min_=2, max_=10)
+            mut_params["expr"] = toolbox.expr
         mut_params.setdefault("pset", pset)
     elif mutation_name in ("mutNodeReplacement", "mutInsert"):
         mut_params.setdefault("pset", pset)
 
-    toolbox.register("mutate", mutation, **mut_params)
+    # Apply staticLimit to tree-level operators first (height check on
+    # PrimitiveTree), then wrap for TreeIndividual via apply_operators.
+    height_limit = gp.staticLimit(
+        key=operator.attrgetter("height"), max_value=tree_max_height
+    )
+    cx_op = partial(crossover, **(crossover_params or {}))
+    mut_op = partial(mutation, **mut_params)
 
-    toolbox.decorate(
-        "mate",
-        gp.staticLimit(key=operator.attrgetter("height"), max_value=tree_max_height),
-    )
-    toolbox.decorate(
-        "mutate",
-        gp.staticLimit(key=operator.attrgetter("height"), max_value=tree_max_height),
-    )
+    toolbox.register("mate", apply_operators(height_limit(cx_op)))
+    toolbox.register("mutate", apply_operators(height_limit(mut_op)))
 
     return toolbox
 
 
 class TreeOptimizer(BaseOptimizer):
+    """Genetic programming optimizer specialized for tree-based individuals.
+
+    `TreeOptimizer` wires together primitive set construction, DEAP toolbox
+    creation, and the `IndividualEvaluator` to provide a ready-to-run GP
+    optimizer for trading strategies. It configures tree generation and
+    operator parameters and delegates the evolutionary loop to
+    :class:`BaseOptimizer`.
+
+    Key behavior:
+        - Uses `TreeIndividual` as the individual container.
+        - Wraps DEAP tree-level operators so they operate on `TreeIndividual`.
+        - Supports different tree initialization strategies (`grow`, `full`,
+          `half_and_half`) and enforces height limits after operators.
+    """
+
     def __init__(
         self,
         *,
         pset: gp.PrimitiveSetTyped | Callable[[], gp.PrimitiveSetTyped],
         metrics: tuple[Metric, ...],
         backtest: BacktestConfig | None = None,
-        mutation: MutationOp[gp.PrimitiveTree] = gp.mutUniform,  # type: ignore[assignment]
+        mutation: MutationOp[gp.PrimitiveTree] = gp.mutUniform,  # type: ignore[assignment]  # DEAP stubs type mutUniform incompatibly with MutationOp
         mutation_params: OperatorKwargs | None = None,
-        crossover: CrossoverOp[gp.PrimitiveTree] = gp.cxOnePoint,  # type: ignore[assignment]
+        crossover: CrossoverOp[gp.PrimitiveTree] = gp.cxOnePoint,
         crossover_params: OperatorKwargs | None = None,
-        selection: SelectionOp[gp.PrimitiveTree] = tools.selRoulette,
+        selection: SelectionOp[gp.PrimitiveTree] = tools.selRoulette,  # type: ignore[attr-defined]
         selection_params: OperatorKwargs | None = None,
         select_best: SelectionOp[gp.PrimitiveTree] = tools.selBest,  # type: ignore[assignment]
         select_best_params: OperatorKwargs | None = None,
@@ -185,6 +231,7 @@ class TreeOptimizer(BaseOptimizer):
             tree_max_depth=self.tree_max_depth,
             tree_max_height=self.tree_max_height,
             tree_gen=self.tree_gen,
+            inidividual_cls=TreeIndividual,
         )
 
     def _make_evaluator(
@@ -192,7 +239,6 @@ class TreeOptimizer(BaseOptimizer):
         pset: gp.PrimitiveSetTyped,
         metrics: tuple[Metric, ...],
     ) -> Any:
-        from gentrade.eval_ind import IndividualEvaluator
 
         return IndividualEvaluator(
             pset=pset,

@@ -24,6 +24,7 @@ from gentrade.classification_metrics import ClassificationMetricBase
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.eval_pop import create_pool
 from gentrade.optimizer.callbacks import Callback, ValidationCallback
+from gentrade.optimizer.individual import TreeIndividual
 from gentrade.optimizer.types import Metric
 
 logger = logging.getLogger(__name__)
@@ -132,32 +133,27 @@ def _normalize_data_and_labels(
     raise TypeError(f"Unsupported type for {dataset_name}_data: {type(data)}")
 
 
-def reset_creator() -> None:
-    """Delete DEAP creator types created by gentrade optimizers.
-
-    Call this between ``optimizer.fit()`` calls when changing the number of
-    objectives (i.e. changing the metrics tuple length). Not needed when
-    re-running with the same fitness weights.
-    """
-    from deap import creator
-
-    for name in ("FitnessGentrade", "IndividualGentrade"):
-        if hasattr(creator, name):
-            delattr(creator, name)
-
-
 class BaseOptimizer(ABC):
     """Abstract base for genetic programming optimizers.
 
-    Subclasses implement the pset construction, toolbox wiring, and evaluator
-    creation.  All shared orchestration (seeding, pool management, callbacks,
-    statistics, evolutionary loop) lives here.
+    This class provides shared orchestration logic for all gentrade optimizers:
+    seeding, multiprocessing pool management, callbacks, statistics logging,
+    and the evolutionary algorithm loop. Subclasses implement domain-specific
+    details like primitive set construction, toolbox wiring, and evaluator
+    creation.
 
-    Key attributes set after fit():
-        population_: Final evolved population.
-        logbook_: DEAP Logbook with per-generation statistics.
-        hall_of_fame_: Best individuals found during the run.
-        pset_: Constructed primitive set (useful for compiling individuals).
+    The optimizer works with :class:`TreeIndividual` instances (wrapping
+    GP trees with fitness), replacing bare :class:`deap.gp.PrimitiveTree`
+    objects to improve code clarity and manage fitness consistently.
+
+    Attributes:
+        population_: Final evolved population (list of :class:`TreeIndividual`).
+        logbook_: DEAP :class:`deap.tools.Logbook` with per-generation statistics.
+        hall_of_fame_: :class:`deap.tools.HallOfFame` containing best individuals
+            found during the run.
+        pset_: Constructed :class:`deap.gp.PrimitiveSetTyped` (useful for
+            compiling and executing individuals post-optimization).
+        best_individual_: The best individual found (updated per generation).
         current_generation_: The most recently completed generation number.
     """
 
@@ -210,29 +206,54 @@ class BaseOptimizer(ABC):
         self.callbacks = callbacks
 
         # Fitted attributes (set during fit)
-        self.population_: list[gp.PrimitiveTree]
+        self.population_: list[TreeIndividual]
         self.logbook_: tools.Logbook
         self.hall_of_fame_: tools.HallOfFame
         self.pset_: gp.PrimitiveSetTyped
         self.toolbox_: base.Toolbox
-        self.best_individual_: gp.PrimitiveTree | None = None
+        self.best_individual_: TreeIndividual | None = None
         self.current_generation_: int = 0
 
     @abstractmethod
     def _build_pset(self) -> gp.PrimitiveSetTyped:
-        """Build and return the primitive set for this optimizer."""
+        """Construct and return the primitive set for this optimizer.
+
+        Returns:
+            A configured :class:`deap.gp.PrimitiveSetTyped` ready for
+            use in GP tree generation and compilation.
+        """
         ...
 
     @abstractmethod
     def _build_toolbox(self, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
-        """Build and return the DEAP toolbox."""
+        """Construct and return the DEAP toolbox for this optimizer.
+
+        The toolbox should register functions for individual creation,
+        evaluation, selection, crossover, and mutation, adapted to work
+        with :class:`TreeIndividual` instances.
+
+        Args:
+            pset: Primitive set to use for tree generation and compilation.
+
+        Returns:
+            A configured :class:`deap.base.Toolbox`.
+        """
         ...
 
     @abstractmethod
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
     ) -> IndividualEvaluator:
-        """Create an IndividualEvaluator for the given metrics."""
+        """Create an :class:`IndividualEvaluator` for the given metrics.
+
+        Args:
+            pset: Primitive set used for compiling trees.
+            metrics: Tuple of metrics to evaluate during optimization.
+
+        Returns:
+            An :class:`IndividualEvaluator` configured for the given
+            metrics and primitive set.
+        """
         ...
 
     def _validate_selection_objective_count(self, selection: Any) -> None:
@@ -403,7 +424,7 @@ class BaseOptimizer(ABC):
             best_ind: Any | None = None,
         ) -> None:
             self.current_generation_ = gen
-            self.best_individual_ = cast(gp.PrimitiveTree, best_ind)
+            self.best_individual_ = cast(TreeIndividual, best_ind)
             for cb in _active_callbacks:
                 cb.on_generation_end(self, gen, population, best_ind)
 
@@ -451,6 +472,6 @@ class BaseOptimizer(ABC):
             print("=== Results ===")
             best = hof[0]
             print(f"Best individual fitness: {best.fitness.values}")
-            print(f"Best individual: {str(best)[:100]}...")
+            print(f"Best individual: {str(best.tree)[:100]}...")
 
         return self

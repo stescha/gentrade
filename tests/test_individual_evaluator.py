@@ -27,6 +27,7 @@ from gentrade.classification_metrics import (
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.minimal_pset import create_pset_default_medium
+from gentrade.optimizer.individual import TreeIndividual
 from gentrade.pset.pset_types import BooleanSeries, NumericSeries
 
 # ---------------------------------------------------------------------------
@@ -54,9 +55,9 @@ def labels(df: pd.DataFrame) -> pd.Series:
 
 
 @pytest.fixture
-def valid_individual() -> deap_gp.PrimitiveTree:
-    """Minimal valid GP tree: gt(open, close)."""
-    return deap_gp.PrimitiveTree(
+def valid_individual() -> TreeIndividual:
+    """Minimal valid GP individual wrapping a tree: gt(open, close)."""
+    tree = deap_gp.PrimitiveTree(
         [
             deap_gp.Primitive(
                 name="gt", args=[NumericSeries, NumericSeries], ret=BooleanSeries
@@ -65,6 +66,7 @@ def valid_individual() -> deap_gp.PrimitiveTree:
             deap_gp.Terminal(terminal="close", symbolic=False, ret=NumericSeries),
         ]
     )
+    return TreeIndividual([tree], weights=(1.0,))
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +165,7 @@ class TestYTrueValidation:
     def test_classification_without_y_true_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
         """Classification evaluator raises when y_true is None."""
@@ -174,7 +176,7 @@ class TestYTrueValidation:
     def test_backtest_with_y_true_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -186,7 +188,7 @@ class TestYTrueValidation:
     def test_list_classification_length_mismatch_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -208,7 +210,7 @@ class TestSingleDataFrameEvaluation:
     def test_classification_returns_float_tuple(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -223,7 +225,7 @@ class TestSingleDataFrameEvaluation:
     def test_const_classification_metric_returns_constant(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -235,7 +237,7 @@ class TestSingleDataFrameEvaluation:
     def test_const_backtest_metric_returns_constant(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
         """Stub backtest metric returns its fixed value via the backtest path."""
@@ -246,7 +248,7 @@ class TestSingleDataFrameEvaluation:
     def test_tuple_length_matches_metric_count(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -276,7 +278,7 @@ class TestDictEvaluation:
     def test_list_averages(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -300,7 +302,7 @@ class TestDictEvaluation:
     def test_backtest_list_averages(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
         """List backtest input: fitness is the mean across all dataset scores."""
@@ -331,7 +333,7 @@ class TestBacktestGating:
     def test_backtest_not_called_for_classification_only(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -344,7 +346,7 @@ class TestBacktestGating:
     def test_backtest_called_once_for_multiple_backtest_metrics(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
         """run_vbt_backtest is called exactly once even with two backtest metrics."""
@@ -369,7 +371,7 @@ class TestMixedMetrics:
     def test_mixed_metrics_return_correct_length(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -384,7 +386,7 @@ class TestMixedMetrics:
     def test_mixed_metrics_values_correct(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
@@ -399,7 +401,7 @@ class TestMixedMetrics:
     def test_mixed_requires_y_true(
         self,
         pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
         """Mixed evaluator raises when y_true is absent."""

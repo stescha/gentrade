@@ -21,6 +21,7 @@ from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
 from gentrade.minimal_pset import create_pset_default_medium
+from gentrade.optimizer.individual import TreeIndividual
 from gentrade.pset.pset_types import BooleanSeries, NumericSeries
 
 
@@ -44,9 +45,10 @@ def labels(df: pd.DataFrame) -> pd.Series:
 
 
 @pytest.fixture
-def valid_individual() -> deap_gp.PrimitiveTree:
-    """Build a minimal valid GP tree: gt(open, close)."""
-    return deap_gp.PrimitiveTree(
+def valid_individual() -> TreeIndividual:
+    """Build a minimal valid GP individual wrapping a tree: gt(open, close)."""
+    # Use per-instance fitness weights directly.
+    tree = deap_gp.PrimitiveTree(
         [
             deap_gp.Primitive(
                 name="gt", args=[NumericSeries, NumericSeries], ret=BooleanSeries
@@ -55,6 +57,7 @@ def valid_individual() -> deap_gp.PrimitiveTree:
             deap_gp.Terminal(terminal="close", symbolic=False, ret=NumericSeries),
         ]
     )
+    return TreeIndividual([tree], weights=(1.0,))
 
 
 @pytest.mark.unit
@@ -65,39 +68,39 @@ class TestTreeEvaluationError:
         self, pset: gp.PrimitiveSetTyped, df: pd.DataFrame, labels: pd.Series
     ) -> None:
         """Empty PrimitiveTree raises TreeEvaluationError (classification path)."""
-        individual = gp.PrimitiveTree([])
+        individual = TreeIndividual([gp.PrimitiveTree([])], weights=(1.0,))
         evaluator = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
-        assert excinfo.value.tree is individual
+        assert excinfo.value.tree is individual.tree
         assert "Failed to compile tree" in str(excinfo.value)
 
     def test_empty_tree_raises_backtest(
         self, pset: gp.PrimitiveSetTyped, df: pd.DataFrame
     ) -> None:
         """Empty PrimitiveTree raises TreeEvaluationError (backtest path)."""
-        individual = gp.PrimitiveTree([])
+        individual = TreeIndividual([gp.PrimitiveTree([])], weights=(1.0,))
         evaluator = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df])
-        assert excinfo.value.tree is individual
+        assert excinfo.value.tree is individual.tree
         assert "Failed to compile tree" in str(excinfo.value)
 
     def test_exception_preserves_tree_attribute(
         self, pset: gp.PrimitiveSetTyped, df: pd.DataFrame, labels: pd.Series
     ) -> None:
-        """TreeEvaluationError.tree is the same object as the input individual."""
-        individual = gp.PrimitiveTree([])
+        """TreeEvaluationError.tree is the same object as the input tree."""
+        individual = TreeIndividual([gp.PrimitiveTree([])], weights=(1.0,))
         evaluator = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
-        assert excinfo.value.tree is individual
+        assert excinfo.value.tree is individual.tree
 
     def test_exception_chaining_preserved(
         self, pset: gp.PrimitiveSetTyped, df: pd.DataFrame, labels: pd.Series
     ) -> None:
         """Original exception is preserved in __cause__."""
-        individual = gp.PrimitiveTree([])
+        individual = TreeIndividual([gp.PrimitiveTree([])], weights=(1.0,))
         evaluator = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df], signals=[labels])
@@ -110,7 +113,7 @@ class TestMetricCalculationError:
 
     def test_nan_classification_metric_raises(
         self,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
         labels: pd.Series,
@@ -124,13 +127,13 @@ class TestMetricCalculationError:
         evaluator = IndividualEvaluator(pset=pset, metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
-        assert excinfo.value.tree is valid_individual
+        assert excinfo.value.tree is valid_individual.tree
         assert excinfo.value.metric is not None
         assert "non-finite" in str(excinfo.value).lower()
 
     def test_inf_classification_metric_raises(
         self,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
         labels: pd.Series,
@@ -148,7 +151,7 @@ class TestMetricCalculationError:
 
     def test_exception_metric_raises(
         self,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
         labels: pd.Series,
@@ -167,7 +170,7 @@ class TestMetricCalculationError:
 
     def test_error_contains_signals(
         self,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
         labels: pd.Series,
@@ -185,7 +188,7 @@ class TestMetricCalculationError:
 
     def test_nan_backtest_metric_raises(
         self,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
     ) -> None:
@@ -207,7 +210,7 @@ class TestValidTreeEvaluation:
 
     def test_valid_tree_returns_tuple(
         self,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
         labels: pd.Series,
@@ -222,7 +225,7 @@ class TestValidTreeEvaluation:
 
     def test_zero_metric_allowed(
         self,
-        valid_individual: deap_gp.PrimitiveTree,
+        valid_individual: TreeIndividual,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
         labels: pd.Series,

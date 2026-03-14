@@ -20,6 +20,8 @@ import pandas as pd
 import vectorbt as vbt
 from deap import gp
 
+from gentrade.optimizer.individual import TreeIndividual
+
 if TYPE_CHECKING:
     from gentrade.config import BacktestConfig
 else:
@@ -228,33 +230,48 @@ class IndividualEvaluator:
 
     def _eval_dataset(
         self,
-        individual: gp.PrimitiveTree,
+        individual: TreeIndividual,
         df: pd.DataFrame,
         y_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
-        """Evaluate one individual on a single DataFrame.
+        """Evaluate a tree individual on a single DataFrame.
+
+        Compiles the individual's primary tree to executable signals and
+        runs the configured backtest (if needed) and metric calculations.
+        All metrics in the evaluator's metrics tuple are computed and
+        returned in the same order.
 
         Args:
-            individual: GP tree to evaluate.
-            df: OHLCV DataFrame.
-            y_true: Ground-truth labels; required when ``_needs_labels`` is True.
+            individual: :class:`TreeIndividual` instance to evaluate.
+            df: OHLCV DataFrame with columns [open, high, low, close, volume].
+            y_true: Ground-truth labels (boolean or -1/+1 signals); required
+                when the evaluator has classification metrics or when running
+                backtest metrics on this dataset.
 
         Returns:
-            Tuple of floats, one per metric.
+            Tuple of fitness values (float), one per metric in order.
+
+        Raises:
+            ValueError: If y_true is required but not provided, or if it
+                is provided when no metrics need it.
+            TreeEvaluationError: If tree compilation fails.
+            MetricCalculationError: If any metric returns NaN, Inf, or raises
+                an exception.
         """
         if self._needs_labels and y_true is None:
             raise ValueError("y_true is required for classification metrics.")
 
-        signals = self._compile_tree_to_signals(individual, self.pset, df)
+        tree = individual.tree
+        signals = self._compile_tree_to_signals(tree, self.pset, df)
 
         # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
         bt_result: BtResult | vbt.Portfolio | None = None
         if self._needs_backtest:
             if y_true is None:
                 raise ValueError("y_true is required for backtest metrics.")
-            bt_result = self.run_cpp_backtest(individual, df, signals, y_true)
+            bt_result = self.run_cpp_backtest(tree, df, signals, y_true)
         if self._needs_backtest_vbt:
-            pf = self.run_vbt_backtest(individual, df, signals)
+            pf = self.run_vbt_backtest(tree, df, signals)
 
         result: list[float] = []
         for m in self.metrics:
@@ -272,7 +289,7 @@ class IndividualEvaluator:
             except Exception as e:
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} calculation failed.",
-                    tree=individual,
+                    tree=tree,
                     metric=m,
                     signals=signals,
                     err=e,
@@ -281,7 +298,7 @@ class IndividualEvaluator:
             if not np.isfinite(val):
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} returned non-finite value.",
-                    tree=individual,
+                    tree=tree,
                     metric=m,
                     value=val,
                     signals=signals,
@@ -297,7 +314,7 @@ class IndividualEvaluator:
     @overload
     def evaluate(
         self,
-        individual: gp.PrimitiveTree,
+        individual: TreeIndividual,
         *,
         ohlcvs: list[pd.DataFrame],
         signals: list[pd.Series] | None = None,
@@ -307,7 +324,7 @@ class IndividualEvaluator:
     @overload
     def evaluate(
         self,
-        individual: gp.PrimitiveTree,
+        individual: TreeIndividual,
         *,
         ohlcvs: list[pd.DataFrame],
         signals: list[pd.Series] | None = None,
@@ -316,35 +333,43 @@ class IndividualEvaluator:
 
     def evaluate(
         self,
-        individual: gp.PrimitiveTree,
+        individual: TreeIndividual,
         *,
         ohlcvs: list[pd.DataFrame],
         signals: list[pd.Series] | None = None,
         aggregate: bool = True,
     ) -> tuple[float, ...] | list[tuple[float, ...]]:
-        """Evaluate one GP individual and return a fitness tuple.
+        """Evaluate a tree individual across one or more OHLCV datasets.
 
-        Supports either a single OHLCV DataFrame or a mapping of DataFrames.
-        When a mapping is given each entry is scored independently and the
-        resulting fitness tuples are averaged component-wise.
+        Compiles the individual's primary tree into executable signals and
+        evaluates all configured metrics. When multiple datasets are provided,
+        evaluates each independently and optionally returns the averaged or
+        per-dataset fitness values.
 
         Args:
-            individual: GP tree to evaluate.
-            df: list of OHLCV DataFrames.
-            y_true: Optional list of label Series.  Must be provided when any
-                metric is a ``ClassificationMetricConfigBase`` and must have
-                the same length as ``df``.
+            individual: :class:`TreeIndividual` instance to evaluate.
+            ohlcvs: List of OHLCV DataFrames with columns
+                [open, high, low, close, volume].
+            signals: Optional list of ground-truth label Series
+                (boolean or -1/+1 signals), one per DataFrame in `ohlcvs`.
+                Required when classification metrics are configured; must have
+                the same length as `ohlcvs` if provided.
+            aggregate: If True (default), returns a single tuple with
+                component-wise average fitness across all datasets. If False,
+                returns a list of fitness tuples, one per dataset.
 
         Returns:
-            Tuple of floats, one per metric.
+            If `aggregate=True`: a tuple of floats (one per metric)
+            representing the averaged fitness across all datasets.
+            If `aggregate=False`: a list of tuples, one per dataset, each
+            containing fitness values for that dataset.
 
         Raises:
-            ValueError: If ``y_true`` is ``None`` but classification metrics are
-                present, or if ``y_true`` is provided but no classification
-                metric is present.
-            TreeEvaluationError: If tree compilation or execution fails.
-            MetricCalculationError: If a metric returns a non-finite value or
-                raises an unexpected exception.
+            ValueError: If `signals` is required but not provided, or if
+                `signals` is provided when no classification metrics are present.
+            TreeEvaluationError: If tree compilation fails.
+            MetricCalculationError: If any metric returns NaN, Inf, or raises
+                an exception.
         """
         # Pre-checks common to both single- and multi-dataset modes.
         if self._needs_labels and signals is None:

@@ -60,7 +60,7 @@ def test_tree_optimizer_selection_validation(
         )
 
     # Multi objective with NSGA2 should pass
-    sel_nsga2 = tools.selNSGA2
+    sel_nsga2 = tools.selNSGA2  # type: ignore[attr-defined]
     TreeOptimizer(
         pset=pset, metrics=(classification_metric, backtest_metric), selection=sel_nsga2
     )
@@ -86,6 +86,6 @@ def test_tree_optimizer_callables(
     opt = TreeOptimizer(
         pset=pset,
         metrics=(classification_metric,),
-        mutation=custom_mut,  # type: ignore[arg-type]
+        mutation=custom_mut,
     )
     assert opt.mutation == custom_mut

@@ -163,10 +163,11 @@ class TestE2ECppBacktestSingleObjective:
 
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(MeanPnlCppMetric(min_trades=0), ),
             metrics_val=(MeanPnlMetric(min_trades=0),),
             # VBT metric: no labels needed for validation
             backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
+            selection=tools.selBest, #type: ignore[arg-type]
             mu=20,
             lambda_=40,
             generations=3,

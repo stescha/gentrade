@@ -333,7 +333,7 @@ class TestSeededDeterminism:
                 verbose=False,
             )
             opt.fit(df, labels)
-            return [len(ind) for ind in opt.population_]
+            return [len(ind.tree) for ind in opt.population_]
 
         struct1 = run_evolution(42)
         struct2 = run_evolution(42)
@@ -356,7 +356,7 @@ class TestSeededDeterminism:
                 verbose=False,
             )
             opt.fit(df, labels)
-            return [len(ind) for ind in opt.population_]
+            return [len(ind.tree) for ind in opt.population_]
 
         struct1 = run_evolution(42)
         struct2 = run_evolution(43)
