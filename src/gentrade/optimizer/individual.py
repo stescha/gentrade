@@ -53,7 +53,7 @@ def _get_or_create_fitness_class(n_objectives: int) -> type[base.Fitness]:
     return cast(type[base.Fitness], cls)
 
 
-class TreeIndividual(list[gp.PrimitiveTree]):
+class TreeIndividualBase(list[gp.PrimitiveTree]):
     """A GP individual that wraps one or more primitive trees with fitness tracking.
 
     This class extends a list to contain :class:`deap.gp.PrimitiveTree` instances
@@ -89,9 +89,32 @@ class TreeIndividual(list[gp.PrimitiveTree]):
         fitness_cls = _get_or_create_fitness_class(len(weights))
         self.fitness = fitness_cls()
 
+
+class TreeIndividual(TreeIndividualBase):
+    """A GP individual containing exactly one primitive tree with fitness tracking."""
+
+    def __init__(
+        self,
+        content: Iterable[gp.PrimitiveTree] | gp.PrimitiveTree,
+        weights: Tuple[float, ...],
+    ) -> None:
+        """Initialize a single-tree individual with given tree and fitness weights."""
+        if isinstance(content, gp.PrimitiveTree):
+            content = [content]
+        elif not isinstance(content, list):
+            raise ValueError(
+                "TreeIndividual content must be a PrimitiveTree or list of "
+                f"PrimitiveTrees, got {type(content)}"
+            )
+        elif len(content) != 1:
+            raise ValueError(
+                f"TreeIndividual must contain exactly one tree, got {len(content)}"
+            )
+        super().__init__(content, weights)
+
     @property
     def tree(self) -> gp.PrimitiveTree:
-        """Return the first (primary) tree for single-tree individuals.
+        """Return the tree for single-tree individuals.
 
         This property provides convenient access to the most common case:
         a single-tree GP individual. It returns `self[0]`.
