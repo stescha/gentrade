@@ -183,3 +183,80 @@ def eaMuPlusLambdaGentrade(
             val_callback(gen, ngen, population, best_ind)
 
     return population, logbook
+
+
+class EaMuPlusLambda:
+    """Wrapper around :func:`eaMuPlusLambdaGentrade` implementing the ``Algorithm``
+    interface.
+
+    Stores all algorithm configuration at construction time and exposes a
+    single :meth:`run` method that accepts a population and returns the
+    ``(population, logbook)`` pair produced by the underlying evolutionary
+    algorithm.
+    """
+
+    def __init__(
+        self,
+        pool: pool.Pool,
+        toolbox: base.Toolbox,
+        *,
+        mu: int,
+        lambda_: int,
+        cxpb: float,
+        mutpb: float,
+        ngen: int,
+        stats: tools.Statistics | None = None,
+        halloffame: tools.HallOfFame | None = None,
+        verbose: bool = True,
+        val_callback: Callable[[int, int, list[Any], Any | None], None] | None = None,
+    ) -> None:
+        """Store all parameters needed to run the evolutionary algorithm.
+
+        Args:
+            pool: Multiprocessing pool used for parallel evaluation.
+            toolbox: DEAP toolbox with registered operators.
+            mu: Number of individuals selected for the next generation.
+            lambda_: Number of offspring produced per generation.
+            cxpb: Crossover probability.
+            mutpb: Mutation probability.
+            ngen: Total number of generations.
+            stats: Optional DEAP statistics object.
+            halloffame: Optional hall of fame.
+            verbose: Whether to print per-generation statistics.
+            val_callback: Optional callback invoked after each generation.
+        """
+        self.pool = pool
+        self.toolbox = toolbox
+        self.mu = mu
+        self.lambda_ = lambda_
+        self.cxpb = cxpb
+        self.mutpb = mutpb
+        self.ngen = ngen
+        self.stats = stats
+        self.halloffame = halloffame
+        self.verbose = verbose
+        self.val_callback = val_callback
+
+    def run(self, population: list[Any]) -> tuple[list[Any], tools.Logbook]:
+        """Execute the evolutionary algorithm on the given population.
+
+        Args:
+            population: Initial population list.
+
+        Returns:
+            A tuple of (final_population, logbook).
+        """
+        return eaMuPlusLambdaGentrade(
+            self.pool,
+            population,
+            self.toolbox,
+            mu=self.mu,
+            lambda_=self.lambda_,
+            cxpb=self.cxpb,
+            mutpb=self.mutpb,
+            ngen=self.ngen,
+            stats=self.stats,
+            halloffame=self.halloffame,
+            verbose=self.verbose,
+            val_callback=self.val_callback,
+        )

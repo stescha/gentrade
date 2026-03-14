@@ -3,12 +3,25 @@ from __future__ import annotations
 
 from typing import Any, Dict, Protocol, Sequence, TypeVar, Union
 
+from deap import tools
+
 from gentrade.backtest_metrics import BacktestMetricBase
 from gentrade.classification_metrics import ClassificationMetricBase
 
 T_co = TypeVar("T_co", covariant=True)
 Metric = Union[ClassificationMetricBase, BacktestMetricBase]
 OperatorKwargs = Dict[str, Any]
+
+
+class Algorithm(Protocol):
+    """Structural interface for evolutionary algorithms.
+
+    Implementations are configured via constructor. `run` accepts a
+    population list and returns (population, logbook).
+    """
+
+    def run(self, population: list[Any]) -> tuple[list[Any], tools.Logbook]: ...
+
 
 class SelectionOp(Protocol[T_co]):
     def __call__(

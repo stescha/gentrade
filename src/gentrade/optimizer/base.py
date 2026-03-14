@@ -8,6 +8,8 @@ and evaluator creation.
 import logging
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from multiprocessing import pool
 from typing import Any, cast
 
 import numpy as np
@@ -19,13 +21,13 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.algorithms import eaMuPlusLambdaGentrade
+from gentrade.algorithms import EaMuPlusLambda
 from gentrade.classification_metrics import ClassificationMetricBase
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.eval_pop import create_pool
 from gentrade.optimizer.callbacks import Callback, ValidationCallback
 from gentrade.optimizer.individual import TreeIndividual
-from gentrade.optimizer.types import Metric
+from gentrade.optimizer.types import Algorithm, Metric
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +284,41 @@ class BaseOptimizer(ABC):
             if selection in SELECTION_MULTI_OBJ:
                 pass
 
+    def create_algorithm(
+        self,
+        pool: pool.Pool,
+        stats: tools.Statistics,
+        halloffame: tools.HallOfFame,
+        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+    ) -> Algorithm:
+        """Return algorithm instance to execute the evolutionary loop.
+
+        Default: `EaMuPlusLambda` configured from optimizer attributes.
+        Subclasses may override to provide different algorithms.
+
+        Args:
+            pool: Multiprocessing pool for parallel individual evaluation.
+            stats: DEAP statistics object for logging per-generation metrics.
+            halloffame: Hall of fame tracking best individuals.
+            val_callback: Optional callback invoked after each generation.
+
+        Returns:
+            A configured :class:`Algorithm` instance ready to call ``run()``.
+        """
+        return EaMuPlusLambda(
+            pool=pool,
+            toolbox=self.toolbox_,
+            mu=self.mu,
+            lambda_=self.lambda_,
+            cxpb=self.cxpb,
+            mutpb=self.mutpb,
+            ngen=self.generations,
+            stats=stats,
+            halloffame=halloffame,
+            verbose=self.verbose,
+            val_callback=val_callback,
+        )
+
     def fit(
         self,
         X: DataInput,
@@ -440,20 +477,8 @@ class BaseOptimizer(ABC):
             print("-" * 60)
 
         try:
-            pop, logbook = eaMuPlusLambdaGentrade(
-                pool_obj,
-                pop,
-                self.toolbox_,
-                mu=self.mu,
-                lambda_=self.lambda_,
-                cxpb=self.cxpb,
-                mutpb=self.mutpb,
-                ngen=self.generations,
-                stats=stats,
-                halloffame=hof,
-                verbose=self.verbose,
-                val_callback=_gen_callback,
-            )
+            algorithm = self.create_algorithm(pool_obj, stats, hof, _gen_callback)
+            pop, logbook = algorithm.run(pop)
         finally:
             pool_obj.close()
             pool_obj.join()

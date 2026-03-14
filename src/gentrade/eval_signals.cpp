@@ -103,7 +103,7 @@ std::tuple<py::array_t<int>, py::array_t<int>, py::array_t<double>, py::array_t<
       } else if((sells[t] == 1) && position>0 ){
         sell_price = open[t+order_delay];
         balance += sell_price * position * (1 - sell_fee);
-        1pnl = ((sell_price - buy_price) - (sell_fee*sell_price + buy_fee*buy_price))/buy_price;
+        pnl = ((sell_price - buy_price) - (sell_fee*sell_price + buy_fee*buy_price))/buy_price;
         position = 0;
         sell_times.push_back(t+order_delay);
         buy_times.push_back(buy_time);
