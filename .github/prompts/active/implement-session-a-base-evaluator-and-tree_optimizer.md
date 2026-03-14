@@ -39,7 +39,7 @@ Implement the Session A refactor: add `BaseEvaluator` and `TreeEvaluator` (renam
 ## Detailed Implementation Steps
 
 ### Step 1 — Plan and Branch
-- Create a feature branch from `main`: `dev/session-a/base-eval-tree-opt`.
+- Create a feature branch from `dev`: `feat/session-a/base-eval-tree-opt`. Use local `dev` branch, do not pull. 
 - Make atomic commits for each logical change following `.github/commands/commit-messages.md`.
 
 ### Step 2 — `BaseEvaluator` + `TreeEvaluator`
@@ -169,7 +169,7 @@ Notes:
   - "Add BaseTreeOptimizer and refactor TreeOptimizer to subclass"
   - "Update type hints to use BaseEvaluator in eval_pop/callbacks/base"
   - "Add tests for BaseEvaluator abstraction"
-- Push branch `dev/session-a/base-eval-tree-opt` and open PR following `.github/commands/pr-description.md` if you want a PR created.
+- Push branch `feat/session-a/base-eval-tree-opt` do not open a PR.
 
 ## Test Plan
 
@@ -216,7 +216,7 @@ poetry run pytest tests/test_optimizer_unit.py -q
 | **Modify** | tests/test_individual_evaluator.py |
 
 ## Checklist
-- [ ] Create branch `dev/session-a/base-eval-tree-opt` from `main`
+- [ ] Create branch `feat/session-a/base-eval-tree-opt` from `dev`
 - [ ] Implement `BaseEvaluator` and `TreeEvaluator` in `src/gentrade/eval_ind.py`
 - [ ] Update `_create_tree_toolbox` signature in `src/gentrade/optimizer/tree.py`
 - [ ] Add `BaseTreeOptimizer` and refactor `TreeOptimizer`

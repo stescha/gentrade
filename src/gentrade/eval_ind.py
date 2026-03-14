@@ -36,10 +36,30 @@ from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
 from gentrade.optimizer.types import Metric
 from gentrade.types import BtResult
 
+from abc import ABC, abstractmethod
+
 TradeSide = Literal["buy", "sell"]
 
 
-class IndividualEvaluator:
+class BaseEvaluator(ABC):
+    """Abstract base evaluator for GP trees.
+
+    Subclasses must implement _eval_dataset which evaluates a single
+    individual on a single DataFrame and returns a tuple of metric floats.
+    """
+
+    @abstractmethod
+    def _eval_dataset(
+        self,
+        individual: "TreeIndividual",
+        df: "pd.DataFrame",
+        entry_true: "pd.Series" | None = None,
+        exit_true: "pd.Series" | None = None,
+    ) -> tuple[float, ...]:
+        ...
+
+
+class IndividualEvaluator(BaseEvaluator):
     """Unified GP-tree evaluator supporting backtest and classification metrics.
 
     At construction time the ``metrics`` tuple is scanned once to set the
@@ -494,3 +514,8 @@ class IndividualEvaluator:
         arr = np.array(fitnesses, dtype=float)
         mean = arr.mean(axis=0)
         return tuple(float(x) for x in mean)
+
+
+# Backwards-compatible export: new name TreeEvaluator refers to the evaluator
+# implementation historically named IndividualEvaluator.
+TreeEvaluator = IndividualEvaluator
