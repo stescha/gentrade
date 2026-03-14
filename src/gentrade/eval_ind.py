@@ -44,9 +44,35 @@ TradeSide = Literal["buy", "sell"]
 class BaseEvaluator(ABC):
     """Abstract base evaluator for GP trees.
 
-    Subclasses must implement _eval_dataset which evaluates a single
-    individual on a single DataFrame and returns a tuple of metric floats.
+    Holds shared constructor logic determining which evaluation branches
+    are required based on the supplied metrics. Concrete subclasses must
+    implement ``_eval_dataset``.
     """
+
+    def __init__(
+        self,
+        pset: gp.PrimitiveSetTyped,
+        metrics: tuple[Metric, ...],
+        backtest: BacktestConfig | None = None,
+    ) -> None:
+        self.pset = pset
+        self.metrics = metrics
+        self.backtest = backtest
+
+        self._needs_backtest: bool = any(
+            isinstance(m, CppBacktestMetricBase) for m in metrics
+        )
+        self._needs_backtest_vbt: bool = any(
+            isinstance(m, VbtBacktestMetricBase) for m in metrics
+        )
+        self._needs_classification: bool = any(
+            isinstance(m, ClassificationMetricBase) for m in metrics
+        )
+        # For backwards compat: _needs_labels is True if classification OR C++ backtest
+        self._needs_labels: bool = any(
+            isinstance(m, (ClassificationMetricBase, CppBacktestMetricBase))
+            for m in metrics
+        )
 
     @abstractmethod
     def _eval_dataset(
@@ -92,25 +118,9 @@ class IndividualEvaluator(BaseEvaluator):
         backtest: BacktestConfig | None = None,
         trade_side: TradeSide = "buy",
     ) -> None:
-        self.pset = pset
-        self.metrics = metrics
-        self.backtest = backtest
+        # Delegate shared initialisation to BaseEvaluator
+        super().__init__(pset=pset, metrics=metrics, backtest=backtest)
         self.trade_side = trade_side
-
-        self._needs_backtest: bool = any(
-            isinstance(m, CppBacktestMetricBase) for m in metrics
-        )
-        self._needs_backtest_vbt: bool = any(
-            isinstance(m, VbtBacktestMetricBase) for m in metrics
-        )
-        self._needs_classification: bool = any(
-            isinstance(m, ClassificationMetricBase) for m in metrics
-        )
-        # For backwards compat: _needs_labels is True if classification OR C++ backtest
-        self._needs_labels: bool = any(
-            isinstance(m, (ClassificationMetricBase, CppBacktestMetricBase))
-            for m in metrics
-        )
 
     # ------------------------------------------------------------------
     # Internal helpers
