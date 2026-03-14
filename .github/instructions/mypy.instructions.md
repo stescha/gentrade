@@ -2,15 +2,20 @@
 applyTo: "**/*.py"
 ---
 
-- Avoid escape hatches like `Any` type or `object` type.
-- Always try to find the root cause of the type error and fix it instead of just silencing it.
-- Prefer casting and assertions to narrow types if type is known.
-- Modify stub files to support correct typing for deap. Stub files are located in `typings` folder.
-- Add type annotations to all functions and methods. Avoid untyped functions.
-- Use type aliases for complex types to improve readability.
-- Only use type:ignores when absolutely necessary and add a comment explaining why it is needed and what the expected type is. Prefer to fix the underlying issue instead of using type:ignore.
-- Exception: All `vectorbt` or `zigzag` related code can be silenced with `type:ignore` because there is no `vectorbt` or `zigzag` stub files. Do not create a stub file for `vectorbt` or `zigzag`. Use `type:ignore` for all `vectorbt` and `zigzag` related code omit explaining comments for `vectorbt` and `zigzag` related `type:ignore`.
- - Exception: All `vectorbt` or `zigzag` related code can be silenced with `type:ignore` because there is no `vectorbt` or `zigzag` stub files. Do not create a stub file for `vectorbt` or `zigzag`. Use `type:ignore` for all `vectorbt` and `zigzag` related code omit explaining comments for `vectorbt` and `zigzag` related `type:ignore`.
+ - Avoid escape hatches like `Any` type or `object` type.
+ - Always try to find the root cause of the type error and fix it instead of just silencing it.
+ - Prefer casting and assertions to narrow types if type is known.
+ - Modify stub files to support correct typing for deap. Stub files are located in `typings` folder.
+ - Add type annotations to all functions and methods. Avoid untyped functions.
+ - Use type aliases for complex types to improve readability (e.g., `IndividualT`, `DataInput`).
+ - Only use `# type: ignore` when necessary and add a short explanatory comment. Prefer fixing the root cause.
+ - Exception: `vectorbt` or `zigzag` related code may use `# type: ignore` where no stubs exist.
+
+Additional notes specific to this codebase:
+
+ - Use typed wrappers: prefer annotating `TreeIndividual` and `Algorithm[...]` rather than raw `gp.PrimitiveTree`.
+ - Annotate optimizer `fit` inputs: `entry_label` and `exit_label` use `LabelInput` aliases and must mirror `X` structure.
+ - Wrap native C++ outputs with typed dataclasses (e.g., `gentrade.types.BtResult`) to reduce `type: ignore` footprint.
 
 Additional guidance for the C++ backtester integration:
 

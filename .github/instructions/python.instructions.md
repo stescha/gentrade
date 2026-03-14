@@ -13,6 +13,11 @@ General Python conventions for all code in this repository.
 - **No wildcards**: avoid `from module import *`.
 - Use `TYPE_CHECKING` blocks for import-only type annotations to prevent circular imports when necessary.
 
+Additional conventions:
+
+- Prefer explicit typed wrappers such as `TreeIndividual` and annotate `Algorithm` types returned by `create_algorithm()`.
+- Document the `fit(...)` contract in docstrings: `entry_label` and `exit_label` must mirror `X` in shape and index.
+
 
 ## Naming Conventions
 

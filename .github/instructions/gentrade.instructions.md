@@ -4,58 +4,68 @@ applyTo: "src/gentrade/**/*.py"
 
 # Gentrade — Project-Specific Instructions
 
-These instructions cover the domain, architecture, and conventions specific to the `gentrade` genetic programming trading strategy project.
+These instructions describe the current architecture, data contracts, and conventions for contributors and agent automation.
 
 ## Project Goal
 
-Evolve trading strategies using genetic programming (GP) on historical OHLCV cryptocurrency data. This is an experimentation project — the algorithm, fitness functions, and strategy representation are under active research.
+Evolve trading strategies via genetic programming against OHLCV datasets. The codebase prioritizes reproducible experiments, vectorized primitives, and a small, testable runtime for evaluation.
 
-**Note on imports**: All Python imports are performed as `import gentrade` (or `from gentrade import …`) from outside the `src` directory. Internal imports within `src` are relative. No `sys.path` manipulation.
+**Imports**: External usage imports `gentrade` (project root). Internal modules use package imports (no sys.path hacks).
 
-## Optimizer Architecture
+## Core Architecture
 
-The project uses an object-oriented optimizer system. The core logic is encapsulated in subclasses of `BaseOptimizer`.
+- **Optimizer abstraction**: The orchestration is driven by `BaseOptimizer` subclasses. Optimizers expose a `fit(...)` method that accepts separate entry and exit label inputs (both for training and validation), and they rely on an `Algorithm` instance to run the evolutionary loop.
+- **Algorithm interface**: Algorithms (e.g., `EaMuPlusLambda`) implement a `run(population) -> (population, logbook)` method. Optimizers must return an `Algorithm` via `create_algorithm()`.
+- **Individuals**: The system uses `TreeIndividual` wrappers (not raw `gp.PrimitiveTree`) so fitness and tree metadata are managed consistently.
+- **Evaluator**: `IndividualEvaluator` accepts compiled trees and optional label inputs (entry and exit labels) and produces fitness tuples. Label presence/absence is validated by the evaluator depending on metrics.
 
-### Key Components
+## Data & Fit Contract
 
-- **TreeOptimizer**: The primary class for GP tree evolution. It handles pset construction, toolbox wiring, and the evolutionary loop.
-- **IndividualEvaluator**: A unified evaluator that executes GP trees and dispatches to classification or backtest metrics. It automatically detects required inputs (labels, OHLCV) based on the provided metrics.
-- **Callbacks**: Lifecycle hooks (`on_fit_start`, `on_generation_end`, `on_fit_end`) for custom logic. `ValidationCallback` is used for periodic evaluation on unseen data.
+- `fit()` signature accepts:
+	- `X`: training OHLCV (DataFrame, list, or dict)
+	- `entry_label`, `exit_label`: optional training labels; must mirror the structure of `X` (same mapping/list shape or index)
+	- `X_val`, `entry_label_val`, `exit_label_val`: optional validation sets
+- A normalization helper converts these inputs into ordered lists and validates index/key alignment. Errors are raised for mismatched shapes or indices.
+
+## Strategy Representation
+
+- Candidate solutions are `TreeIndividual` objects that encapsulate a typed expression tree and a `.fitness` attribute. Use provided helpers to compile or serialize them.
+- Primitives are added to a typed `PrimitiveSetTyped`. Primitives must be vectorized (operate on full `pd.Series`/`np.ndarray`).
 
 ## Core Concept: GP Trees as Trading Strategies
 
-- **Strategy Representation**: Candidate solutions are DEAP `PrimitiveTree` objects. They transform OHLCV data into boolean signals (`pd.Series`).
-- **Primitives**: Trees are composed of TA-Lib indicators, arithmetic/comparison operators, and boolean logic.
-- **Type Safety**: The primitive set (`pset.py`) enforces strict typing (e.g., ADX receives High/Low/Close).
-- **Generation**: Custom generators (`genFull`, `genGrow`, `genHalfAndHalf` in `growtree.py`) must be used over DEAP defaults to handle the typed hierarchy.
-- **Serialization**: String representations can be parsed back into `PrimitiveTree` objects via `parse_individual`.
+- **Representation**: Candidate solutions are expression trees wrapped in `TreeIndividual`. The wrapper holds the typed `PrimitiveTree`, fitness, and any metadata used by optimizers and callbacks.
+- **Primitives**: Trees are built from TA-Lib-style indicators, arithmetic/comparison operators, and boolean logic. The primitive set enforces argument/return types (e.g., indicators expecting High/Low/Close columns).
+- **Generation**: Use the project's custom generators in `growtree.py` (`genFull`, `genGrow`, `genHalfAndHalf`) rather than DEAP defaults to respect typing and arity constraints.
+- **Serialization**: Helpers exist to convert trees to/from string forms (see `parse_individual`) for logging, checkpoints, and reproducibility.
 
-## Strategy Paradigms
+## Evaluation
 
-1. **Pair Strategy**: Two trees per individual (buy tree + sell tree). Evaluated via the **C++ backtester** (`eval_signals.cpp`) for high-performance order simulation.
-2. **Single-tree Strategy**: One buy tree, exits via stop-loss / take-profit parameters. Evaluated via the **VectorBT backend**.
+- Two label channels are supported: entry and exit. Evaluators use the channel(s) required by metrics (classification vs backtest).
+- The high-performance C++ backtester consumes signal pairs (entry/exit) produced by compiled trees; VectorBT path is available for fast prototyping.
 
-## Evaluation & Metrics
+### Strategy Paradigms
 
-- **Performance**: Use vectorized computation only. Primitives and metrics must operate on full `pd.Series` / `np.ndarray`.
-- **Metrics**: Metrics consume simulator outputs (`BtResult` for C++, `vbt.Portfolio` for VectorBT) or true labels to produce a fitness tuple.
-- **Multi-objective**: Providing multiple metrics triggers multi-objective optimization (e.g., NSGA-II).
-- **Validation**: Providing `X_val` and `y_val` to `fit()` triggers periodic validation via `ValidationCallback`.
+1. **Pair Strategy**: Two trees per individual (buy tree + sell tree). Evaluated via the C++ backtester for order simulation.
+2. **Single-tree Strategy**: One buy tree with exits handled by stop-loss / take-profit or vectorized exit logic; typically evaluated with the VectorBT backend for faster iteration.
 
-## Genetic Operators & Constraints
+## Operators & Safety
 
-- **Mutation & Crossover**: Operators should retry (up to 10 times) to ensure offspring differs from parents.
-- **Bloat Control**: `gp.staticLimit` is mandatory on mate/mutate to cap tree height.
-- **Signal Validation**: Reject invalid signal patterns (all-true, all-false, too few signals) before simulation to save computation time.
+- Bloat control via `gp.staticLimit` is mandatory. Operators must prefer minimal destructive changes and retry to produce valid offspring.
+- Evaluation must be parallelizable and use picklable objects for `multiprocessing.Pool`.
 
-## Performance Requirements
+- **Mutation & Crossover**: Operators should retry (up to a small maximum) to produce offspring that differ from parents and respect type/size constraints.
+- **Signal Validation**: Reject trivially invalid signals (all-true, all-false, too few trade events) before running expensive simulations to save compute.
 
-- **Multiprocessing**: Population evaluation must support `multiprocessing.Pool.map`. All individuals and data must be picklable.
-- **C++ Backend**: Performance-critical inner loop. Keep it lean and type-safe.
+## Testing & Validation
 
-## What NOT to do
+- Unit tests must exercise the `fit()` contract for both label channels and verify the optimizer correctly wires the `Algorithm` and `IndividualEvaluator`.
 
-- Do not use the legacy `run_evolution` function or the `RunConfig` for orchestration.
-- Do not build complex factory hierarchies; prefer direct instantiation of optimizers.
-- Avoid row-by-row loops in primitives, metrics, or evaluation logic.
-- Never store fitness separately; it must remain on the individual's `.fitness` attribute.
+## Do Not
+
+- Do not assume raw `gp.PrimitiveTree` everywhere — use `TreeIndividual` and the optimizer/evaluator helpers.
+- Do not ignore label validation: entry/exit labels must match `X` in shape or keys.
+ - Do not use the legacy `run_evolution` function or rely on `RunConfig` for orchestration; prefer optimizer classes and explicit wiring.
+ - Do not build complex factory hierarchies; prefer direct, testable instantiation of optimizers and evaluators.
+ - Avoid row-by-row loops in primitives, metrics, or evaluation logic — prefer vectorized operations over `pd.Series`/`np.ndarray`.
+ - Never store fitness separately from the individual's `.fitness` attribute; use the wrapper and DEAP conventions.

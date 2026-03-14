@@ -4,22 +4,18 @@ applyTo: "src/gentrade/**/*.py"
 
 # Configuration System — Development Guidelines
 
-The configuration system in `gentrade` follows a thin-data approach. Config models are Pydantic-based containers for parameters, while behavior and orchestration are handled by the `BaseOptimizer` and its subclasses.
+Config models are Pydantic-based thin-data containers. They describe parameters only; runtime behavior is assembled by optimizers and algorithms.
 
 ## Core Principle
 
-**Config is thin data.** Behavior belongs to the optimizer (`TreeOptimizer`, `BaseOptimizer`), not the config classes.
+**Config is thin data.** Behavior belongs to the optimizer and the `Algorithm` chosen by the optimizer. Configs provide typed parameters and flags that guide wiring.
 
-- **No Evaluator Configs**: Evaluation logic is encapsulated in `IndividualEvaluator` and `BaseOptimizer.fit()`. Callers provide runtime metrics and backtest parameters directly to the optimizer.
-- **Legacy Artifacts**: Some legacy models like `RunConfig` and its components remain in `config.py`. While they may be used for future development or as templates, the current core evolution pipeline does not depend on them.
+- **No Evaluator Logic in Configs**: Evaluators and label contracts are handled by `IndividualEvaluator` and the optimizer's `fit(...)` flow. Configs provide metric definitions and operator parameters only.
+- **Run-time wiring**: Optimizers use config flags and `ClassVar` callables to register operators on the DEAP toolbox and to construct `IndividualEvaluator` instances.
 
-## Component Configuration Pattern
+## Component Pattern
 
-When defining or extending component configurations (e.g., specific metrics or operator parameters), follow these rules:
-
-### 1. Hierarchy and Type Tags
-
-All component configs subclass `_ComponentConfig`, which provides an auto-derived `type` tag based on the class name.
+- Subclass `_ComponentConfig` for reusable components. Use computed `type` tags for serialization and selection.
 
 ```python
 class _ComponentConfig(BaseModel):
@@ -29,9 +25,9 @@ class _ComponentConfig(BaseModel):
         return _to_snake_case(self.__class__.__name__)
 ```
 
-### 2. Functional Decoupling
+## Functional Decoupling
 
-Functions and operators are referenced via `ClassVar` or looked up via module-level dictionaries. They are never serialized.
+Keep behavior in callables referenced from configs via `ClassVar` (never serialize callables). For example:
 
 ```python
 class UniformMutationConfig(MutationConfigBase):
@@ -39,34 +35,16 @@ class UniformMutationConfig(MutationConfigBase):
     _requires_pset: ClassVar[bool] = True
 ```
 
-### 3. Parameters as Fields
+## Optimizer & Algorithm Wiring
 
-Configurable parameters must be defined as Pydantic `Field` objects with appropriate validation.
-
-```python
-class TournamentSelectionConfig(SingleObjectiveSelectionConfigBase):
-    tournsize: int = Field(3, ge=2)
-```
-
-## Optimizer Integration
-
-The optimizers consume these configs to wire the DEAP toolbox.
-
-1. **Direct Unpacking**: The `params` property of a config returns a dictionary of its data fields.
-   ```python
-   toolbox.register("select", selection_cfg.func, **selection_cfg.params)
-   ```
-
-2. **Flag-driven Wiring**: Use `ClassVar` flags (e.g., `_requires_pset`) to guide the optimizer in passing extra context (like the primitive set) to operators during toolbox registration.
+1. Configs expose parameters via `params` for `toolbox.register` (unpack dict).
+2. The optimizer constructs a `TreeIndividual`-aware toolbox and returns an `Algorithm` instance via `create_algorithm(...)`.
+3. `fit(...)` accepts `entry_label` and `exit_label` (and validation counterparts); the optimizer normalizes them and provides them to the evaluator and the worker pool.
 
 ## Metric Configs
 
-Metric configs are callable. When called, they delegate to the underlying metric implementation (classification or backtest).
-
-- **Classification Metrics**: Typically called with `(y_true, y_pred)`.
-- **Backtest Metrics**: Accept a simulator result (e.g., `vbt.Portfolio` or `BtResult`).
+- Metric configs remain callable. Training metrics expect the evaluator to supply the correct label channels (entry/exit) or simulator outputs.
 
 ## Serialization Contract
 
-- **Included in `model_dump()`**: All `Field` values and `@computed_field` results. This produces a flat, JSON-serializable dictionary suitable for logging with tools like MLflow.
-- **Excluded**: `ClassVar` attributes and private members.
+- `model_dump()` should include `Field` values and computed fields. Exclude `ClassVar` callables and private members.

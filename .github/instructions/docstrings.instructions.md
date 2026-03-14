@@ -10,5 +10,5 @@ applyTo: "**/*.py"
 - Do not include type hints in docstrings; use type hints in function signatures instead.
 - Focus docstrings on intent rather than implementation details.
 - Do not explain the logic of the code in docstrings; instead, describe the purpose and usage of the code.
-- During implemetation, avoid mentioning specific implementation details that may change; instead, focus on the overall behavior and contract of the code.
+- Document public contracts: for example, `BaseOptimizer.fit` requires `entry_label` and `exit_label` parameters that must mirror `X` in structure.
 - Use backticks for code references like class names or method names within docstrings.
