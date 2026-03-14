@@ -36,6 +36,8 @@ from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
 from gentrade.optimizer.types import Metric
 from gentrade.types import BtResult
 
+TradeSide = Literal["buy", "sell"]
+
 
 class IndividualEvaluator:
     """Unified GP-tree evaluator supporting backtest and classification metrics.
@@ -49,10 +51,18 @@ class IndividualEvaluator:
     Only the branches needed for the configured metrics are executed, so
     pure-classification runs do not pay the cost of any backtest.
 
+    The ``trade_side`` parameter determines how entry/exit labels are
+    interpreted:
+    - ``"buy"``: Tree signals are entries; classification metrics use
+      ``entry_true``, backtests use ``exit_true`` for exits.
+    - ``"sell"``: Tree signals are exits; classification metrics use
+      ``exit_true``, backtests use ``entry_true`` for exits.
+
     Args:
         pset: DEAP primitive set used to compile GP trees.
         metrics: Ordered tuple of metric configs; determines fitness tuple length.
         backtest: Backtest simulation parameters.
+        trade_side: Trading direction; determines label interpretation.
     """
 
     def __init__(
@@ -60,10 +70,12 @@ class IndividualEvaluator:
         pset: gp.PrimitiveSetTyped,
         metrics: tuple[Metric, ...],
         backtest: BacktestConfig | None = None,
+        trade_side: TradeSide = "buy",
     ) -> None:
         self.pset = pset
         self.metrics = metrics
         self.backtest = backtest
+        self.trade_side = trade_side
 
         self._needs_backtest: bool = any(
             isinstance(m, CppBacktestMetricBase) for m in metrics
@@ -71,6 +83,10 @@ class IndividualEvaluator:
         self._needs_backtest_vbt: bool = any(
             isinstance(m, VbtBacktestMetricBase) for m in metrics
         )
+        self._needs_classification: bool = any(
+            isinstance(m, ClassificationMetricBase) for m in metrics
+        )
+        # For backwards compat: _needs_labels is True if classification OR C++ backtest
         self._needs_labels: bool = any(
             isinstance(m, (ClassificationMetricBase, CppBacktestMetricBase))
             for m in metrics
@@ -148,6 +164,7 @@ class IndividualEvaluator:
         individual: gp.PrimitiveTree,
         ohlcv: pd.DataFrame,
         entries: pd.Series,
+        exits: pd.Series | None = None,
     ) -> vbt.Portfolio:
         """Run a vectorbt backtest from entry signals and stop parameters.
 
@@ -155,6 +172,9 @@ class IndividualEvaluator:
             individual: GP tree that produced the signals.
             ohlcv: OHLCV DataFrame with open, high, low, close columns.
             entries: Boolean buy signal series.
+            exits: Optional boolean exit signal series. When provided, positions
+                are closed at the first exit signal OR when stop-loss/take-profit
+                triggers, whichever comes first.
 
         Returns:
             VectorBT Portfolio object.
@@ -173,6 +193,7 @@ class IndividualEvaluator:
                 high=ohlcv["high"],
                 low=ohlcv["low"],
                 entries=entries,
+                exits=exits,
                 tp_stop=tp_stop,
                 sl_stop=sl_stop,
                 sl_trail=sl_trail,
@@ -232,7 +253,8 @@ class IndividualEvaluator:
         self,
         individual: TreeIndividual,
         df: pd.DataFrame,
-        y_true: pd.Series | None = None,
+        entry_true: pd.Series | None = None,
+        exit_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
         """Evaluate a tree individual on a single DataFrame.
 
@@ -241,45 +263,82 @@ class IndividualEvaluator:
         All metrics in the evaluator's metrics tuple are computed and
         returned in the same order.
 
+        The ``trade_side`` attribute determines how labels are used:
+        - ``"buy"``: Tree signals are entries; classification uses
+          ``entry_true``, backtests use ``exit_true`` for exits.
+        - ``"sell"``: Tree signals are exits; classification uses
+          ``exit_true``, backtests use ``entry_true`` for exits.
+
         Args:
             individual: :class:`TreeIndividual` instance to evaluate.
             df: OHLCV DataFrame with columns [open, high, low, close, volume].
-            y_true: Ground-truth labels (boolean or -1/+1 signals); required
-                when the evaluator has classification metrics or when running
-                backtest metrics on this dataset.
+            entry_true: Ground-truth entry labels (boolean series).
+            exit_true: Ground-truth exit labels (boolean series).
 
         Returns:
             Tuple of fitness values (float), one per metric in order.
 
         Raises:
-            ValueError: If y_true is required but not provided, or if it
-                is provided when no metrics need it.
+            ValueError: If required labels are missing based on metrics and
+                trade_side configuration.
             TreeEvaluationError: If tree compilation fails.
             MetricCalculationError: If any metric returns NaN, Inf, or raises
                 an exception.
         """
-        if self._needs_labels and y_true is None:
-            raise ValueError("y_true is required for classification metrics.")
+        # Validate label requirements based on trade_side and metrics
+        if self._needs_classification:
+            if self.trade_side == "buy" and entry_true is None:
+                raise ValueError(
+                    "entry_true is required for classification metrics when "
+                    "trade_side='buy'."
+                )
+            if self.trade_side == "sell" and exit_true is None:
+                raise ValueError(
+                    "exit_true is required for classification metrics when "
+                    "trade_side='sell'."
+                )
+
+        if self._needs_backtest or self._needs_backtest_vbt:
+            if self.trade_side == "buy" and exit_true is None:
+                raise ValueError(
+                    "exit_true is required for backtest metrics when "
+                    "trade_side='buy'."
+                )
+            if self.trade_side == "sell" and entry_true is None:
+                raise ValueError(
+                    "entry_true is required for backtest metrics when "
+                    "trade_side='sell'."
+                )
 
         tree = individual.tree
         signals = self._compile_tree_to_signals(tree, self.pset, df)
 
-        # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
-        bt_result: BtResult | vbt.Portfolio | None = None
+        # Determine classification labels and backtest entries/exits based on trade_side
+        if self.trade_side == "buy":
+            classification_labels = entry_true
+            bt_entries = signals
+            bt_exits = exit_true
+        else:  # trade_side == "sell"
+            classification_labels = exit_true
+            bt_entries = signals
+            bt_exits = entry_true
+
+        # Run the backtests once; reused for all backtest metrics.
+        bt_result: BtResult | None = None
+        pf: vbt.Portfolio | None = None
+
         if self._needs_backtest:
-            if y_true is None:
-                raise ValueError("y_true is required for backtest metrics.")
-            bt_result = self.run_cpp_backtest(tree, df, signals, y_true)
+            assert bt_exits is not None  # Guarded by pre-check.
+            bt_result = self.run_cpp_backtest(tree, df, bt_entries, bt_exits)
         if self._needs_backtest_vbt:
-            pf = self.run_vbt_backtest(tree, df, signals)
+            pf = self.run_vbt_backtest(tree, df, bt_entries, bt_exits)
 
         result: list[float] = []
         for m in self.metrics:
             try:
                 if isinstance(m, ClassificationMetricBase):
-                    assert y_true is not None  # Guarded by pre-check.
-                    # Narrow to the classification metric branch.
-                    val = m(y_true, signals)
+                    assert classification_labels is not None  # Guarded by pre-check.
+                    val = m(classification_labels, signals)
                 elif isinstance(m, CppBacktestMetricBase):
                     val = m(bt_result)
                 elif isinstance(m, VbtBacktestMetricBase):
@@ -317,7 +376,8 @@ class IndividualEvaluator:
         individual: TreeIndividual,
         *,
         ohlcvs: list[pd.DataFrame],
-        signals: list[pd.Series] | None = None,
+        entry_labels: list[pd.Series] | None = None,
+        exit_labels: list[pd.Series] | None = None,
         aggregate: Literal[True] = True,
     ) -> tuple[float, ...]: ...
 
@@ -327,7 +387,8 @@ class IndividualEvaluator:
         individual: TreeIndividual,
         *,
         ohlcvs: list[pd.DataFrame],
-        signals: list[pd.Series] | None = None,
+        entry_labels: list[pd.Series] | None = None,
+        exit_labels: list[pd.Series] | None = None,
         aggregate: Literal[False],
     ) -> list[tuple[float, ...]]: ...
 
@@ -336,7 +397,8 @@ class IndividualEvaluator:
         individual: TreeIndividual,
         *,
         ohlcvs: list[pd.DataFrame],
-        signals: list[pd.Series] | None = None,
+        entry_labels: list[pd.Series] | None = None,
+        exit_labels: list[pd.Series] | None = None,
         aggregate: bool = True,
     ) -> tuple[float, ...] | list[tuple[float, ...]]:
         """Evaluate a tree individual across one or more OHLCV datasets.
@@ -346,14 +408,20 @@ class IndividualEvaluator:
         evaluates each independently and optionally returns the averaged or
         per-dataset fitness values.
 
+        The ``trade_side`` attribute determines how labels are used:
+        - ``"buy"``: Tree signals are entries; classification uses
+          ``entry_labels``, backtests use ``exit_labels`` for exits.
+        - ``"sell"``: Tree signals are exits; classification uses
+          ``exit_labels``, backtests use ``entry_labels`` for exits.
+
         Args:
             individual: :class:`TreeIndividual` instance to evaluate.
             ohlcvs: List of OHLCV DataFrames with columns
                 [open, high, low, close, volume].
-            signals: Optional list of ground-truth label Series
-                (boolean or -1/+1 signals), one per DataFrame in `ohlcvs`.
-                Required when classification metrics are configured; must have
-                the same length as `ohlcvs` if provided.
+            entry_labels: Optional list of ground-truth entry label Series
+                (boolean), one per DataFrame in `ohlcvs`.
+            exit_labels: Optional list of ground-truth exit label Series
+                (boolean), one per DataFrame in `ohlcvs`.
             aggregate: If True (default), returns a single tuple with
                 component-wise average fitness across all datasets. If False,
                 returns a list of fitness tuples, one per dataset.
@@ -365,34 +433,58 @@ class IndividualEvaluator:
             containing fitness values for that dataset.
 
         Raises:
-            ValueError: If `signals` is required but not provided, or if
-                `signals` is provided when no classification metrics are present.
+            ValueError: If required labels are missing based on metrics and
+                trade_side configuration, or if label list lengths don't match
+                the number of datasets.
             TreeEvaluationError: If tree compilation fails.
             MetricCalculationError: If any metric returns NaN, Inf, or raises
                 an exception.
         """
-        # Pre-checks common to both single- and multi-dataset modes.
-        if self._needs_labels and signals is None:
+        # Pre-validate label requirements based on trade_side and metrics
+        if self._needs_classification:
+            if self.trade_side == "buy" and entry_labels is None:
+                raise ValueError(
+                    "entry_labels must be provided for classification metrics "
+                    "when trade_side='buy'."
+                )
+            if self.trade_side == "sell" and exit_labels is None:
+                raise ValueError(
+                    "exit_labels must be provided for classification metrics "
+                    "when trade_side='sell'."
+                )
+
+        if self._needs_backtest or self._needs_backtest_vbt:
+            if self.trade_side == "buy" and exit_labels is None:
+                raise ValueError(
+                    "exit_labels must be provided for backtest metrics "
+                    "when trade_side='buy'."
+                )
+            if self.trade_side == "sell" and entry_labels is None:
+                raise ValueError(
+                    "entry_labels must be provided for backtest metrics "
+                    "when trade_side='sell'."
+                )
+
+        # Validate list lengths
+        if entry_labels is not None and len(entry_labels) != len(ohlcvs):
             raise ValueError(
-                "y_true is required for classification evaluation: "
-                "train_labels must be provided when classification metrics "
-                "are included."
+                "Length of entry_labels list must match number of datasets"
             )
-        if not self._needs_labels and signals is not None:
+        if exit_labels is not None and len(exit_labels) != len(ohlcvs):
             raise ValueError(
-                "y_true is not used when no classification metrics are present."
+                "Length of exit_labels list must match number of datasets"
             )
 
-        if signals is not None and len(signals) != len(ohlcvs):
-            raise ValueError("Length of y_true list must match number of datasets")
-
-        # multi-dataset averaging
+        # Multi-dataset evaluation
         results: list[tuple[float, ...]] = []
         for i, subdf in enumerate(ohlcvs):
-            sub_y: pd.Series | None = None
-            if signals is not None:
-                sub_y = signals[i]
-            results.append(self._eval_dataset(individual, subdf, sub_y))
+            sub_entry: pd.Series | None = None
+            sub_exit: pd.Series | None = None
+            if entry_labels is not None:
+                sub_entry = entry_labels[i]
+            if exit_labels is not None:
+                sub_exit = exit_labels[i]
+            results.append(self._eval_dataset(individual, subdf, sub_entry, sub_exit))
         return self.aggregate_fitness(results) if aggregate else results
 
     def aggregate_fitness(

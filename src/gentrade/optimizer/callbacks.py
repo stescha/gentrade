@@ -56,7 +56,8 @@ class ValidationCallback:
     def __init__(
         self,
         val_data: list[pd.DataFrame],
-        val_labels: list[pd.Series] | None,
+        val_entry_labels: list[pd.Series] | None,
+        val_exit_labels: list[pd.Series] | None,
         val_evaluator: "IndividualEvaluator",
         val_names: list[str],
         interval: int = 1,
@@ -65,13 +66,15 @@ class ValidationCallback:
 
         Args:
             val_data: List of validation OHLCV DataFrames.
-            val_labels: Optional list of label Series for classification.
+            val_entry_labels: Optional list of entry label Series.
+            val_exit_labels: Optional list of exit label Series.
             val_evaluator: Evaluator configured with validation metrics.
             val_names: Human-readable names for each validation dataset.
             interval: Run validation every N-th generation (and always at last).
         """
         self._val_data = val_data
-        self._val_labels = val_labels
+        self._val_entry_labels = val_entry_labels
+        self._val_exit_labels = val_exit_labels
         self._val_evaluator = val_evaluator
         self._val_names = val_names
         self._interval = interval
@@ -105,7 +108,8 @@ class ValidationCallback:
         val_fitnesses = self._val_evaluator.evaluate(
             best_ind,
             ohlcvs=self._val_data,
-            signals=self._val_labels,
+            entry_labels=self._val_entry_labels,
+            exit_labels=self._val_exit_labels,
             aggregate=False,
         )
 

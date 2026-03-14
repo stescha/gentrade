@@ -31,8 +31,10 @@ class WorkerContext:
     * ``evaluator`` – pre‑constructed evaluator instance (holds
       ``pset`` and ``metrics``).
     * ``train_data`` – list of OHLCV ``DataFrame`` objects.
-    * ``train_labels`` – optional list of ``Series`` aligned with
-      ``train_data`` for classification runs.
+    * ``train_entry_labels`` – optional list of ``Series`` aligned with
+      ``train_data`` for entry signal ground truth.
+    * ``train_exit_labels`` – optional list of ``Series`` aligned with
+      ``train_data`` for exit signal ground truth.
 
     The pool initializer sends this object once to each worker; evaluation
     functions then reference ``_worker_ctx`` to access it.
@@ -40,7 +42,8 @@ class WorkerContext:
 
     evaluator: IndividualEvaluator
     train_data: list[pd.DataFrame]
-    train_labels: list[pd.Series] | None
+    train_entry_labels: list[pd.Series] | None
+    train_exit_labels: list[pd.Series] | None
 
 
 _worker_ctx: WorkerContext | None = None
@@ -65,7 +68,8 @@ def create_pool(
     processes: int,
     evaluator: IndividualEvaluator,
     train_data: list[pd.DataFrame],
-    train_labels: list[pd.Series] | None,
+    train_entry_labels: list[pd.Series] | None,
+    train_exit_labels: list[pd.Series] | None,
 ) -> pool.Pool:
     """Convenience wrapper for ``multiprocessing.Pool`` configured for GP.
 
@@ -78,7 +82,10 @@ def create_pool(
         processes: number of worker processes to start.
         evaluator: evaluator instance containing ``pset`` and ``metrics``.
         train_data: list of OHLCV DataFrames.
-        train_labels: optional list of label Series aligned with ``train_data``
+        train_entry_labels: optional list of entry label Series aligned with
+            ``train_data``.
+        train_exit_labels: optional list of exit label Series aligned with
+            ``train_data``.
 
     Returns:
         A started :class:`multiprocessing.Pool`.
@@ -86,7 +93,8 @@ def create_pool(
     ctx = WorkerContext(
         evaluator=evaluator,
         train_data=train_data,
-        train_labels=train_labels,
+        train_entry_labels=train_entry_labels,
+        train_exit_labels=train_exit_labels,
     )
     return mp.Pool(processes=processes, initializer=init_worker, initargs=(ctx,))
 
@@ -100,15 +108,18 @@ def worker_evaluate(individual: TreeIndividual) -> tuple[float, ...]:
 
     Raises:
         RuntimeError: if called before the worker context has been set.
-        ValueError: if a classification evaluator is used but no labels were
-            provided in the context.
+        ValueError: if required labels are missing in the context for the
+            configured metrics and trade_side.
     """
     if _worker_ctx is None:
         raise RuntimeError("Worker context not initialized")
 
     evaluator = _worker_ctx.evaluator
     return evaluator.evaluate(
-        individual, ohlcvs=_worker_ctx.train_data, signals=_worker_ctx.train_labels
+        individual,
+        ohlcvs=_worker_ctx.train_data,
+        entry_labels=_worker_ctx.train_entry_labels,
+        exit_labels=_worker_ctx.train_exit_labels,
     )
 
 

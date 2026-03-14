@@ -8,7 +8,7 @@ from deap import base, gp, tools
 
 from gentrade.algorithms import EaMuPlusLambda
 from gentrade.config import BacktestConfig
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import IndividualEvaluator, TradeSide
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.optimizer.base import BaseOptimizer
 from gentrade.optimizer.callbacks import Callback
@@ -148,6 +148,8 @@ class TreeOptimizer(BaseOptimizer):
         - Wraps DEAP tree-level operators so they operate on `TreeIndividual`.
         - Supports different tree initialization strategies (`grow`, `full`,
           `half_and_half`) and enforces height limits after operators.
+        - The `trade_side` parameter determines how entry/exit labels are
+          interpreted during evaluation.
     """
 
     def __init__(
@@ -156,6 +158,7 @@ class TreeOptimizer(BaseOptimizer):
         pset: gp.PrimitiveSetTyped | Callable[[], gp.PrimitiveSetTyped],
         metrics: tuple[Metric, ...],
         backtest: BacktestConfig | None = None,
+        trade_side: TradeSide = "buy",
         mutation: MutationOp[gp.PrimitiveTree] = gp.mutUniform,  # type: ignore[assignment]  # DEAP stubs type mutUniform incompatibly with MutationOp
         mutation_params: OperatorKwargs | None = None,
         crossover: CrossoverOp[gp.PrimitiveTree] = gp.cxOnePoint,
@@ -199,6 +202,7 @@ class TreeOptimizer(BaseOptimizer):
         )
         self._pset_factory = pset if callable(pset) else (lambda: pset)
         self._backtest = backtest or BacktestConfig()
+        self._trade_side = trade_side
 
         self.mutation = mutation
         self.mutation_params = mutation_params
@@ -242,12 +246,13 @@ class TreeOptimizer(BaseOptimizer):
         self,
         pset: gp.PrimitiveSetTyped,
         metrics: tuple[Metric, ...],
-    ) -> Any:
+    ) -> IndividualEvaluator:
 
         return IndividualEvaluator(
             pset=pset,
             metrics=metrics,
             backtest=self._backtest,
+            trade_side=self._trade_side,
         )
 
     def create_algorithm(
