@@ -10,6 +10,10 @@
   },
   "python.analysis.typeCheckingMode": "off",
 
+  // Explicitly pin the interpreter so VS Code never delegates to the Poetry env
+  // manager for process spawning (avoids "Code: null, Signal: null" crash in
+  // test-by-project discovery introduced in ms-python 2026.x).
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
 
   "python.testing.pytestArgs": [
       "-l",          // Show local variables in tracebacks
