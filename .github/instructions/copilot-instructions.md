@@ -26,10 +26,18 @@ All commands run via Poetry from the repo root:
 - Run script: `poetry run python <SCRIPT_OR_MODULE>`
 
 Code Quality:
-The repository is research-oriented and contains exploratory code. Avoid sweeping, cross-cutting refactors; keep changes minimal and focused. New code should be typed and lint-free where practical.
+The actual code base does not follow quality standards. Do not improve existing code unless deliberately asked for. New code should be typed and correctly linted, but we will not enforce this for the whole codebase.
 Commands:
-  - Type checks: `poetry run mypy <LOCATION>` (e.g., `poetry run mypy .`).
+  - Type checks: `poetry run mypy <LOCATION>` (e.g., `poetry run mypy .`). 
   - Lint: `poetry run ruff check .`
+
+# Optimizer specifics for copilot
+- When working on optimizer or evaluator code prefer `BaseOptimizer` and
+  the concrete subclasses `TreeOptimizer` and `PairTreeOptimizer`.
+- Avoid assumptions that individuals are raw `deap.gp.PrimitiveTree` objects;
+  code uses wrapper types (`TreeIndividual`, `PairTreeIndividual`) that
+  contain one or two trees. Use `apply_operators` helpers and existing
+  wrappers to adapt DEAP operators to these wrappers.
 
 
 ## Folders to Ignore

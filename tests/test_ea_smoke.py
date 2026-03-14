@@ -48,7 +48,7 @@ class TestEaSmokeCreateAlgorithm:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         pool_mock = MagicMock()
         stats = tools.Statistics(lambda ind: ind.fitness.values)
@@ -79,7 +79,7 @@ class TestEaSmokeCreateAlgorithm:
             seed=7,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         pool_mock = MagicMock()
         stats = tools.Statistics(lambda ind: ind.fitness.values)
@@ -111,7 +111,7 @@ class TestEaSmokeFullFit:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         assert hasattr(opt, "population_")
         assert hasattr(opt, "logbook_")
@@ -128,7 +128,7 @@ class TestEaSmokeFullFit:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         # generations + 1 records (gen 0 = initial evaluation, gen 1 = first gen)
         assert len(opt.logbook_) == 2
@@ -146,7 +146,7 @@ class TestEaSmokeFullFit:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         assert len(opt.population_) == mu
 
@@ -162,7 +162,7 @@ class TestEaSmokeFullFit:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         for ind in opt.population_:
             assert ind.fitness.valid

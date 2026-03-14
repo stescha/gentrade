@@ -1,5 +1,5 @@
 """Tests for backtest metrics: computation classes, config classes,
-BacktestConfig, and the IndividualEvaluator class.
+BacktestConfig, and the TreeEvaluator class.
 """
 
 from typing import Self
@@ -23,10 +23,10 @@ from gentrade.config import (
     BacktestConfig,
 )
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import TreeEvaluator
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
+from gentrade.individual import TreeIndividual
 from gentrade.minimal_pset import create_pset_zigzag_medium
-from gentrade.optimizer.individual import TreeIndividual
 from gentrade.pset.pset_types import BooleanSeries, NumericSeries
 
 # -- Module-level helpers ------------------------------------------
@@ -184,7 +184,7 @@ class TestBacktestConfig:
 
 @pytest.mark.integration
 class TestBacktestEvaluator:
-    """IndividualEvaluator correctly wraps the backtest pipeline for DEAP."""
+    """TreeEvaluator correctly wraps the backtest pipeline for DEAP."""
 
     def _make_individual(self) -> TreeIndividual:
         """Build a minimal always-false GP tree for testing."""
@@ -208,52 +208,43 @@ class TestBacktestEvaluator:
     def _make_pset(self) -> deap_gp.PrimitiveSetTyped:
         return create_pset_zigzag_medium()
 
-    def _make_evaluator(self, metrics: tuple) -> IndividualEvaluator:  # type: ignore[type-arg]
+    def _make_evaluator(self, metrics: tuple) -> TreeEvaluator:  # type: ignore[type-arg]
         bt = BacktestConfig()
-        return IndividualEvaluator(
+        return TreeEvaluator(
             pset=self._make_pset(),
             metrics=metrics,
             backtest=bt,
-            trade_side="buy",
         )
 
-    def _make_labels(self, df: pd.DataFrame) -> pd.Series:
-        """Create boolean labels for exit signals."""
-        rng = np.random.default_rng(42)
-        return pd.Series(rng.random(len(df)) < 0.1, index=df.index)
-
     def test_raises_for_nan_metric(self) -> None:
-        """IndividualEvaluator raises MetricCalculationError when metric is NaN."""
+        """TreeEvaluator raises MetricCalculationError when metric is NaN."""
         individual = self._make_individual()
         df = self._make_df()
-        labels = self._make_labels(df)
         evaluator = self._make_evaluator(metrics=(SharpeRatioMetric(min_trades=0),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(individual, ohlcvs=[df], exit_labels=[labels])
+            evaluator.evaluate(individual, ohlcvs=[df])
         print(excinfo.value)
 
     def test_min_trades_guard_returns_zero(self) -> None:
-        """IndividualEvaluator returns (0.0,) when min_trades threshold is not met."""
+        """TreeEvaluator returns (0.0,) when min_trades threshold is not met."""
         individual = self._make_individual()
         df = self._make_df()
-        labels = self._make_labels(df)
         evaluator = self._make_evaluator(
             metrics=(SharpeRatioMetric(min_trades=999999),)
         )
-        result = evaluator.evaluate(individual, ohlcvs=[df], exit_labels=[labels])
+        result = evaluator.evaluate(individual, ohlcvs=[df])
         assert result == (0.0,)
 
     def test_exception_raises_tree_evaluation_error(self) -> None:
-        """IndividualEvaluator raises TreeEvaluationError for corrupt individual."""
+        """TreeEvaluator raises TreeEvaluationError for corrupt individual."""
         individual = TreeIndividual([deap_gp.PrimitiveTree([])], weights=(1.0,))
         df = self._make_df()
-        labels = self._make_labels(df)
         evaluator = self._make_evaluator(metrics=(SharpeRatioMetric(),))
         with pytest.raises(TreeEvaluationError):
-            evaluator.evaluate(individual, ohlcvs=[df], exit_labels=[labels])
+            evaluator.evaluate(individual, ohlcvs=[df])
 
     def test_nonfinite_raises_metric_calculation_error(self) -> None:
-        """IndividualEvaluator raises MetricCalculationError when metric returns NaN."""
+        """TreeEvaluator raises MetricCalculationError when metric returns NaN."""
 
         class _NanMetric(VbtBacktestMetricBase):
             def __call__(self: Self, pf: vbt.Portfolio) -> float:
@@ -261,10 +252,9 @@ class TestBacktestEvaluator:
 
         individual = self._make_individual()
         df = self._make_df()
-        labels = self._make_labels(df)
         evaluator = self._make_evaluator(metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
-            evaluator.evaluate(individual, ohlcvs=[df], exit_labels=[labels])
+            evaluator.evaluate(individual, ohlcvs=[df])
         assert excinfo.value.tree is individual.tree
         assert excinfo.value.metric is not None
         assert excinfo.value.signals is not None

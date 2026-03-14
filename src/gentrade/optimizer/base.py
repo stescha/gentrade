@@ -1,16 +1,17 @@
 """Base optimizer class and data normalization utilities.
 
-Contains ``BaseOptimizer`` ABC which provides the shared orchestration logic
-for all GP optimizers. Subclasses implement pset construction, toolbox wiring,
-and evaluator creation.
+Contains the ``BaseOptimizer`` ABC which provides shared orchestration logic
+for all GP optimizers. This module documents support for both single-tree
+and pair-tree optimization flows: subclasses implement primitive-set
+construction, toolbox wiring, and evaluator creation for either
+``TreeIndividual`` or ``PairTreeIndividual`` workflows.
 """
 
 import logging
 import random
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from multiprocessing import pool
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 import numpy as np
 import pandas as pd
@@ -21,11 +22,11 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.callbacks import Callback, ValidationCallback
+from gentrade.eval_ind import BaseEvaluator
 from gentrade.eval_pop import create_pool
-from gentrade.optimizer.callbacks import Callback, ValidationCallback
-from gentrade.optimizer.individual import TreeIndividual
-from gentrade.optimizer.types import Algorithm, Metric
+from gentrade.individual import PairTreeIndividual, TreeIndividual
+from gentrade.types import Algorithm, Metric
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,9 @@ def _normalize_data_and_labels(
     entry_labels: LabelInput,
     exit_labels: LabelInput,
     dataset_name: str,
-) -> tuple[list[pd.DataFrame], list[pd.Series] | None, list[pd.Series] | None, list[str]]:
+) -> tuple[
+    list[pd.DataFrame], list[pd.Series] | None, list[pd.Series] | None, list[str]
+]:
     """Normalise and validate dataset inputs for optimizers.
 
     This variant accepts two optional label collections (entry and exit) and
@@ -56,7 +59,9 @@ def _normalize_data_and_labels(
         return [], None, None, []
 
     # Convenience helpers
-    def _check_index_match(df: pd.DataFrame, ser: pd.Series, key: str, label_kind: str) -> None:
+    def _check_index_match(
+        df: pd.DataFrame, ser: pd.Series, key: str, label_kind: str
+    ) -> None:
         if not df.index.equals(ser.index):
             raise ValueError(
                 "Index mismatch between "
@@ -116,8 +121,8 @@ def _normalize_data_and_labels(
         data_list = data
         names = [KEY_OHLCV] * len(data_list)
 
-        entry_list: list[pd.Series] | None = None
-        exit_list: list[pd.Series] | None = None
+        entry_list = None
+        exit_list = None
 
         if entry_labels is not None:
             if not isinstance(entry_labels, list):
@@ -160,8 +165,8 @@ def _normalize_data_and_labels(
         data_list = [data]
         names = [KEY_OHLCV]
 
-        entry_list: list[pd.Series] | None = None
-        exit_list: list[pd.Series] | None = None
+        entry_list = None
+        exit_list = None
 
         if entry_labels is not None:
             if not isinstance(entry_labels, pd.Series):
@@ -192,19 +197,24 @@ class BaseOptimizer(ABC):
 
     This class provides shared orchestration logic for all gentrade optimizers:
     seeding, multiprocessing pool management, callbacks, statistics logging,
-    and the evolutionary algorithm loop. Subclasses implement domain-specific
-    details like primitive set construction, toolbox wiring, and evaluator
+    and the evolutionary algorithm loop. Subclasses provide the domain-specific
+    details such as primitive-set construction, toolbox wiring, and evaluator
     creation.
 
-    The optimizer works with :class:`TreeIndividual` instances (wrapping
-    GP trees with fitness), replacing bare :class:`deap.gp.PrimitiveTree`
-    objects to improve code clarity and manage fitness consistently.
+    Implementations may operate on either single-tree individuals
+    (:class:`TreeIndividual`) or two-tree / pair individuals
+    (:class:`PairTreeIndividual`) depending on the subclass. Concrete
+    subclasses (e.g. :class:`TreeOptimizer` and :class:`PairTreeOptimizer`)
+    document which individual representation they produce.
 
     Attributes:
-        population_: Final evolved population (list of :class:`TreeIndividual`).
-        logbook_: DEAP :class:`deap.tools.Logbook` with per-generation statistics.
-        hall_of_fame_: :class:`deap.tools.HallOfFame` containing best individuals
-            found during the run.
+        population_: Final evolved population; contains either
+            :class:`TreeIndividual` or :class:`PairTreeIndividual` instances
+            depending on the optimizer subclass.
+        logbook_: DEAP :class:`deap.tools.Logbook` with per-generation
+            statistics.
+        hall_of_fame_: :class:`deap.tools.HallOfFame` containing best
+            individuals found during the run.
         pset_: Constructed :class:`deap.gp.PrimitiveSetTyped` (useful for
             compiling and executing individuals post-optimization).
         best_individual_: The best individual found (updated per generation).
@@ -297,16 +307,40 @@ class BaseOptimizer(ABC):
     @abstractmethod
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
-    ) -> IndividualEvaluator:
-        """Create an :class:`IndividualEvaluator` for the given metrics.
+    ) -> BaseEvaluator[Any]:
+        """Create a :class:`BaseEvaluator` for the given metrics.
 
         Args:
             pset: Primitive set used for compiling trees.
             metrics: Tuple of metrics to evaluate during optimization.
 
         Returns:
-            An :class:`IndividualEvaluator` configured for the given
+            A :class:`BaseEvaluator` configured for the given
             metrics and primitive set.
+        """
+        ...
+
+    @abstractmethod
+    def create_algorithm(
+        self,
+        worker_pool: pool.Pool,
+        stats: tools.Statistics,
+        halloffame: tools.HallOfFame,
+        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+    ) -> "Algorithm[Any]":
+        """Return algorithm instance to execute the evolutionary loop.
+
+        Subclasses must return a configured :class:`Algorithm` instance that
+        accepts a population list and returns ``(population, logbook)``.
+
+        Args:
+            worker_pool: Multiprocessing pool for parallel individual evaluation.
+            stats: DEAP statistics object for logging per-generation metrics.
+            halloffame: Hall of fame tracking best individuals.
+            val_callback: Optional callback invoked after each generation.
+
+        Returns:
+            A configured :class:`Algorithm` instance ready to call ``run()``.
         """
         ...
 
@@ -336,36 +370,12 @@ class BaseOptimizer(ABC):
             if selection in SELECTION_MULTI_OBJ:
                 pass
 
-    @abstractmethod
-    def create_algorithm(
-        self,
-        worker_pool: "pool.Pool",
-        stats: tools.Statistics,
-        halloffame: tools.HallOfFame,
-        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
-    ) -> "Algorithm[Any]":
-        """Return algorithm instance to execute the evolutionary loop.
-
-        Subclasses must return a configured :class:`Algorithm` instance that
-        accepts a population list and returns ``(population, logbook)``.
-
-        Args:
-            worker_pool: Multiprocessing pool for parallel individual evaluation.
-            stats: DEAP statistics object for logging per-generation metrics.
-            halloffame: Hall of fame tracking best individuals.
-            val_callback: Optional callback invoked after each generation.
-
-        Returns:
-            A configured :class:`Algorithm` instance ready to call ``run()``.
-        """
-        ...
-
     def fit(
         self,
         X: DataInput,
+        X_val: DataInput = None,
         entry_label: LabelInput = None,
         exit_label: LabelInput = None,
-        X_val: DataInput = None,
         entry_label_val: LabelInput = None,
         exit_label_val: LabelInput = None,
     ) -> "BaseOptimizer":
@@ -424,12 +434,34 @@ class BaseOptimizer(ABC):
             random.seed(self.seed)
             np.random.seed(self.seed)
 
-        # 3. Label validation is deferred to the evaluator based on trade_side
-        # and metrics. The evaluator raises ValueError if required labels are
-        # missing.
-
+        # 3. Early validation of val labels before evolution starts.
+        # This gives a clear error message instead of failing mid-evolution.
         # Determine validation metrics
         val_metrics = self.metrics_val if self.metrics_val is not None else self.metrics
+
+        # Check if val labels are needed for val metrics
+        if val_data_list:
+            # Import inside function to avoid circular imports at module level
+            from gentrade.classification_metrics import (
+                ClassificationMetricBase,  # noqa: PLC0415
+            )
+
+            val_needs_classification = any(
+                isinstance(m, ClassificationMetricBase) for m in val_metrics
+            )
+            trade_side = getattr(self, "trade_side", "buy")
+
+            if val_needs_classification:
+                if trade_side == "buy" and val_entry_list is None:
+                    raise ValueError(
+                        "entry_label_val must be provided when X_val is supplied "
+                        "with classification metrics and trade_side='buy'."
+                    )
+                if trade_side == "sell" and val_exit_list is None:
+                    raise ValueError(
+                        "exit_label_val must be provided when X_val is supplied "
+                        "with classification metrics and trade_side='sell'."
+                    )
 
         is_multiobjective = len(self.metrics) > 1
 
@@ -448,7 +480,7 @@ class BaseOptimizer(ABC):
         # 6. Build evaluators
         evaluator = self._make_evaluator(self.pset_, self.metrics)
 
-        val_evaluator: IndividualEvaluator | None = None
+        val_evaluator: BaseEvaluator[Any] | None = None
         if val_data_list:
             val_evaluator = self._make_evaluator(self.pset_, val_metrics)
 
@@ -543,7 +575,11 @@ class BaseOptimizer(ABC):
             print("-" * 60)
             print("=== Results ===")
             best = hof[0]
+            # TODO: remove checks here.
             print(f"Best individual fitness: {best.fitness.values}")
-            print(f"Best individual: {str(best.tree)[:100]}...")
-
+            if isinstance(best, TreeIndividual):
+                print(f"Best individual tree: {str(best.tree)[:100]}...")
+            elif isinstance(best, PairTreeIndividual):
+                print(f"Best buy tree: {str(best.buy_tree)[:100]}...")
+                print(f"Best sell tree: {str(best.sell_tree)[:100]}...")
         return self

@@ -2,11 +2,12 @@ import multiprocessing as mp
 import time
 from dataclasses import dataclass
 from multiprocessing import pool
+from typing import Any
 
 import pandas as pd
 
-from gentrade.eval_ind import IndividualEvaluator
-from gentrade.optimizer.individual import TreeIndividual
+from gentrade.eval_ind import BaseEvaluator
+from gentrade.individual import TreeIndividualBase
 
 
 # The multiprocessing module serializes (pickles) any objects that are
@@ -28,6 +29,9 @@ class WorkerContext:
     This context stores every worker depenedency that is constant across
     the full run.
 
+    Note: the context intentionally centralises data sent to workers to
+    avoid repeated IPC serialization and improve evaluation throughput.
+
     * ``evaluator`` – pre‑constructed evaluator instance (holds
       ``pset`` and ``metrics``).
     * ``train_data`` – list of OHLCV ``DataFrame`` objects.
@@ -40,7 +44,7 @@ class WorkerContext:
     functions then reference ``_worker_ctx`` to access it.
     """
 
-    evaluator: IndividualEvaluator
+    evaluator: BaseEvaluator[Any]
     train_data: list[pd.DataFrame]
     train_entry_labels: list[pd.Series] | None
     train_exit_labels: list[pd.Series] | None
@@ -66,7 +70,7 @@ def init_worker(ctx: WorkerContext) -> None:
 
 def create_pool(
     processes: int,
-    evaluator: IndividualEvaluator,
+    evaluator: BaseEvaluator[Any],
     train_data: list[pd.DataFrame],
     train_entry_labels: list[pd.Series] | None,
     train_exit_labels: list[pd.Series] | None,
@@ -99,7 +103,7 @@ def create_pool(
     return mp.Pool(processes=processes, initializer=init_worker, initargs=(ctx,))
 
 
-def worker_evaluate(individual: TreeIndividual) -> tuple[float, ...]:
+def worker_evaluate(individual: TreeIndividualBase) -> tuple[float, ...]:
     """Top-level evaluation callback used with ``Pool.map``.
 
     Delegates directly to the evaluator stored in the global context.  The
@@ -115,23 +119,27 @@ def worker_evaluate(individual: TreeIndividual) -> tuple[float, ...]:
         raise RuntimeError("Worker context not initialized")
 
     evaluator = _worker_ctx.evaluator
-    return evaluator.evaluate(
+    result = evaluator.evaluate(
         individual,
         ohlcvs=_worker_ctx.train_data,
         entry_labels=_worker_ctx.train_entry_labels,
         exit_labels=_worker_ctx.train_exit_labels,
     )
+    # BaseEvaluator.evaluate returns tuple[float, ...] when aggregate=True (default)
+    assert isinstance(result, tuple)
+    return result
 
 
 def evaluate_population(
-    population: list[TreeIndividual], pool: pool.Pool
+    population: list[TreeIndividualBase], pool: pool.Pool
 ) -> tuple[int, float]:
     """Evaluate all individuals in the population that have invalid fitness.
     The evaluation is performed in parallel using the provided pool and the
     ``worker_evaluate`` function.
 
     Args:
-        population: list of ``TreeIndividual`` instances.
+        population: list of ``TreeIndividual`` or ``PairTreeIndividual``
+            instances (any :class:`TreeIndividualBase` subclass).
         pool: a :class:`multiprocessing.Pool`.
 
     Returns:

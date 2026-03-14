@@ -14,10 +14,13 @@ import pandas as pd
 import pytest
 from deap import gp as deap_gp
 
+from gentrade.backtest import BtResult
 from gentrade.backtest_metrics import (
+    CppBacktestMetricBase,
+    MeanPnlCppMetric,
+    MeanPnlMetric,
     SharpeRatioMetric,
     VbtBacktestMetricBase,
-    CppBacktestMetricBase,
 )
 from gentrade.classification_metrics import (
     ClassificationMetricBase,
@@ -25,13 +28,11 @@ from gentrade.classification_metrics import (
 )
 from gentrade.config import BacktestConfig
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import TreeEvaluator
+from gentrade.individual import TreeIndividual
 from gentrade.minimal_pset import create_pset_default_medium
 from gentrade.optimizer import TreeOptimizer
-from gentrade.optimizer.individual import TreeIndividual
 from gentrade.pset.pset_types import BooleanSeries, NumericSeries
-from gentrade.types import BtResult
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -148,9 +149,7 @@ class TestTradeSideBuy:
     ) -> None:
         """Classification metric receives entry_labels when trade_side='buy'."""
         metric = _CapturingClassMetric()
-        ev = IndividualEvaluator(
-            pset=pset, metrics=(metric,), trade_side="buy"
-        )
+        ev = TreeEvaluator(pset=pset, metrics=(metric,), trade_side="buy")
         ev.evaluate(
             valid_individual,
             ohlcvs=[df],
@@ -169,8 +168,11 @@ class TestTradeSideBuy:
         exit_labels: pd.Series,
     ) -> None:
         """VBT backtest receives exit_labels as exits when trade_side='buy'."""
-        ev = IndividualEvaluator(
-            pset=pset, metrics=(SharpeRatioMetric(),), trade_side="buy"
+        ev = TreeEvaluator(
+            pset=pset,
+            metrics=(SharpeRatioMetric(),),
+            backtest=BacktestConfig(),
+            trade_side="buy",
         )
         with patch.object(ev, "run_vbt_backtest", wraps=ev.run_vbt_backtest) as mock:
             ev.evaluate(
@@ -192,7 +194,7 @@ class TestTradeSideBuy:
         exit_labels: pd.Series,
     ) -> None:
         """ValueError raised when entry_labels missing for classification + buy."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
         with pytest.raises(ValueError, match="entry_labels must be provided"):
             ev.evaluate(
                 valid_individual,
@@ -208,8 +210,11 @@ class TestTradeSideBuy:
         entry_labels: pd.Series,
     ) -> None:
         """ValueError raised when exit_labels missing for VBT backtest + buy."""
-        ev = IndividualEvaluator(
-            pset=pset, metrics=(SharpeRatioMetric(),), trade_side="buy"
+        ev = TreeEvaluator(
+            pset=pset,
+            metrics=(MeanPnlCppMetric(),),
+            backtest=BacktestConfig(),
+            trade_side="buy",
         )
         with pytest.raises(ValueError, match="exit_labels must be provided"):
             ev.evaluate(
@@ -238,8 +243,8 @@ class TestTradeSideSell:
     ) -> None:
         """Classification metric receives exit_labels when trade_side='sell'."""
         metric = _CapturingClassMetric()
-        ev = IndividualEvaluator(
-            pset=pset, metrics=(metric,), trade_side="sell"
+        ev = TreeEvaluator(
+            pset=pset, metrics=(metric,), backtest=BacktestConfig(), trade_side="sell"
         )
         ev.evaluate(
             valid_individual,
@@ -259,8 +264,11 @@ class TestTradeSideSell:
         exit_labels: pd.Series,
     ) -> None:
         """VBT backtest receives entry_labels as exits when trade_side='sell'."""
-        ev = IndividualEvaluator(
-            pset=pset, metrics=(SharpeRatioMetric(),), trade_side="sell"
+        ev = TreeEvaluator(
+            pset=pset,
+            metrics=(MeanPnlMetric(),),
+            backtest=BacktestConfig(),
+            trade_side="sell",
         )
         with patch.object(ev, "run_vbt_backtest", wraps=ev.run_vbt_backtest) as mock:
             ev.evaluate(
@@ -272,7 +280,7 @@ class TestTradeSideSell:
         mock.assert_called_once()
         call_kwargs = mock.call_args
         # exits should be entry_labels for sell side
-        pd.testing.assert_series_equal(call_kwargs[0][3], entry_labels)
+        pd.testing.assert_series_equal(call_kwargs[0][2], entry_labels)
 
     def test_missing_exit_labels_for_classification_raises(
         self,
@@ -282,7 +290,7 @@ class TestTradeSideSell:
         entry_labels: pd.Series,
     ) -> None:
         """ValueError raised when exit_labels missing for classification + sell."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="sell")
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="sell")
         with pytest.raises(ValueError, match="exit_labels must be provided"):
             ev.evaluate(
                 valid_individual,
@@ -298,8 +306,11 @@ class TestTradeSideSell:
         exit_labels: pd.Series,
     ) -> None:
         """ValueError raised when entry_labels missing for VBT backtest + sell."""
-        ev = IndividualEvaluator(
-            pset=pset, metrics=(SharpeRatioMetric(),), trade_side="sell"
+        ev = TreeEvaluator(
+            pset=pset,
+            metrics=(MeanPnlCppMetric(),),
+            backtest=BacktestConfig(),
+            trade_side="sell",
         )
         with pytest.raises(ValueError, match="entry_labels must be provided"):
             ev.evaluate(
@@ -327,7 +338,7 @@ class TestVbtBacktestWithExits:
         exit_labels: pd.Series,
     ) -> None:
         """Portfolio.from_signals called with exits when exit_labels provided."""
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
             metrics=(SharpeRatioMetric(),),
             backtest=BacktestConfig(sl_stop=0.01, tp_stop=0.02),
@@ -364,7 +375,7 @@ class TestCppBacktestValidation:
         entry_labels: pd.Series,
     ) -> None:
         """ValueError raised when exit_labels missing for C++ backtest + buy."""
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
             metrics=(_ConstCppBacktestMetric(),),
             backtest=BacktestConfig(),
@@ -385,7 +396,7 @@ class TestCppBacktestValidation:
         exit_labels: pd.Series,
     ) -> None:
         """ValueError raised when entry_labels missing for C++ backtest + sell."""
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
             metrics=(_ConstCppBacktestMetric(),),
             backtest=BacktestConfig(),
@@ -435,7 +446,7 @@ class TestTreeOptimizerTradeSide:
         assert opt._trade_side == "sell"
 
     def test_evaluator_receives_trade_side(self) -> None:
-        """_make_evaluator passes trade_side to IndividualEvaluator."""
+        """_make_evaluator passes trade_side to TreeEvaluator."""
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
             metrics=(F1Metric(),),
@@ -468,7 +479,7 @@ class TestLabelLengthValidation:
         exit_labels: pd.Series,
     ) -> None:
         """ValueError raised when entry_labels length doesn't match datasets."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
         with pytest.raises(ValueError, match="entry_labels list must match"):
             ev.evaluate(
                 valid_individual,
@@ -486,8 +497,11 @@ class TestLabelLengthValidation:
         exit_labels: pd.Series,
     ) -> None:
         """ValueError raised when exit_labels length doesn't match datasets."""
-        ev = IndividualEvaluator(
-            pset=pset, metrics=(SharpeRatioMetric(),), trade_side="buy"
+        ev = TreeEvaluator(
+            pset=pset,
+            metrics=(SharpeRatioMetric(),),
+            backtest=BacktestConfig(),
+            trade_side="buy",
         )
         with pytest.raises(ValueError, match="exit_labels list must match"):
             ev.evaluate(

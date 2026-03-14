@@ -41,7 +41,7 @@ class TestTreeOptimizerFitClassification:
             seed=42,
             verbose=False,
         )
-        result = opt.fit(synthetic_df, entry_label=labels)
+        result = opt.fit(X=synthetic_df, entry_label=labels)
         assert result is opt
 
     def test_fitted_attrs_set(self, synthetic_df: pd.DataFrame) -> None:
@@ -56,7 +56,7 @@ class TestTreeOptimizerFitClassification:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, entry_label=labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         assert hasattr(opt, "population_")
         assert hasattr(opt, "logbook_")
@@ -76,7 +76,7 @@ class TestTreeOptimizerFitClassification:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, entry_label=labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
         assert len(opt.population_) == mu
 
     def test_logbook_length(self, synthetic_df: pd.DataFrame) -> None:
@@ -92,7 +92,7 @@ class TestTreeOptimizerFitClassification:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, entry_label=labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
         assert len(opt.logbook_) == generations + 1
 
     def test_all_fitness_valid(self, synthetic_df: pd.DataFrame) -> None:
@@ -107,7 +107,7 @@ class TestTreeOptimizerFitClassification:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, entry_label=labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         for ind in opt.population_:
             assert ind.fitness.valid
@@ -126,7 +126,7 @@ class TestTreeOptimizerFitClassification:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, entry_label=labels)
+        opt.fit(X=synthetic_df, entry_label=labels)
 
         for ind in opt.population_:
             assert len(ind.fitness.values) == 1
@@ -137,7 +137,7 @@ class TestTreeOptimizerFitCppBacktest:
     """Integration tests for C++ backtest metrics."""
 
     def test_fit_cpp_completes(self, synthetic_df: pd.DataFrame) -> None:
-        """fit() with exit_label completes when metrics are cpp-backtest-only."""
+        """fit() without labels completes when metrics are cpp-backtest-only."""
         labels = _get_zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
@@ -149,12 +149,12 @@ class TestTreeOptimizerFitCppBacktest:
             seed=42,
             verbose=False,
         )
-        # C++ backtest needs exit_label for buy side
-        opt.fit(synthetic_df, exit_label=labels)
+        # C++ backtest needs labels for exits (entry_label acts as buy signal labels)
+        opt.fit(synthetic_df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 10
 
     def test_fit_cpp_with_labels_ok(self, synthetic_df: pd.DataFrame) -> None:
-        """exit_label are accepted for C++ backtest (no error)."""
+        """Labels are accepted for C++ backtest (no error)."""
         labels = _get_zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
@@ -166,7 +166,7 @@ class TestTreeOptimizerFitCppBacktest:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, exit_label=labels)
+        opt.fit(synthetic_df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 10
 
 
@@ -196,7 +196,9 @@ class TestTreeOptimizerValidation:
             verbose=False,
         )
         # We can't directly inspect _active_callbacks, but fit should complete
-        opt.fit(train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels)
+        opt.fit(
+            train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels
+        )
         assert len(opt.population_) == 10
 
     def test_train_metrics_as_fallback_val(self, synthetic_df: pd.DataFrame) -> None:
@@ -217,13 +219,15 @@ class TestTreeOptimizerValidation:
             seed=42,
             verbose=False,
         )
-        opt.fit(train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels)
+        opt.fit(
+            train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels
+        )
         assert len(opt.population_) == 10
 
     def test_val_labels_required_for_classification_val(
         self, synthetic_df: pd.DataFrame
     ) -> None:
-        """Raises ValueError when X_val given with classification but no entry_label_val."""
+        """Raises ValueError when X_val given with classification but no y_val."""
         labels = _get_zigzag_labels(synthetic_df)
         train_df = synthetic_df.iloc[:800]
         val_df = synthetic_df.iloc[800:]
@@ -239,8 +243,10 @@ class TestTreeOptimizerValidation:
             seed=42,
             verbose=False,
         )
-        with pytest.raises(ValueError, match="entry_labels must be provided"):
-            opt.fit(train_df, entry_label=train_labels, X_val=val_df)  # Missing entry_label_val
+        with pytest.raises(ValueError, match="entry_label_val must be provided"):
+            opt.fit(
+                X=train_df, entry_label=train_labels, X_val=val_df
+            )  # Missing val labels
 
 
 @pytest.mark.integration
@@ -263,8 +269,7 @@ class TestMultiObjectiveFit:
             seed=42,
             verbose=False,
         )
-        # Mixed metrics: classification needs entry_label, backtest needs exit_label
-        opt.fit(synthetic_df, entry_label=labels, exit_label=labels)
+        opt.fit(X=synthetic_df, entry_label=labels, exit_label=labels)
 
         for ind in opt.population_:
             assert len(ind.fitness.values) == 2
@@ -310,7 +315,7 @@ class TestMultiDatasetFit:
             seed=42,
             verbose=False,
         )
-        opt.fit(data, entry_label=labels)
+        opt.fit(X=data, entry_label=labels)
         assert len(opt.population_) == 10
 
 
@@ -333,7 +338,7 @@ class TestSeededDeterminism:
                 seed=seed,
                 verbose=False,
             )
-            opt.fit(df, entry_label=labels)
+            opt.fit(X=df, entry_label=labels)
             return [len(ind.tree) for ind in opt.population_]
 
         struct1 = run_evolution(42)
@@ -356,7 +361,7 @@ class TestSeededDeterminism:
                 seed=seed,
                 verbose=False,
             )
-            opt.fit(df, entry_label=labels)
+            opt.fit(X=df, entry_label=labels)
             return [len(ind.tree) for ind in opt.population_]
 
         struct1 = run_evolution(42)

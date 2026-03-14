@@ -1,12 +1,64 @@
-from dataclasses import dataclass
+"""Core optimizer type definitions."""
 
-import numpy as np
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Literal,
+    Protocol,
+    Sequence,
+    TypeVar,
+    Union,
+)
+
+from deap import tools
+
+from gentrade.individual import TreeIndividualBase
+
+T_co = TypeVar("T_co", covariant=True)
+# IndividualT = TypeVar("IndividualT")
+if TYPE_CHECKING:
+    from gentrade.backtest_metrics import BacktestMetricBase
+    from gentrade.classification_metrics import ClassificationMetricBase
+
+    Metric = Union[ClassificationMetricBase, BacktestMetricBase]
+else:
+    # Avoid circular imports at runtime; classification_metrics need to import
+    # TreeAggregation, which is defined here.
+    Metric = Any
+
+TradeSide = Literal["buy", "sell"]
+
+TreeAggregation = Literal["buy", "sell", "mean", "min", "max"]
+
+# Type variable for individual types, bounded by TreeIndividualBase
+IndividualT = TypeVar("IndividualT", bound=TreeIndividualBase)
+
+OperatorKwargs = Dict[str, Any]
 
 
-@dataclass
-class BtResult:
-    buy_times: np.ndarray
-    sell_times: np.ndarray
-    values: np.ndarray
-    positions: np.ndarray
-    pnls: np.ndarray
+class Algorithm(Protocol[IndividualT]):
+    """Structural interface for evolutionary algorithms.
+
+    Implementations are configured via constructor. `run` accepts a
+    population list and returns (population, logbook). The type parameter
+    ``IndividualT`` preserves the individual type through input and output.
+    """
+
+    def run(
+        self, population: list[IndividualT]
+    ) -> tuple[list[IndividualT], tools.Logbook]: ...
+
+
+class SelectionOp(Protocol[T_co]):
+    def __call__(
+        self, population: Sequence[Any], k: int, *args: Any, **kwargs: Any
+    ) -> Any: ...
+
+
+class CrossoverOp(Protocol[T_co]):
+    def __call__(self, ind1: Any, ind2: Any, *args: Any, **kwargs: Any) -> Any: ...
+
+
+class MutationOp(Protocol[T_co]):
+    def __call__(self, ind: Any, *args: Any, **kwargs: Any) -> Any: ...

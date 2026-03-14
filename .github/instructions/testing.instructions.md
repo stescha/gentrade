@@ -34,6 +34,7 @@ Follow these guidelines when writing tests for the `gentrade` repository.
     -   **Avoid exact float comparisons** for fitness across environments if unstable.
     -   Verify determinism via **structural properties** (e.g., population size, tree depth/size distribution) rather than fragile float values.
     -   Assert **invariants**: "Best fitness in final generation >= best fitness in initial generation" (elitism check).
+    -   Add tests that exercise pair-tree behaviour: `PairTreeIndividual`, `PairEvaluator`, and `PairTreeOptimizer` should have unit and integration coverage. Include tests for `tree_aggregation` options (e.g., "buy", "sell", "mean", "min", "max") and validate that pair-tree populations contain exactly two trees per individual.
 
 5.  **Config validation & error cases**:
     -   The `RunConfig` model contains several validators; write unit tests that exercise misconfigurations such as missing `metrics_val` when validation data is supplied, or wrong selection operators for multi-objective setups.

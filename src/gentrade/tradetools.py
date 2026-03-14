@@ -6,6 +6,8 @@ from typing import Literal, Optional, cast, overload
 import pandas as pd
 import tables
 from deap import gp
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 
 DATAFOLDER = "~/PyProj/tradetools/data"
 
@@ -216,12 +218,39 @@ def get_pairs() -> list[str]:
     return [f.split("_")[-2] for f in glob(folder)]
 
 
+def plot_tree_signals(
+    tree: gp.PrimitiveTree,
+    data: pd.DataFrame,
+    pset: gp.PrimitiveSetTyped,
+    marker: str,
+    color: str,
+    ax: Optional[Axes] = None,
+) -> None:
+    func = gp.compile(tree, pset=pset)
+    try:
+        sig = func(
+            data["open"],
+            data["high"],
+            data["low"],
+            data["close"],
+            data["volume"],
+        )
+    except Exception as exc:  # pragma: no cover - plotting convenience
+        raise RuntimeError("failed to execute tree on data") from exc
+    sig_bool = pd.Series(sig, index=data.index).astype(bool)
+    if ax is None:
+        ax = plt.gca()
+
+    ax.plot(data.index[sig_bool], data["close"][sig_bool], marker, color=color)
+
+
 def plot_signals(
+    pset: gp.PrimitiveSetTyped,
     train_data: pd.DataFrame,
     val_data: Optional[pd.DataFrame],
-    tree: gp.PrimitiveTree,
-    pset: gp.PrimitiveSetTyped,
-    buy_sell: int = 1,
+    entry_tree: gp.PrimitiveTree,
+    exit_tree: gp.PrimitiveTree | None = None,
+    # trade_direction: int = 1,
 ) -> None:
     """Visualise a GP signal tree against price data.
 
@@ -243,7 +272,6 @@ def plot_signals(
     """
     # local import to avoid a top‑level matplotlib dependency unless used
     import matplotlib.pyplot as plt
-    from deap import gp
 
     # combine data so signals cover both train and validation if available
     if val_data is not None:
@@ -252,45 +280,19 @@ def plot_signals(
         data = train_data
 
     # compile and execute tree; use same interface as evaluator
-    func = gp.compile(tree, pset=pset)
-    try:
-        sig = func(
-            data["open"],
-            data["high"],
-            data["low"],
-            data["close"],
-            data["volume"],
-        )
-    except Exception as exc:  # pragma: no cover - plotting convenience
-        raise RuntimeError("failed to execute tree on data") from exc
 
     # convert output to boolean Series same as _compile_tree_to_signals
-    sig_bool = pd.Series(sig)
-    print("signal count: ", sig_bool.sum())
+
     price = data["close"]
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    price.plot(ax=ax, label="close")
+    ax.plot(data.index, price, label="close price", color="blue", alpha=0.6)
 
     # determine marker style based on buy_sell flag
-    if buy_sell >= 0:
-        marker = "^"
-        color = "lightgreen"
-        label = "buy"
-    else:
-        marker = "v"
-        color = "r"
-        label = "sell"
-
-    if sig_bool.any():
-        ax.scatter(
-            price.index[sig_bool],
-            price[sig_bool],
-            c=color,
-            marker=marker,
-            label=label,
-            zorder=5,
-        )
+    if entry_tree:
+        plot_tree_signals(entry_tree, data, pset, marker="^", color="lightgreen", ax=ax)
+    if exit_tree:
+        plot_tree_signals(exit_tree, data, pset, marker="v", color="red", ax=ax)
 
     if val_data is not None and not val_data.empty:
         split_x = val_data.index[0]

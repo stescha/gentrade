@@ -11,7 +11,7 @@ Generates classes at runtime.
     *   **Fitness:** `weights` tuple defines objectives.
         *   `(1.0,)`: Maximize Single Objective.
         *   `(-1.0, 1.0)`: Multi-Objective (Min, Max).
-    *   **Individual (GP):** In this codebase individuals are wrapped in `TreeIndividual` objects which contain a typed `PrimitiveTree` and a `.fitness` attribute. Tooling expects the `TreeIndividual` wrapper rather than raw `gp.PrimitiveTree` in most optimizer flows.
+    *   **Individual (GP):** In many DEAP examples an individual is a `gp.PrimitiveTree`, but in this codebase individuals are wrapped by project-specific types (`TreeIndividual`, `PairTreeIndividual`) that contain one or two `PrimitiveTree` objects. Tooling and operators should prefer those wrappers.
     *   **Individual (GA):** Inherits from `list`, `array.array`, or `set`.
 
 ### 1.2 The Toolbox (`deap.base.Toolbox`)

@@ -47,7 +47,7 @@ class TestE2EClassificationSingleObjective:
             seed=42,
             verbose=False,
         )
-        opt.fit(df, entry_label=labels)
+        opt.fit(X=df, entry_label=labels)
 
         assert len(opt.population_) == mu
         assert len(opt.logbook_) == generations + 1
@@ -66,14 +66,14 @@ class TestE2EClassificationSingleObjective:
             seed=42,
             verbose=False,
         )
-        opt.fit(df, entry_label=labels)
+        opt.fit(X=df, entry_label=labels)
 
         for ind in opt.population_:
             assert ind.fitness.valid
             assert all(f >= 0 for f in ind.fitness.values)
 
     def test_with_validation(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Providing X_val/entry_label_val runs without error and validation output is printed."""
+        """Providing X_val/y_val runs without error and validation output is printed."""
         df = generate_synthetic_ohlcv(2000, 42)
         labels = _get_zigzag_labels(df)
 
@@ -93,7 +93,12 @@ class TestE2EClassificationSingleObjective:
             verbose=True,
             validation_interval=2,
         )
-        opt.fit(train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels)
+        opt.fit(
+            X=train_df,
+            entry_label=train_labels,
+            X_val=val_df,
+            entry_label_val=val_labels,
+        )
 
         captured = capsys.readouterr()
         assert "Validation results" in captured.out
@@ -113,7 +118,7 @@ class TestE2EClassificationSingleObjective:
             seed=42,
             verbose=False,
         )
-        opt1.fit(df, entry_label=labels)
+        opt1.fit(X=df, entry_label=labels)
 
         # Dict with single entry
         opt2 = TreeOptimizer(
@@ -125,7 +130,7 @@ class TestE2EClassificationSingleObjective:
             seed=42,
             verbose=False,
         )
-        opt2.fit({"pair_a": df}, entry_label={"pair_a": labels})
+        opt2.fit(X={"pair_a": df}, entry_label={"pair_a": labels})
 
         assert len(opt1.population_) == len(opt2.population_)
 
@@ -149,8 +154,7 @@ class TestE2ECppBacktestSingleObjective:
             seed=42,
             verbose=False,
         )
-        # C++ backtest needs exit labels for buy side
-        opt.fit(df, exit_label=labels)
+        opt.fit(df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 30
 
     def test_with_vbt_validation(self) -> None:
@@ -161,23 +165,24 @@ class TestE2ECppBacktestSingleObjective:
         train_df = df.iloc[:1600]
         val_df = df.iloc[1600:]
         train_labels = labels.iloc[:1600]
-        val_labels = labels.iloc[1600:]
 
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(MeanPnlCppMetric(min_trades=0), ),
+            metrics=(MeanPnlCppMetric(min_trades=0),),
             metrics_val=(MeanPnlMetric(min_trades=0),),
-            # VBT metric: needs exit labels for validation
+            # VBT metric: no labels needed for validation
             backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
-            selection=tools.selBest, #type: ignore[arg-type]
+            selection=tools.selBest,  # type: ignore[arg-type]
             mu=20,
             lambda_=40,
             generations=3,
             seed=42,
             verbose=False,
         )
-        # Backtest metrics need exit_labels
-        opt.fit(train_df, exit_label=train_labels, X_val=val_df, exit_label_val=val_labels)
+        # VBT metrics don't need labels for validation
+        opt.fit(
+            train_df, entry_label=train_labels, exit_label=train_labels, X_val=val_df
+        )
         assert len(opt.population_) == 20
 
 
@@ -201,7 +206,6 @@ class TestE2EMultiObjective:
             seed=42,
             verbose=False,
         )
-        # Mixed metrics: classification needs entry, backtest needs exit
         opt.fit(df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 30
 
@@ -289,7 +293,7 @@ class TestE2ECallbacks:
             verbose=False,
             callbacks=[spy],
         )
-        opt.fit(df, entry_label=labels)
+        opt.fit(X=df, entry_label=labels)
 
         assert spy.fit_start_called
         assert spy.fit_end_called
@@ -333,7 +337,7 @@ class TestE2ECallbacks:
             verbose=False,
             callbacks=[cb1, cb2],
         )
-        opt.fit(df, entry_label=labels)
+        opt.fit(X=df, entry_label=labels)
 
         # Each callback: 1 fit_start + generations gen_end + 1 fit_end
         expected_count = 1 + generations + 1

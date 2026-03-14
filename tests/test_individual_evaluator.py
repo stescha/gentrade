@@ -1,4 +1,4 @@
-"""Tests for the unified IndividualEvaluator class.
+"""Tests for the unified TreeEvaluator class.
 
 Verifies:
 - Constructor flags (_needs_backtest, _needs_labels) are set correctly.
@@ -17,6 +17,7 @@ import pytest
 from deap import gp as deap_gp
 
 from gentrade.backtest_metrics import (
+    MeanPnlCppMetric,
     SharpeRatioMetric,
     VbtBacktestMetricBase,
 )
@@ -24,10 +25,11 @@ from gentrade.classification_metrics import (
     ClassificationMetricBase,
     F1Metric,
 )
+from gentrade.config import BacktestConfig
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import TreeEvaluator
+from gentrade.individual import TreeIndividual
 from gentrade.minimal_pset import create_pset_default_medium
-from gentrade.optimizer.individual import TreeIndividual
 from gentrade.pset.pset_types import BooleanSeries, NumericSeries
 
 # ---------------------------------------------------------------------------
@@ -107,20 +109,23 @@ class TestConstructorFlags:
 
     def test_pure_classification_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """Only classification metrics → _needs_labels=True, _needs_backtest=False."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
         assert ev._needs_labels is True
         assert ev._needs_backtest_vbt is False
 
     def test_pure_backtest_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """Only backtest metrics → _needs_backtest=True, _needs_labels=False."""
-        ev = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),))
+        ev = TreeEvaluator(
+            pset=pset, backtest=BacktestConfig(), metrics=(SharpeRatioMetric(),)
+        )
         assert ev._needs_backtest_vbt is True
         assert ev._needs_labels is False
 
     def test_mixed_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """Mixed tuple sets both flags to True."""
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
+            backtest=BacktestConfig(),
             metrics=(_ConstClassMetric(), _ConstBacktestMetric()),
         )
         assert ev._needs_backtest_vbt is True
@@ -128,8 +133,6 @@ class TestConstructorFlags:
 
     def test_backtest_params_stored(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """BacktestConfig is stored on the instance."""
-        from gentrade.config import BacktestConfig
-
         backtest = BacktestConfig(
             tp_stop=0.05,
             sl_stop=0.02,
@@ -137,7 +140,7 @@ class TestConstructorFlags:
             fees=0.0005,
             init_cash=50_000.0,
         )
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
             metrics=(SharpeRatioMetric(),),
             backtest=backtest,
@@ -157,33 +160,36 @@ class TestConstructorFlags:
 
 @pytest.mark.unit
 class TestYTrueValidation:
-    """evaluate() raises ValueError for label mismatches before any computation.
+    """evaluate() raises ValueError for y_true mismatches before any computation.
 
     All calls supply ``df`` as a list; non-list inputs are considered invalid.
     """
 
-    def test_classification_without_entry_labels_raises(
+    def test_classification_without_y_true_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
-        """Classification evaluator raises when entry_labels is None (buy side)."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
+        """Classification evaluator raises when y_true is None."""
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
         with pytest.raises(ValueError, match="entry_labels must be provided"):
             ev.evaluate(valid_individual, ohlcvs=[df])
 
-    def test_vbt_backtest_without_exit_labels_raises(
+    def test_cpp_backtest_without_exit_labels_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
-        labels: pd.Series,
     ) -> None:
-        """VBT backtest evaluator raises when exit_labels is missing (buy side)."""
-        ev = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),), trade_side="buy")
+        """C++ backtest-only evaluator raises when exit_labels are missing."""
+        ev = TreeEvaluator(
+            pset=pset,
+            metrics=(MeanPnlCppMetric(min_trades=0),),
+            backtest=BacktestConfig(),
+        )
         with pytest.raises(ValueError, match="exit_labels must be provided"):
-            ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
+            ev.evaluate(valid_individual, ohlcvs=[df])
 
     def test_list_classification_length_mismatch_raises(
         self,
@@ -192,9 +198,9 @@ class TestYTrueValidation:
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
-        """When df is a list of datasets, entry_labels must match the list length."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
-        with pytest.raises(ValueError, match="entry_labels list must match"):
+        """When df is a list of datasets, y_true must match the list length."""
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
+        with pytest.raises(ValueError, match="Length of entry_labels list must match"):
             ev.evaluate(valid_individual, ohlcvs=[df, df], entry_labels=[labels])
 
 
@@ -215,7 +221,7 @@ class TestSingleDataFrameEvaluation:
         labels: pd.Series,
     ) -> None:
         """Classification evaluation returns a finite float tuple of length 1."""
-        ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
         result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         assert isinstance(result, tuple)
         assert len(result) == 1
@@ -230,7 +236,7 @@ class TestSingleDataFrameEvaluation:
         labels: pd.Series,
     ) -> None:
         """Stub metric returns its fixed value via the classification path."""
-        ev = IndividualEvaluator(pset=pset, metrics=(_ConstClassMetric(0.75),), trade_side="buy")
+        ev = TreeEvaluator(pset=pset, metrics=(_ConstClassMetric(0.75),))
         result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         assert result == pytest.approx((0.75,))
 
@@ -242,7 +248,9 @@ class TestSingleDataFrameEvaluation:
         labels: pd.Series,
     ) -> None:
         """Stub backtest metric returns its fixed value via the backtest path."""
-        ev = IndividualEvaluator(pset=pset, metrics=(_ConstBacktestMetric(0.42),), trade_side="buy")
+        ev = TreeEvaluator(
+            pset=pset, backtest=BacktestConfig(), metrics=(_ConstBacktestMetric(0.42),)
+        )
         result = ev.evaluate(valid_individual, ohlcvs=[df], exit_labels=[labels])
         assert result == pytest.approx((0.42,))
 
@@ -254,14 +262,13 @@ class TestSingleDataFrameEvaluation:
         labels: pd.Series,
     ) -> None:
         """Returned tuple length equals the number of metrics."""
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
             metrics=(
                 _ConstClassMetric(0.1),
                 _ConstClassMetric(0.2),
                 _ConstClassMetric(0.3),
             ),
-            trade_side="buy",
         )
         result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         assert len(result) == 3
@@ -292,7 +299,7 @@ class TestDictEvaluation:
                 # Return a predictable value so we can verify averaging.
                 return float(y_true.sum())
 
-        ev = IndividualEvaluator(pset=pset, metrics=(_SumMetric(),), trade_side="buy")
+        ev = TreeEvaluator(pset=pset, metrics=(_SumMetric(),))
         y1 = pd.Series([True, False], index=df.index[:2])
         y2 = pd.Series([False, False], index=df.index[:2])
         df2 = df.iloc[:2]
@@ -317,8 +324,12 @@ class TestDictEvaluation:
                 call_count += 1
                 return float(call_count)
 
-        ev = IndividualEvaluator(pset=pset, metrics=(_CountingMetric(),), trade_side="buy")
-        result = ev.evaluate(valid_individual, ohlcvs=[df, df], exit_labels=[labels, labels])
+        ev = TreeEvaluator(
+            pset=pset, backtest=BacktestConfig(), metrics=(_CountingMetric(),)
+        )
+        result = ev.evaluate(
+            valid_individual, ohlcvs=[df, df], exit_labels=[labels, labels]
+        )
         # call_count == 2 after two evaluations; mean of (1.0, 2.0) == 1.5
         assert result == pytest.approx((1.5,))
         assert call_count == 2
@@ -341,8 +352,8 @@ class TestBacktestGating:
         labels: pd.Series,
     ) -> None:
         """run_vbt_backtest is never invoked for a classification-only evaluator."""
-        with patch.object(IndividualEvaluator, "run_vbt_backtest") as mock_bt:
-            ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),), trade_side="buy")
+        with patch.object(TreeEvaluator, "run_vbt_backtest") as mock_bt:
+            ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
             ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         mock_bt.assert_not_called()
 
@@ -354,11 +365,11 @@ class TestBacktestGating:
         labels: pd.Series,
     ) -> None:
         """run_vbt_backtest is called exactly once even with two backtest metrics."""
-        with patch.object(IndividualEvaluator, "run_vbt_backtest") as mock_bt:
-            ev = IndividualEvaluator(
+        with patch.object(TreeEvaluator, "run_vbt_backtest") as mock_bt:
+            ev = TreeEvaluator(
                 pset=pset,
+                backtest=BacktestConfig(),
                 metrics=(_ConstBacktestMetric(0.1), _ConstBacktestMetric(0.2)),
-                trade_side="buy",
             )
             ev.evaluate(valid_individual, ohlcvs=[df], exit_labels=[labels])
         mock_bt.assert_called_once()
@@ -381,12 +392,14 @@ class TestMixedMetrics:
         labels: pd.Series,
     ) -> None:
         """Mixed metric tuple produces a tuple of the correct length."""
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
+            backtest=BacktestConfig(),
             metrics=(_ConstClassMetric(0.3), _ConstBacktestMetric(0.7)),
-            trade_side="buy",
         )
-        result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels], exit_labels=[labels])
+        result = ev.evaluate(
+            valid_individual, ohlcvs=[df], entry_labels=[labels], exit_labels=[labels]
+        )
         assert len(result) == 2
 
     def test_mixed_metrics_values_correct(
@@ -397,26 +410,27 @@ class TestMixedMetrics:
         labels: pd.Series,
     ) -> None:
         """Each mixed metric returns its own stub value in the correct slot."""
-        ev = IndividualEvaluator(
+        ev = TreeEvaluator(
             pset=pset,
+            backtest=BacktestConfig(),
             metrics=(_ConstClassMetric(0.3), _ConstBacktestMetric(0.7)),
-            trade_side="buy",
         )
-        result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels], exit_labels=[labels])
+        result = ev.evaluate(
+            valid_individual, ohlcvs=[df], entry_labels=[labels], exit_labels=[labels]
+        )
         assert result == pytest.approx((0.3, 0.7))
 
-    def test_mixed_requires_entry_labels(
+    def test_mixed_requires_y_true(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
-        labels: pd.Series,
     ) -> None:
-        """Mixed evaluator raises when entry_labels is absent (buy side)."""
-        ev = IndividualEvaluator(
+        """Mixed evaluator raises when entry_labels are absent."""
+        ev = TreeEvaluator(
             pset=pset,
+            backtest=BacktestConfig(),
             metrics=(_ConstClassMetric(), _ConstBacktestMetric()),
-            trade_side="buy",
         )
         with pytest.raises(ValueError, match="entry_labels must be provided"):
-            ev.evaluate(valid_individual, ohlcvs=[df], exit_labels=[labels])
+            ev.evaluate(valid_individual, ohlcvs=[df])

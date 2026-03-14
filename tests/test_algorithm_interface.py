@@ -1,7 +1,6 @@
 """Unit tests for the Algorithm Protocol and EaMuPlusLambda wrapper."""
 
-from collections.abc import Callable
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import MagicMock, patch
 
 import pytest

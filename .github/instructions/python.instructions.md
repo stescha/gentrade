@@ -13,11 +13,6 @@ General Python conventions for all code in this repository.
 - **No wildcards**: avoid `from module import *`.
 - Use `TYPE_CHECKING` blocks for import-only type annotations to prevent circular imports when necessary.
 
-Additional conventions:
-
-- Prefer explicit typed wrappers such as `TreeIndividual` and annotate `Algorithm` types returned by `create_algorithm()`.
-- Document the `fit(...)` contract in docstrings: `entry_label` and `exit_label` must mirror `X` in shape and index.
-
 
 ## Naming Conventions
 
@@ -33,7 +28,7 @@ Additional conventions:
 
 ## Docstrings & Comments
 
-- **Module docstring**: concise description on top. When the module is complex, add more details.
-- **Class/function docstrings**: Google style; focus on intent. Include Args, Returns, Raises as needed.
-- **Type hints preferred** over docstring type annotations.
-- **Inline comments**: explain *why*, not *what*. Add comments for non-obvious logic.
+ - **Module docstring**: concise description on top. When the module is complex, add more details.
+ - **Class/function docstrings**: Google style; focus on intent. Include Args, Returns, Raises as needed. When documenting optimizer/evaluator APIs mention the concrete public types `TreeIndividual` / `PairTreeIndividual` and `BaseEvaluator`/`PairEvaluator` where relevant.
+ - **Type hints preferred** over docstring type annotations.
+ - **Inline comments**: explain *why*, not *what*. Add comments for non-obvious logic.

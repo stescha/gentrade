@@ -12,44 +12,43 @@ from typing import Any, Callable, Iterable, Tuple, cast
 
 from deap import base, creator, gp
 
-# Cache for created Fitness classes, keyed by objective count.
-_fitness_classes_cache: dict[int, type[base.Fitness]] = {}
+# Cache for created Fitness classes, keyed by exact weights tuple.
+_fitness_classes_cache: dict[tuple[float, ...], type[base.Fitness]] = {}
 
 
-def _get_or_create_fitness_class(n_objectives: int) -> type[base.Fitness]:
-    """Retrieve or create a Fitness class for the given number of objectives.
+def _get_or_create_fitness_class(weights: Tuple[float, ...]) -> type[base.Fitness]:
+    """Retrieve or create a Fitness class for the given objective weights.
 
-    This function manages a cache of Fitness classes keyed by objective count.
-    It uses DEAP's :class:`deap.creator` to dynamically create Fitness classes
-    with the correct number of objectives, ensuring they can be pickled and
-    unpickled by worker processes in multiprocessing scenarios.
-
-    The created classes follow the naming convention `FitnessMulti_{n_objectives}`
-    and are registered in the `deap.creator` namespace for proper serialization.
+    Caches classes by the exact weights tuple to preserve maximization/minimization
+    intent (signs of weights). The created classes are registered in DEAP's
+    :mod:`deap.creator` to ensure pickling works across processes.
 
     Args:
-        n_objectives: Number of objectives (determines fitness tuple length).
+        weights: Tuple of objective weights (signs indicate minimization).
 
     Returns:
-        A :class:`deap.base.Fitness` class configured for the given number
-        of objectives, with all weights set to 1.0 (maximization).
+        A :class:`deap.base.Fitness` subclass configured with the provided
+        weights.
     """
-    if n_objectives in _fitness_classes_cache:
-        return _fitness_classes_cache[n_objectives]
+    if weights in _fitness_classes_cache:
+        return _fitness_classes_cache[weights]
 
-    # Create a unique class name
-    class_name = f"FitnessMulti_{n_objectives}"
+    # Create a unique class name based on weights
+    # Replace '-' with 'm' and '.' with 'p' to make a valid identifier
+    class_name = "Fitness_" + "_".join(
+        str(w).replace("-", "m").replace(".", "p") for w in weights
+    )
 
-    # Check if already created in deap.creator namespace
+    # Check if already present in deap.creator namespace
     if hasattr(creator, class_name):
         cls = getattr(creator, class_name)
-        _fitness_classes_cache[n_objectives] = cls
+        _fitness_classes_cache[weights] = cls
         return cast(type[base.Fitness], cls)
-    # Create via DEAP's creator with placeholder weights
-    weights = tuple(1.0 for _ in range(n_objectives))
+
+    # Create via DEAP's creator using the requested weights
     creator.create(class_name, base.Fitness, weights=weights)
     cls = getattr(creator, class_name)
-    _fitness_classes_cache[n_objectives] = cls
+    _fitness_classes_cache[weights] = cls
     return cast(type[base.Fitness], cls)
 
 
@@ -86,7 +85,7 @@ class TreeIndividualBase(list[gp.PrimitiveTree]):
                 determines the number of objectives.
         """
         super().__init__(content)
-        fitness_cls = _get_or_create_fitness_class(len(weights))
+        fitness_cls = _get_or_create_fitness_class(weights)
         self.fitness = fitness_cls()
 
 
@@ -126,6 +125,50 @@ class TreeIndividual(TreeIndividualBase):
             IndexError: If the individual contains no trees.
         """
         return self[0]
+
+
+class PairTreeIndividual(TreeIndividualBase):
+    """A GP individual containing exactly two primitive trees: buy and sell.
+
+    The first tree (index 0) generates entry signals; the second (index 1)
+    generates exit signals. Both trees share the same primitive set.
+
+    Attributes:
+        buy_tree: The entry-signal tree (``self[0]``).
+        sell_tree: The exit-signal tree (``self[1]``).
+    """
+
+    def __init__(
+        self,
+        content: Iterable[gp.PrimitiveTree],
+        weights: Tuple[float, ...],
+    ) -> None:
+        """Initialize a pair-tree individual.
+
+        Args:
+            content: Iterable of exactly two :class:`deap.gp.PrimitiveTree`
+                instances: buy tree first, sell tree second.
+            weights: Fitness objective weights (length determines objective count).
+
+        Raises:
+            ValueError: If ``content`` does not contain exactly two trees.
+        """
+        trees = list(content)
+        if len(trees) != 2:
+            raise ValueError(
+                f"PairTreeIndividual requires exactly 2 trees, got {len(trees)}."
+            )
+        super().__init__(trees, weights)
+
+    @property
+    def buy_tree(self) -> gp.PrimitiveTree:
+        """Return the buy (entry) tree at index 0."""
+        return self[0]
+
+    @property
+    def sell_tree(self) -> gp.PrimitiveTree:
+        """Return the sell (exit) tree at index 1."""
+        return self[1]
 
 
 def apply_operators(

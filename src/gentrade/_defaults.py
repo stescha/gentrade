@@ -1,6 +1,9 @@
 """Shared default names used across the gentrade package."""
 
 #: canonical key for the primary OHLCV dataset
+
+from typing import Literal
+
 from deap import tools
 
 KEY_OHLCV = "ohlcv"
@@ -23,3 +26,6 @@ SELECTION_MULTI_OBJ = {
     tools.selNSGA2,  # type: ignore
     tools.selSPEA2,  # type: ignore
 }
+TreeAggregation = Literal["buy", "sell", "mean", "min", "max"]
+
+DEFAULT_TREE_AGGREGATION: TreeAggregation = "mean"

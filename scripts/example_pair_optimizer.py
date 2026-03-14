@@ -1,42 +1,54 @@
-#!/usr/bin/env python
-"""Single-objective classification example using TreeOptimizer.
+"""Example: PairTreeOptimizer with C++ backtest metric.
 
-Requires real Binance OHLCV data via tradetools.load_binance_ohlcv[s].
-Run with: poetry run python scripts/example_classification_single_objective.py
+Shows how to use PairTreeOptimizer to evolve a buy+sell tree pair strategy.
+Each individual has:
+  - buy_tree: generates entry signals
+  - sell_tree: generates exit signals
+
+Both trees are evaluated jointly by the C++ backtester.
+No external labels are required for pure C++ backtest metrics.
+
+Usage::
+
+    python scripts/example_pair_optimizer.py
 """
-
-from typing import cast
 
 from deap import gp, tools
 
 from gentrade.backtest_metrics import MeanPnlCppMetric
 from gentrade.classification_metrics import F1Metric
+from gentrade.config import BacktestConfig
+from gentrade.individual import PairTreeIndividual
 from gentrade.minimal_pset import create_pset_default_large, zigzag_pivots
-from gentrade.optimizer import TreeOptimizer
+from gentrade.optimizer import PairTreeOptimizer
 from gentrade.tradetools import load_binance_ohlcv, load_binance_ohlcvs, plot_signals
-from gentrade.types import MutationOp, SelectionOp
 
-opt = TreeOptimizer(
-    pset=create_pset_default_large,  # factory callable
-    metrics=(F1Metric(),),
-    metrics_val=(F1Metric(), MeanPnlCppMetric()),  # VBT metric val only
-    mutation=cast(MutationOp[gp.PrimitiveTree], gp.mutUniform),
-    # mutation_params={"expr_min_depth": 0, "expr_max_depth": 2},
+# Create optimizer — no labels needed for pure C++ backtest
+opt = PairTreeOptimizer(
+    pset=create_pset_default_large,
+    metrics=(
+        F1Metric(tree_aggregation="mean"),
+        # MeanPnlCppMetric(min_trades=10, weight=1),
+    ),
+    metrics_val=(F1Metric(tree_aggregation="mean"), MeanPnlCppMetric(min_trades=1)),
+    backtest=BacktestConfig(fees=0.001),
+    mutation=gp.mutUniform,  # type: ignore
     crossover=gp.cxOnePointLeafBiased,
     crossover_params={"termpb": 0.1},
-    selection=cast(SelectionOp[gp.PrimitiveTree], tools.selDoubleTournament),
+    # selection=tools.selNSGA2,  # type: ignore
+    selection=tools.selDoubleTournament,  # type: ignore
     selection_params={"fitness_size": 5, "parsimony_size": 1.2, "fitness_first": True},
-    mu=4000,
+    mu=3000,
     lambda_=2000,
-    generations=50,
+    generations=30,
     cxpb=0.6,
     mutpb=0.3,
-    n_jobs=32,
+    n_jobs=30,
     tree_gen="grow",
     tree_max_depth=8,
     tree_max_height=20,
     validation_interval=1,
-    trade_side="buy",
+    verbose=True,
 )
 
 if __name__ == "__main__":
@@ -57,11 +69,16 @@ if __name__ == "__main__":
         exit_label=exit_labels_train,
         exit_label_val=exit_labels_val,
     )
-    best = opt.hall_of_fame_[0]
-    print(f"Best: {str(best.tree)}\nFitness: {best.fitness.values}")
+    best: PairTreeIndividual = opt.hall_of_fame_[0]
+    print("----- Results -----")
+    print(
+        f"Best entry: {str(best.buy_tree)}\nBest exit: {str(best.sell_tree)}\n"
+        f"Fitness: {best.fitness.values}"
+    )
     plot_signals(
         opt.pset_,
         train_data=df_train["ETHUSDT"] if isinstance(df_train, dict) else df_train,
         val_data=df_val,
-        entry_tree=best.tree,
+        entry_tree=best.buy_tree,
+        exit_tree=best.sell_tree,
     )

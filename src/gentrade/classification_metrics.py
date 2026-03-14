@@ -19,6 +19,9 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
+from gentrade._defaults import DEFAULT_TREE_AGGREGATION
+from gentrade.types import TreeAggregation
+
 
 class ClassificationMetricBase:
     """Abstract base for classification metric functions.
@@ -30,8 +33,19 @@ class ClassificationMetricBase:
     The optimizer uses ``metric.weight`` for DEAP fitness weighting.
     """
 
-    def __init__(self, weight: float = 1.0) -> None:
+    def __init__(
+        self,
+        weight: float = 1.0,
+        tree_aggregation: TreeAggregation = DEFAULT_TREE_AGGREGATION,
+    ) -> None:
+        """Args:
+        weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate/interpret pair-tree outputs when used
+            with PairEvaluator. One of: "buy", "sell", "mean", "median",
+            "min", "max". Defaults to "mean" for backward compatibility.
+        """
         self.weight = weight
+        self.tree_aggregation = tree_aggregation
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         """Compute fitness score from ground-truth and predicted labels.
@@ -72,11 +86,14 @@ class F1Metric(ClassificationMetricBase):
     for binary classification tasks where both error types carry similar cost.
     """
 
-    def __init__(self, weight: float = 1.0) -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate pair-tree outputs for this metric.
         """
-        super().__init__(weight=weight)
+        super().__init__(weight=weight, tree_aggregation=tree_aggregation)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, _ = _confusion_counts(y_true, y_pred)
@@ -96,12 +113,18 @@ class FBetaMetric(ClassificationMetricBase):
       false alarms (e.g., missing a market pivot).
     """
 
-    def __init__(self, beta: float = 2.0, weight: float = 1.0) -> None:
+    def __init__(
+        self,
+        beta: float = 2.0,
+        weight: float = 1.0,
+        tree_aggregation: TreeAggregation = "mean",
+    ) -> None:
         """Args:
         beta: Weight of recall relative to precision.
         weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate pair-tree outputs for this metric.
         """
-        super().__init__(weight=weight)
+        super().__init__(weight=weight, tree_aggregation=tree_aggregation)
         self._beta = beta
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
@@ -124,11 +147,14 @@ class MCCMetric(ClassificationMetricBase):
     because it considers all four quadrants of the confusion matrix.
     """
 
-    def __init__(self, weight: float = 1.0) -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate pair-tree outputs for this metric.
         """
-        super().__init__(weight=weight)
+        super().__init__(weight=weight, tree_aggregation=tree_aggregation)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, tn = _confusion_counts(y_true, y_pred)
@@ -149,11 +175,14 @@ class BalancedAccuracyMetric(ClassificationMetricBase):
     the model is no better than chance.
     """
 
-    def __init__(self, weight: float = 1.0) -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate pair-tree outputs for this metric.
         """
-        super().__init__(weight=weight)
+        super().__init__(weight=weight, tree_aggregation=tree_aggregation)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, tn = _confusion_counts(y_true, y_pred)
@@ -170,11 +199,14 @@ class PrecisionMetric(ClassificationMetricBase):
     sparse predictions — combine with a minimum-prediction-rate guard if needed.
     """
 
-    def __init__(self, weight: float = 1.0) -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate pair-tree outputs for this metric.
         """
-        super().__init__(weight=weight)
+        super().__init__(weight=weight, tree_aggregation=tree_aggregation)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, _, _ = _confusion_counts(y_true, y_pred)
@@ -189,11 +221,14 @@ class RecallMetric(ClassificationMetricBase):
     minimum-precision guard or use ``FBetaFitness`` instead.
     """
 
-    def __init__(self, weight: float = 1.0) -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate pair-tree outputs for this metric.
         """
-        super().__init__(weight=weight)
+        super().__init__(weight=weight, tree_aggregation=tree_aggregation)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, _, fn, _ = _confusion_counts(y_true, y_pred)
@@ -209,11 +244,14 @@ class JaccardMetric(ClassificationMetricBase):
     predictions over broad, high-recall ones.
     """
 
-    def __init__(self, weight: float = 1.0) -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
+        tree_aggregation: How to aggregate pair-tree outputs for this metric.
         """
-        super().__init__(weight=weight)
+        super().__init__(weight=weight, tree_aggregation=tree_aggregation)
 
     def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
         tp, fp, fn, _ = _confusion_counts(y_true, y_pred)

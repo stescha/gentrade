@@ -13,7 +13,7 @@ vectorbt ``Portfolio`` object ready for metric extraction.
 import numpy as np
 import vectorbt as vbt
 
-from gentrade.types import BtResult
+from gentrade.backtest import BtResult
 
 
 class BacktestMetricBase:
