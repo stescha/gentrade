@@ -4,17 +4,6 @@
 ---
 ## DevTask Overview
 <!-- Concise description of the development task -->
-- **Label**: empty-devtask
-- **Description**: ...
-
-<!-- Optional scope with optional keys  -->
-## Scope
-- **Files**: ...
-- **Focus**: ...
-
-<!-- Optional Notes providing additional context or considerations -->
-## Notes
-- ...
-- ...
-
+- **Label**: add-algorithm-interface
+- **Description**: Add a minimal `Algorithm` Protocol and an `EaMuPlusLambda` wrapper class to decouple optimizers from specific evolution function implementations. Refactor `BaseOptimizer` to use the new interface, keeping runtime behavior identical.
 
