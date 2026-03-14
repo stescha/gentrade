@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 import pandas as pd
 
 if TYPE_CHECKING:
-    from gentrade.eval_ind import IndividualEvaluator
+    from gentrade.eval_ind import BaseEvaluator
     from gentrade.optimizer.base import BaseOptimizer
 
 
@@ -58,7 +58,7 @@ class ValidationCallback:
         val_data: list[pd.DataFrame],
         val_entry_labels: list[pd.Series] | None,
         val_exit_labels: list[pd.Series] | None,
-        val_evaluator: "IndividualEvaluator",
+        val_evaluator: "BaseEvaluator",
         val_names: list[str],
         interval: int = 1,
     ) -> None:

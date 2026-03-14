@@ -21,7 +21,7 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import BaseEvaluator
 from gentrade.eval_pop import create_pool
 from gentrade.optimizer.callbacks import Callback, ValidationCallback
 from gentrade.optimizer.individual import TreeIndividual
@@ -297,7 +297,7 @@ class BaseOptimizer(ABC):
     @abstractmethod
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
-    ) -> IndividualEvaluator:
+    ) -> BaseEvaluator:
         """Create an :class:`IndividualEvaluator` for the given metrics.
 
         Args:
@@ -448,7 +448,7 @@ class BaseOptimizer(ABC):
         # 6. Build evaluators
         evaluator = self._make_evaluator(self.pset_, self.metrics)
 
-        val_evaluator: IndividualEvaluator | None = None
+        val_evaluator: BaseEvaluator | None = None
         if val_data_list:
             val_evaluator = self._make_evaluator(self.pset_, val_metrics)
 

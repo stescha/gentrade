@@ -25,10 +25,21 @@ from gentrade.classification_metrics import (
     F1Metric,
 )
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import TreeEvaluator, BaseEvaluator
 from gentrade.minimal_pset import create_pset_default_medium
 from gentrade.optimizer.individual import TreeIndividual
 from gentrade.pset.pset_types import BooleanSeries, NumericSeries
+
+
+@pytest.mark.unit
+class TestBaseEvaluator:
+    def test_tree_evaluator_default_trade_side(self, pset: deap_gp.PrimitiveSetTyped) -> None:
+        ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
+        assert getattr(ev, "trade_side", "buy") == "buy"
+
+    def test_base_evaluator_is_abstract(self) -> None:
+        with pytest.raises(TypeError):
+            BaseEvaluator(pset=None, metrics=())
 
 # ---------------------------------------------------------------------------
 # Fixtures

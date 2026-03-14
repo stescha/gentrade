@@ -5,7 +5,7 @@ from multiprocessing import pool
 
 import pandas as pd
 
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import BaseEvaluator
 from gentrade.optimizer.individual import TreeIndividual
 
 
@@ -40,7 +40,7 @@ class WorkerContext:
     functions then reference ``_worker_ctx`` to access it.
     """
 
-    evaluator: IndividualEvaluator
+    evaluator: BaseEvaluator
     train_data: list[pd.DataFrame]
     train_entry_labels: list[pd.Series] | None
     train_exit_labels: list[pd.Series] | None
@@ -66,7 +66,7 @@ def init_worker(ctx: WorkerContext) -> None:
 
 def create_pool(
     processes: int,
-    evaluator: IndividualEvaluator,
+    evaluator: BaseEvaluator,
     train_data: list[pd.DataFrame],
     train_entry_labels: list[pd.Series] | None,
     train_exit_labels: list[pd.Series] | None,

@@ -8,7 +8,7 @@ from deap import base, gp, tools
 
 from gentrade.algorithms import EaMuPlusLambda
 from gentrade.config import BacktestConfig
-from gentrade.eval_ind import IndividualEvaluator, TradeSide
+from gentrade.eval_ind import TreeEvaluator, TradeSide
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.optimizer.base import BaseOptimizer
 from gentrade.optimizer.callbacks import Callback
@@ -41,7 +41,6 @@ def _create_tree_toolbox(
     tree_max_depth: int,
     tree_max_height: int,
     tree_gen: str,
-    inidividual_cls: type[TreeIndividual],
 ) -> base.Toolbox:
     """Create and configure a DEAP toolbox for tree-based GP optimization.
 
@@ -97,14 +96,6 @@ def _create_tree_toolbox(
             "expr", genGrow, pset=pset, min_=tree_min_depth, max_=tree_max_depth
         )
 
-    def _make_individual() -> TreeIndividual:
-        # toolbox.expr() returns a list of DEAP nodes; wrap it in a PrimitiveTree
-        # first, then place the tree inside the individual container.
-        nodes = toolbox.expr()
-        return inidividual_cls([gp.PrimitiveTree(nodes)], weights)
-
-    toolbox.register("individual", _make_individual)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("compile", gp.compile, pset=pset)
 
     toolbox.register("select", selection, **(selection_params or {}))
@@ -134,22 +125,15 @@ def _create_tree_toolbox(
     return toolbox
 
 
-class TreeOptimizer(BaseOptimizer):
-    """Genetic programming optimizer specialized for tree-based individuals.
+from abc import ABC, abstractmethod
 
-    `TreeOptimizer` wires together primitive set construction, DEAP toolbox
-    creation, and the `IndividualEvaluator` to provide a ready-to-run GP
-    optimizer for trading strategies. It configures tree generation and
-    operator parameters and delegates the evolutionary loop to
-    :class:`BaseOptimizer`.
 
-    Key behavior:
-        - Uses `TreeIndividual` as the individual container.
-        - Wraps DEAP tree-level operators so they operate on `TreeIndividual`.
-        - Supports different tree initialization strategies (`grow`, `full`,
-          `half_and_half`) and enforces height limits after operators.
-        - The `trade_side` parameter determines how entry/exit labels are
-          interpreted during evaluation.
+class BaseTreeOptimizer(BaseOptimizer, ABC):
+    """Base class for tree-based optimizers.
+
+    Subclasses must implement _make_individual which receives a tree_gen
+    callable (toolbox.expr) and the fitness weights and must return an
+    individual wrapping a PrimitiveTree.
     """
 
     def __init__(
@@ -159,7 +143,7 @@ class TreeOptimizer(BaseOptimizer):
         metrics: tuple[Metric, ...],
         backtest: BacktestConfig | None = None,
         trade_side: TradeSide = "buy",
-        mutation: MutationOp[gp.PrimitiveTree] = gp.mutUniform,  # type: ignore[assignment]  # DEAP stubs type mutUniform incompatibly with MutationOp
+        mutation: MutationOp[gp.PrimitiveTree] = gp.mutUniform,  # type: ignore[assignment]
         mutation_params: OperatorKwargs | None = None,
         crossover: CrossoverOp[gp.PrimitiveTree] = gp.cxOnePoint,
         crossover_params: OperatorKwargs | None = None,
@@ -224,7 +208,7 @@ class TreeOptimizer(BaseOptimizer):
         return self._pset_factory()
 
     def _build_toolbox(self, pset: gp.PrimitiveSetTyped) -> base.Toolbox:
-        return _create_tree_toolbox(
+        toolbox = _create_tree_toolbox(
             pset=pset,
             metrics=self.metrics,
             mutation=self.mutation,
@@ -239,21 +223,21 @@ class TreeOptimizer(BaseOptimizer):
             tree_max_depth=self.tree_max_depth,
             tree_max_height=self.tree_max_height,
             tree_gen=self.tree_gen,
-            inidividual_cls=TreeIndividual,
         )
-
-    def _make_evaluator(
-        self,
-        pset: gp.PrimitiveSetTyped,
-        metrics: tuple[Metric, ...],
-    ) -> IndividualEvaluator:
-
-        return IndividualEvaluator(
-            pset=pset,
-            metrics=metrics,
-            backtest=self._backtest,
-            trade_side=self._trade_side,
+        # Register individual/population using the subclass-provided maker
+        weights = tuple(m.weight for m in self.metrics)
+        toolbox.register(
+            "individual",
+            self._make_individual,
+            tree_gen_func=toolbox.expr,
+            weights=weights,
         )
+        toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+        return toolbox
+
+    @abstractmethod
+    def _make_individual(self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]) -> TreeIndividual:
+        ...
 
     def create_algorithm(
         self,
@@ -262,17 +246,6 @@ class TreeOptimizer(BaseOptimizer):
         halloffame: tools.HallOfFame,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
     ) -> Algorithm[TreeIndividual]:
-        """Return an :class:`EaMuPlusLambda` configured from optimizer attributes.
-
-        Args:
-            worker_pool: Multiprocessing pool for parallel individual evaluation.
-            stats: DEAP statistics object for logging per-generation metrics.
-            halloffame: Hall of fame tracking best individuals.
-            val_callback: Optional callback invoked after each generation.
-
-        Returns:
-            A configured :class:`EaMuPlusLambda` instance ready to call ``run()``.
-        """
         return EaMuPlusLambda(
             pool=worker_pool,
             toolbox=self.toolbox_,
@@ -285,4 +258,25 @@ class TreeOptimizer(BaseOptimizer):
             halloffame=halloffame,
             verbose=self.verbose,
             val_callback=val_callback,
+        )
+
+
+class TreeOptimizer(BaseTreeOptimizer):
+    """Thin TreeOptimizer subclass implementing individual creation and evaluator"""
+
+    def _make_individual(self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]) -> TreeIndividual:
+        nodes = tree_gen_func()
+        return TreeIndividual([gp.PrimitiveTree(nodes)], weights)
+
+    def _make_evaluator(
+        self,
+        pset: gp.PrimitiveSetTyped,
+        metrics: tuple[Metric, ...],
+    ) -> TreeEvaluator:
+
+        return TreeEvaluator(
+            pset=pset,
+            metrics=metrics,
+            backtest=self._backtest,
+            trade_side=self._trade_side,
         )
