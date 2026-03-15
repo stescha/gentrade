@@ -156,7 +156,7 @@ class TreeOptimizer(BaseOptimizer):
         mutation_params: OperatorKwargs | None = None,
         crossover: CrossoverOp[gp.PrimitiveTree] = gp.cxOnePoint,
         crossover_params: OperatorKwargs | None = None,
-        selection: SelectionOp[gp.PrimitiveTree] = tools.selRoulette,  # type: ignore[attr-defined]
+        selection: SelectionOp[gp.PrimitiveTree] = tools.selRoulette,  # type: ignore[assignment]  # selRoulette return type Sequence[Any] is compatible but not assignable to SelectionOp
         selection_params: OperatorKwargs | None = None,
         select_best: SelectionOp[gp.PrimitiveTree] = tools.selBest,  # type: ignore[assignment]
         select_best_params: OperatorKwargs | None = None,

@@ -4,6 +4,8 @@ These tests run actual fit() calls with tiny population sizes to keep execution
 fast while exercising the full evaluation pipeline.
 """
 
+from typing import cast
+
 import pandas as pd
 import pytest
 from deap import tools
@@ -206,7 +208,7 @@ class TestPairOptimizerMultiObjective:
         opt = PairOptimizer(
             pset=create_pset_default_medium,
             metrics=(MeanPnlCppMetric(min_trades=0), MeanPnlMetric(min_trades=0)),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
             mu=10,
             lambda_=20,
             generations=2,
@@ -225,7 +227,7 @@ class TestPairOptimizerMultiObjective:
         opt = PairOptimizer(
             pset=create_pset_default_medium,
             metrics=(MeanPnlCppMetric(min_trades=0), MeanPnlMetric(min_trades=0)),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
             mu=10,
             lambda_=20,
             generations=2,
@@ -255,7 +257,10 @@ class TestPairOptimizerDeterminism:
                 verbose=False,
             )
             opt.fit(df)
-            return [(len(ind.buy_tree), len(ind.sell_tree)) for ind in opt.population_]  # type: ignore[union-attr]
+            return [
+                (len(cast(PairIndividual, ind).buy_tree), len(cast(PairIndividual, ind).sell_tree))
+                for ind in opt.population_
+            ]
 
         assert run() == run()
 
@@ -274,7 +279,10 @@ class TestPairOptimizerDeterminism:
                 verbose=False,
             )
             opt.fit(df)
-            return [(len(ind.buy_tree), len(ind.sell_tree)) for ind in opt.population_]  # type: ignore[union-attr]
+            return [
+                (len(cast(PairIndividual, ind).buy_tree), len(cast(PairIndividual, ind).sell_tree))
+                for ind in opt.population_
+            ]
 
         assert run(42) != run(43)
 

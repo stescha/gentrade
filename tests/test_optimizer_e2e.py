@@ -192,7 +192,7 @@ class TestE2EMultiObjective:
             pset=create_pset_default_medium,
             metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
             backtest=BacktestConfig(),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
             mu=30,
             lambda_=60,
             generations=5,
@@ -211,7 +211,7 @@ class TestE2EMultiObjective:
             pset=create_pset_default_medium,
             metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
             backtest=BacktestConfig(),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
             mu=30,
             lambda_=60,
             generations=5,
@@ -230,7 +230,7 @@ class TestE2EMultiObjective:
             pset=create_pset_default_medium,
             metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
             backtest=BacktestConfig(),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
             mu=30,
             lambda_=60,
             generations=5,

@@ -259,7 +259,7 @@ class TestMultiObjectiveFit:
             pset=create_pset_default_medium,
             metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
             backtest=BacktestConfig(),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
             mu=10,
             lambda_=20,
             generations=2,
@@ -278,7 +278,7 @@ class TestMultiObjectiveFit:
             pset=create_pset_default_medium,
             metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
             backtest=BacktestConfig(),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
             mu=10,
             lambda_=20,
             generations=2,

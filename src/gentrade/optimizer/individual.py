@@ -184,8 +184,8 @@ class TreeIndividual(TreeIndividualBase):
 
 def apply_operators(
     tree_op: Callable[..., Any],
-) -> Callable[..., tuple[TreeIndividual, ...]]:
-    """Wrap a tree-level DEAP operator to work on `TreeIndividual` instances.
+) -> Callable[..., tuple[TreeIndividualBase, ...]]:
+    """Wrap a tree-level DEAP operator to work on `TreeIndividualBase` instances.
 
     This decorator lifts tree-level operators (e.g., `gp.cxOnePoint`, `gp.mutUniform`)
     to the individual level. It applies the wrapped operator to each corresponding
@@ -201,12 +201,12 @@ def apply_operators(
             (e.g., crossover or mutation functions from DEAP).
 
     Returns:
-        A wrapped function that takes `TreeIndividual` instances, applies
-        `tree_op` to their trees, and returns the modified individuals.
+        A wrapped function that takes :class:`TreeIndividualBase` instances,
+        applies ``tree_op`` to their trees, and returns the modified individuals.
     """
 
     @wraps(tree_op)
-    def wrapper(*individuals: TreeIndividual) -> tuple[TreeIndividual, ...]:
+    def wrapper(*individuals: TreeIndividualBase) -> tuple[TreeIndividualBase, ...]:
         if not individuals:
             return individuals
         # Operate only over the tree positions present in all individuals.

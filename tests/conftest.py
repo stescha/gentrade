@@ -83,7 +83,7 @@ def opt_e2e_multiobjective() -> TreeOptimizer:
         pset=create_pset_default_medium,
         metrics=(F1Metric(), MeanPnlCppMetric(min_trades=5)),
         backtest=BacktestConfig(),
-        selection=tools.selNSGA2,  # type: ignore[attr-defined]
+        selection=tools.selNSGA2,
         mu=20,
         lambda_=40,
         generations=3,

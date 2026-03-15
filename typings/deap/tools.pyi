@@ -64,6 +64,24 @@ def selWorst(
     k: int,
     fit_attr: str = ...,
 ) -> Sequence[Any]: ...
+def selRandom(
+    individuals: Sequence[Any],
+    k: int,
+) -> Sequence[Any]: ...
+def selRoulette(
+    individuals: Sequence[Any],
+    k: int,
+    fit_attr: str = ...,
+) -> Sequence[Any]: ...
+def selNSGA2(
+    individuals: Sequence[Any],
+    k: int,
+    nd: str = ...,
+) -> Sequence[Any]: ...
+def selSPEA2(
+    individuals: Sequence[Any],
+    k: int,
+) -> Sequence[Any]: ...
 def selTournament(
     individuals: Sequence[Any],
     k: int,

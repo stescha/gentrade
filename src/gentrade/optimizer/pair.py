@@ -159,9 +159,9 @@ class PairOptimizer(BaseOptimizer):
         mutation_params: OperatorKwargs | None = None,
         crossover: CrossoverOp[gp.PrimitiveTree] = gp.cxOnePoint,
         crossover_params: OperatorKwargs | None = None,
-        selection: SelectionOp[gp.PrimitiveTree] = tools.selRoulette,  # type: ignore[attr-defined]
+        selection: SelectionOp[gp.PrimitiveTree] = tools.selRoulette,  # type: ignore[assignment]  # selRoulette return type Sequence[Any] is compatible but not assignable to SelectionOp
         selection_params: OperatorKwargs | None = None,
-        select_best: SelectionOp[gp.PrimitiveTree] = tools.selBest,  # type: ignore[assignment]
+        select_best: SelectionOp[gp.PrimitiveTree] = tools.selBest,  # type: ignore[assignment]  # selBest return type Sequence[Any] is compatible but not assignable to SelectionOp
         select_best_params: OperatorKwargs | None = None,
         tree_min_depth: int = 2,
         tree_max_depth: int = 6,

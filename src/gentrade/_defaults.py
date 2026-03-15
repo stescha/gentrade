@@ -15,11 +15,11 @@ SELECTION_SINGLE_OBJ = {
     tools.selDoubleTournament,
     tools.selBest,
     tools.selWorst,
-    tools.selRandom,  # type: ignore
-    tools.selRoulette,  # type: ignore
+    tools.selRandom,
+    tools.selRoulette,
 }
 
 SELECTION_MULTI_OBJ = {
-    tools.selNSGA2,  # type: ignore
-    tools.selSPEA2,  # type: ignore
+    tools.selNSGA2,
+    tools.selSPEA2,
 }

@@ -168,7 +168,7 @@ class TestPairOptimizerInit:
         opt = PairOptimizer(
             pset=pset,
             metrics=(m1, m2),
-            selection=tools.selNSGA2,  # type: ignore[attr-defined]
+            selection=tools.selNSGA2,
         )
         assert opt is not None
 

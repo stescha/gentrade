@@ -552,7 +552,7 @@ class NSGA2SelectionConfig(MultiObjectiveSelectionConfigBase):
     ``selNSGA2(individuals, k, nd=...)`` signature.
     """
 
-    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selNSGA2)  # type: ignore[attr-defined]
+    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selNSGA2)
 
     nd: Literal["standard", "log"] = Field(
         "standard",
@@ -563,7 +563,7 @@ class NSGA2SelectionConfig(MultiObjectiveSelectionConfigBase):
 class SPEA2SelectionConfig(MultiObjectiveSelectionConfigBase):
     """SPEA2: strength Pareto evolutionary algorithm selection."""
 
-    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selSPEA2)  # type: ignore[attr-defined]
+    func: ClassVar[Callable[..., Any]] = staticmethod(tools.selSPEA2)
 
 
 # -- Plain data configs -----------------------------------------
