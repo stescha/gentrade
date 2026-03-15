@@ -10,6 +10,8 @@ Verifies:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import pytest
 from deap import gp, tools
@@ -213,7 +215,7 @@ class TestPairTreeOptimizerFit:
     def test_fit_determinism_with_seed(self) -> None:
         """Two runs with same seed produce identical best fitness."""
         df = generate_synthetic_ohlcv(200, 42)
-        kwargs: dict = dict(
+        kwargs: dict[str, Any] = dict(
             pset=create_pset_zigzag_minimal,
             metrics=(MeanPnlCppMetric(min_trades=0),),
             mu=8,

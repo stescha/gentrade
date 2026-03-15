@@ -329,8 +329,12 @@ class IndividualEvaluator(BaseEvaluator):
             MetricCalculationError: If any metric returns NaN, Inf, or raises
                 an exception.
         """
-        tree_ind = cast(TreeIndividual, individual)
-        tree = tree_ind.tree
+        # IndividualEvaluator is only used with TreeIndividual (single-tree) instances.
+        # The cast is safe because PairTreeOptimizer uses PairEvaluator instead.
+        assert isinstance(individual, TreeIndividual), (
+            f"IndividualEvaluator._eval_dataset expects TreeIndividual, got {type(individual).__name__}"
+        )
+        tree = individual.tree
         signals = self._compile_tree_to_signals(tree, self.pset, df)
 
         # Determine which labels map to classification and backtest roles based on trade_side.
@@ -565,11 +569,15 @@ class PairEvaluator(IndividualEvaluator):
         entry_true: pd.Series | None = None,
         exit_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
-        pair_ind = cast(PairTreeIndividual, individual)
+        # PairEvaluator is only used with PairTreeIndividual instances.
+        # The cast is safe because TreeOptimizer uses IndividualEvaluator instead.
+        assert isinstance(individual, PairTreeIndividual), (
+            f"PairEvaluator._eval_dataset expects PairTreeIndividual, got {type(individual).__name__}"
+        )
         # Compile both trees to signals
-        buy_signals = self._compile_tree_to_signals(pair_ind.buy_tree, self.pset, df)
+        buy_signals = self._compile_tree_to_signals(individual.buy_tree, self.pset, df)
         sell_signals = self._compile_tree_to_signals(
-            pair_ind.sell_tree, self.pset, df
+            individual.sell_tree, self.pset, df
         )
 
         # Run backtests once if required
@@ -577,11 +585,11 @@ class PairEvaluator(IndividualEvaluator):
         pf: vbt.Portfolio | None = None
         if self._needs_backtest:
             bt_result = self.run_cpp_backtest(
-                pair_ind.buy_tree, df, buy_signals, sell_signals
+                individual.buy_tree, df, buy_signals, sell_signals
             )
         if self._needs_backtest_vbt:
             pf = self.run_vbt_backtest(
-                pair_ind.buy_tree, df, buy_signals, sell_signals
+                individual.buy_tree, df, buy_signals, sell_signals
             )
 
         result: list[float] = []
@@ -606,7 +614,7 @@ class PairEvaluator(IndividualEvaluator):
             except Exception as e:
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} calculation failed.",
-                    tree=pair_ind.buy_tree,
+                    tree=individual.buy_tree,
                     metric=m,
                     signals=buy_signals,
                     err=e,
@@ -615,7 +623,7 @@ class PairEvaluator(IndividualEvaluator):
             if not np.isfinite(val):
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} returned non-finite value.",
-                    tree=pair_ind.buy_tree,
+                    tree=individual.buy_tree,
                     metric=m,
                     value=val,
                     signals=buy_signals,
@@ -638,7 +646,6 @@ class PairEvaluator(IndividualEvaluator):
         metric's ``tree_aggregation`` setting (buy/sell/statistical) rather than
         the single-tree ``trade_side`` semantics used by IndividualEvaluator.
         """
-        pair_ind = cast(PairTreeIndividual, individual)
         # Per-metric classification label requirements
         for m in self.metrics:
             if isinstance(m, ClassificationMetricBase):
@@ -679,7 +686,7 @@ class PairEvaluator(IndividualEvaluator):
                 sub_entry = entry_labels[i]
             if exit_labels is not None:
                 sub_exit = exit_labels[i]
-            results.append(self._eval_dataset(pair_ind, subdf, sub_entry, sub_exit))
+            results.append(self._eval_dataset(individual, subdf, sub_entry, sub_exit))
         return self.aggregate_fitness(results) if aggregate else results
 
 
