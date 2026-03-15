@@ -260,7 +260,7 @@ Keep script runnable by `poetry run python scripts/example_pair_optimizer.py`. K
 - Raise `ValueError` for incompatible label configurations.
 - Keep changes minimal and localized; avoid sweeping refactors.
 - Backward compatibility is not needed. You can change existing apis if necessary. avoid additional complexity just to support backwards compatibility.
-- Branch from `feat/session-c/pair-evaluator-and-metrics`. Your feature branch should be named `feat/session-d/pair-tree-optimizer`
+- Branch from `feat/session-c/pair-evaluator-and-metrics`. Your feature branch should be named `feat/session-d/test-and-examples`
 - Commit frequently and atomically — one logical change per commit. Read `.github/commands/commit-messages.md` for message format.
 - Make sure all tests pass. 
 - Make sure to fix all mypy and ruff errors.
