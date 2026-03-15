@@ -225,6 +225,9 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
             tree_gen=self.tree_gen,
         )
         # Register individual/population using the subclass-provided maker
+        return self._register_population(toolbox)
+
+    def _register_population(self, toolbox: base.Toolbox) -> base.Toolbox:
         weights = tuple(m.weight for m in self.metrics)
         toolbox.register(
             "individual",
@@ -307,4 +310,9 @@ class PairTreeOptimizer(BaseTreeOptimizer):
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
     ) -> BaseEvaluator:
-        return PairEvaluator(pset=pset, metrics=metrics, backtest=self._backtest, trade_side=self._trade_side)
+        return PairEvaluator(
+            pset=pset,
+            metrics=metrics,
+            backtest=self._backtest,
+            trade_side=self._trade_side,
+        )
