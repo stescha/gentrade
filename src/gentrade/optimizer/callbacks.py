@@ -4,7 +4,7 @@ Callbacks allow users to plug custom behaviour into the GP evolution
 process at key stages: fit start, generation end, and fit end.
 """
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import pandas as pd
 
@@ -117,7 +117,9 @@ class ValidationCallback:
         for fitness, name in zip(val_fitnesses, self._val_names, strict=True):
             print(f"  {name}: {fitness}")
 
-        agg_score = self._val_evaluator.aggregate_fitness(val_fitnesses)
+        agg_score = self._val_evaluator.aggregate_fitness(
+            cast(list[tuple[float, ...]], val_fitnesses)
+        )
         print(f"  aggregated: {', '.join(map(str, agg_score))}")
 
     def on_fit_end(self, optimizer: "BaseOptimizer") -> None:

@@ -16,6 +16,7 @@ from gentrade.optimizer.callbacks import Callback
 from gentrade.optimizer.individual import (
     PairTreeIndividual,
     TreeIndividual,
+    TreeIndividualBase,
     apply_operators,
 )
 from gentrade.optimizer.types import (
@@ -95,7 +96,13 @@ def _create_tree_toolbox(
 
     toolbox.register("compile", gp.compile, pset=pset)
 
-    toolbox.register("select", selection, **(selection_params or {}))
+    # selTournament requires tournsize; supply default=3 if not provided.
+    effective_sel_params = dict(selection_params or {})
+    sel_name = getattr(selection, "__name__", "")
+    if sel_name == "selTournament" and "tournsize" not in effective_sel_params:
+        effective_sel_params["tournsize"] = 3
+
+    toolbox.register("select", selection, **effective_sel_params)
     toolbox.register("select_best", select_best, **(select_best_params or {}))
 
     mut_params = (mutation_params or {}).copy()
@@ -140,7 +147,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         mutation_params: OperatorKwargs | None = None,
         crossover: CrossoverOp[gp.PrimitiveTree] = gp.cxOnePoint,
         crossover_params: OperatorKwargs | None = None,
-        selection: SelectionOp[gp.PrimitiveTree] = tools.selRoulette,  # type: ignore[attr-defined]
+        selection: SelectionOp[gp.PrimitiveTree] = tools.selTournament,  # type: ignore[assignment]
         selection_params: OperatorKwargs | None = None,
         select_best: SelectionOp[gp.PrimitiveTree] = tools.selBest,  # type: ignore[assignment]
         select_best_params: OperatorKwargs | None = None,
@@ -231,7 +238,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
     @abstractmethod
     def _make_individual(
         self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]
-    ) -> TreeIndividual: ...
+    ) -> TreeIndividualBase: ...
 
     def create_algorithm(
         self,

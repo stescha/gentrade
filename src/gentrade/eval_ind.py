@@ -15,14 +15,14 @@ This ensures bugs and misconfigurations surface immediately.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal, cast, overload
+from typing import TYPE_CHECKING, Callable, Literal, cast
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
 from deap import gp
 
-from gentrade.optimizer.individual import TreeIndividual, PairTreeIndividual
+from gentrade.optimizer.individual import PairTreeIndividual, TreeIndividual, TreeIndividualBase
 
 if TYPE_CHECKING:
     from gentrade.config import BacktestConfig
@@ -79,7 +79,7 @@ class BaseEvaluator(ABC):
     @abstractmethod
     def _eval_dataset(
         self,
-        individual: "TreeIndividual",
+        individual: "TreeIndividualBase",
         df: "pd.DataFrame",
         entry_true: "pd.Series" | None = None,
         exit_true: "pd.Series" | None = None,
@@ -88,7 +88,7 @@ class BaseEvaluator(ABC):
     @abstractmethod
     def evaluate(
         self,
-        individual: "TreeIndividual",
+        individual: "TreeIndividualBase",
         *,
         ohlcvs: list[pd.DataFrame],
         entry_labels: list[pd.Series] | None = None,
@@ -235,7 +235,7 @@ class IndividualEvaluator(BaseEvaluator):
         init_cash = self.backtest.init_cash if self.backtest else 100_000.0
 
         try:
-            return vbt.Portfolio.from_signals(  # type: ignore
+            return vbt.Portfolio.from_signals(
                 close=ohlcv["close"],
                 open=ohlcv["open"],
                 high=ohlcv["high"],
@@ -299,7 +299,7 @@ class IndividualEvaluator(BaseEvaluator):
 
     def _eval_dataset(
         self,
-        individual: TreeIndividual,
+        individual: TreeIndividualBase,
         df: pd.DataFrame,
         entry_true: pd.Series | None = None,
         exit_true: pd.Series | None = None,
@@ -329,10 +329,14 @@ class IndividualEvaluator(BaseEvaluator):
             MetricCalculationError: If any metric returns NaN, Inf, or raises
                 an exception.
         """
-        tree = individual.tree
+        tree_ind = cast(TreeIndividual, individual)
+        tree = tree_ind.tree
         signals = self._compile_tree_to_signals(tree, self.pset, df)
 
         # Determine which labels map to classification and backtest roles based on trade_side.
+        class_labels: pd.Series | None
+        backtest_exits: pd.Series | None
+        backtest_entries: pd.Series | None
         if self.trade_side == "buy":
             # buy side: signals = entries, exit_true = exits for backtest
             class_labels = entry_true
@@ -346,7 +350,7 @@ class IndividualEvaluator(BaseEvaluator):
 
         # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
         bt_result: BtResult | None = None
-        pf: vbt.Portfolio | None = None  # type: ignore
+        pf: vbt.Portfolio | None = None
         if self._needs_backtest:
             # Guarded by BaseEvaluator.verify_data called in BaseOptimizer.fit()
             assert backtest_entries is not None
@@ -392,31 +396,9 @@ class IndividualEvaluator(BaseEvaluator):
 
         return tuple(result)
 
-    @overload
     def evaluate(
         self,
-        individual: TreeIndividual,
-        *,
-        ohlcvs: list[pd.DataFrame],
-        entry_labels: list[pd.Series] | None = None,
-        exit_labels: list[pd.Series] | None = None,
-        aggregate: Literal[True] = True,
-    ) -> tuple[float, ...]: ...
-
-    @overload
-    def evaluate(
-        self,
-        individual: TreeIndividual,
-        *,
-        ohlcvs: list[pd.DataFrame],
-        entry_labels: list[pd.Series] | None = None,
-        exit_labels: list[pd.Series] | None = None,
-        aggregate: Literal[False],
-    ) -> list[tuple[float, ...]]: ...
-
-    def evaluate(
-        self,
-        individual: TreeIndividual,
+        individual: TreeIndividualBase,
         *,
         ohlcvs: list[pd.DataFrame],
         entry_labels: list[pd.Series] | None = None,
@@ -475,15 +457,19 @@ class IndividualEvaluator(BaseEvaluator):
                     "when trade_side='sell'."
                 )
 
-        if self._needs_backtest or self._needs_backtest_vbt:
+        # Only the C++ backtester requires explicit exit/entry labels since it
+        # simulates pair-trade entries AND exits.  VBT backtest derives exits from
+        # stop-loss / take-profit parameters in BacktestConfig and does NOT need
+        # explicit exit labels.
+        if self._needs_backtest:
             if self.trade_side == "buy" and exit_labels is None:
                 raise ValueError(
-                    "exit_labels must be provided for backtest metrics "
+                    "exit_labels must be provided for C++ backtest metrics "
                     "when trade_side='buy'."
                 )
             if self.trade_side == "sell" and entry_labels is None:
                 raise ValueError(
-                    "entry_labels must be provided for backtest metrics "
+                    "entry_labels must be provided for C++ backtest metrics "
                     "when trade_side='sell'."
                 )
 
@@ -574,27 +560,28 @@ class PairEvaluator(IndividualEvaluator):
 
     def _eval_dataset(
         self,
-        individual: "PairTreeIndividual",  # type: ignore[override]
+        individual: "TreeIndividualBase",
         df: pd.DataFrame,
         entry_true: pd.Series | None = None,
         exit_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
+        pair_ind = cast(PairTreeIndividual, individual)
         # Compile both trees to signals
-        buy_signals = self._compile_tree_to_signals(individual.buy_tree, self.pset, df)
+        buy_signals = self._compile_tree_to_signals(pair_ind.buy_tree, self.pset, df)
         sell_signals = self._compile_tree_to_signals(
-            individual.sell_tree, self.pset, df
+            pair_ind.sell_tree, self.pset, df
         )
 
         # Run backtests once if required
         bt_result: BtResult | None = None
-        pf: vbt.Portfolio | None = None  # type: ignore
+        pf: vbt.Portfolio | None = None
         if self._needs_backtest:
             bt_result = self.run_cpp_backtest(
-                individual.buy_tree, df, buy_signals, sell_signals
+                pair_ind.buy_tree, df, buy_signals, sell_signals
             )
         if self._needs_backtest_vbt:
             pf = self.run_vbt_backtest(
-                individual.buy_tree, df, buy_signals, sell_signals
+                pair_ind.buy_tree, df, buy_signals, sell_signals
             )
 
         result: list[float] = []
@@ -619,48 +606,26 @@ class PairEvaluator(IndividualEvaluator):
             except Exception as e:
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} calculation failed.",
-                    tree=individual,
+                    tree=pair_ind.buy_tree,
                     metric=m,
-                    signals=(buy_signals, sell_signals),
+                    signals=buy_signals,
                     err=e,
                 ) from e
 
             if not np.isfinite(val):
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} returned non-finite value.",
-                    tree=individual,
+                    tree=pair_ind.buy_tree,
                     metric=m,
                     value=val,
-                    signals=(buy_signals, sell_signals),
+                    signals=buy_signals,
                 )
             result.append(float(val))
         return tuple(result)
 
-    @overload
     def evaluate(
         self,
-        individual: "PairTreeIndividual",
-        *,
-        ohlcvs: list[pd.DataFrame],
-        entry_labels: list[pd.Series] | None = None,
-        exit_labels: list[pd.Series] | None = None,
-        aggregate: Literal[True] = True,
-    ) -> tuple[float, ...]: ...
-
-    @overload
-    def evaluate(
-        self,
-        individual: "PairTreeIndividual",
-        *,
-        ohlcvs: list[pd.DataFrame],
-        entry_labels: list[pd.Series] | None = None,
-        exit_labels: list[pd.Series] | None = None,
-        aggregate: Literal[False],
-    ) -> list[tuple[float, ...]]: ...
-
-    def evaluate(
-        self,
-        individual: "PairTreeIndividual",
+        individual: "TreeIndividualBase",
         *,
         ohlcvs: list[pd.DataFrame],
         entry_labels: list[pd.Series] | None = None,
@@ -673,6 +638,7 @@ class PairEvaluator(IndividualEvaluator):
         metric's ``tree_aggregation`` setting (buy/sell/statistical) rather than
         the single-tree ``trade_side`` semantics used by IndividualEvaluator.
         """
+        pair_ind = cast(PairTreeIndividual, individual)
         # Per-metric classification label requirements
         for m in self.metrics:
             if isinstance(m, ClassificationMetricBase):
@@ -692,11 +658,9 @@ class PairEvaluator(IndividualEvaluator):
                         "Both entry_labels and exit_labels must be provided for statistical aggregations."
                     )
 
-        if self._needs_backtest or self._needs_backtest_vbt:
-            if entry_labels is None or exit_labels is None:
-                raise ValueError(
-                    "Both entry_labels and exit_labels must be provided for backtest metrics."
-                )
+        # In PairEvaluator, backtest metrics always use the two tree signals
+        # (buy_tree → entries, sell_tree → exits) directly — no label override
+        # is needed or supported.  Only classification metrics require labels.
 
         # Validate list lengths
         if entry_labels is not None and len(entry_labels) != len(ohlcvs):
@@ -715,7 +679,7 @@ class PairEvaluator(IndividualEvaluator):
                 sub_entry = entry_labels[i]
             if exit_labels is not None:
                 sub_exit = exit_labels[i]
-            results.append(self._eval_dataset(individual, subdf, sub_entry, sub_exit))
+            results.append(self._eval_dataset(pair_ind, subdf, sub_entry, sub_exit))
         return self.aggregate_fitness(results) if aggregate else results
 
 

@@ -17,6 +17,7 @@ import pytest
 from deap import gp as deap_gp
 
 from gentrade.backtest_metrics import (
+    MeanPnlCppMetric,
     SharpeRatioMetric,
     VbtBacktestMetricBase,
 )
@@ -24,6 +25,7 @@ from gentrade.classification_metrics import (
     ClassificationMetricBase,
     F1Metric,
 )
+from gentrade.config import BacktestConfig
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.minimal_pset import create_pset_default_medium
@@ -128,8 +130,6 @@ class TestConstructorFlags:
 
     def test_backtest_params_stored(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """BacktestConfig is stored on the instance."""
-        from gentrade.config import BacktestConfig
-
         backtest = BacktestConfig(
             tp_stop=0.05,
             sl_stop=0.02,
@@ -173,14 +173,18 @@ class TestYTrueValidation:
         with pytest.raises(ValueError, match="entry_labels must be provided"):
             ev.evaluate(valid_individual, ohlcvs=[df])
 
-    def test_backtest_without_exit_labels_raises(
+    def test_cpp_backtest_without_exit_labels_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
-        """VBT backtest-only evaluator raises when exit_labels are missing."""
-        ev = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),))
+        """C++ backtest-only evaluator raises when exit_labels are missing."""
+        ev = IndividualEvaluator(
+            pset=pset,
+            metrics=(MeanPnlCppMetric(min_trades=0),),
+            backtest=BacktestConfig(),
+        )
         with pytest.raises(ValueError, match="exit_labels must be provided"):
             ev.evaluate(valid_individual, ohlcvs=[df])
 

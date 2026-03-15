@@ -424,12 +424,47 @@ class BaseOptimizer(ABC):
             random.seed(self.seed)
             np.random.seed(self.seed)
 
-        # 3. Label validation is deferred to the evaluator based on trade_side
-        # and metrics. The evaluator raises ValueError if required labels are
-        # missing.
-
+        # 3. Early validation of val labels before evolution starts.
+        # This gives a clear error message instead of failing mid-evolution.
         # Determine validation metrics
         val_metrics = self.metrics_val if self.metrics_val is not None else self.metrics
+
+        # Check if val labels are needed for val metrics
+        if val_data_list:
+            # Import inside function to avoid circular imports at module level
+            from gentrade.backtest_metrics import CppBacktestMetricBase  # noqa: PLC0415
+            from gentrade.classification_metrics import ClassificationMetricBase  # noqa: PLC0415
+
+            val_needs_classification = any(
+                isinstance(m, ClassificationMetricBase) for m in val_metrics
+            )
+            val_needs_cpp = any(
+                isinstance(m, CppBacktestMetricBase) for m in val_metrics
+            )
+            trade_side = getattr(self, "trade_side", "buy")
+
+            if val_needs_classification:
+                if trade_side == "buy" and val_entry_list is None:
+                    raise ValueError(
+                        "entry_label_val must be provided when X_val is supplied "
+                        "with classification metrics and trade_side='buy'."
+                    )
+                if trade_side == "sell" and val_exit_list is None:
+                    raise ValueError(
+                        "exit_label_val must be provided when X_val is supplied "
+                        "with classification metrics and trade_side='sell'."
+                    )
+            if val_needs_cpp:
+                if trade_side == "buy" and val_exit_list is None:
+                    raise ValueError(
+                        "exit_label_val must be provided when X_val is supplied "
+                        "with C++ backtest metrics and trade_side='buy'."
+                    )
+                if trade_side == "sell" and val_entry_list is None:
+                    raise ValueError(
+                        "entry_label_val must be provided when X_val is supplied "
+                        "with C++ backtest metrics and trade_side='sell'."
+                    )
 
         is_multiobjective = len(self.metrics) > 1
 
