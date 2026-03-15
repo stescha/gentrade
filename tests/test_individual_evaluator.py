@@ -170,20 +170,19 @@ class TestYTrueValidation:
     ) -> None:
         """Classification evaluator raises when y_true is None."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
-        with pytest.raises(ValueError, match="train_labels must be provided"):
+        with pytest.raises(ValueError, match="entry_labels must be provided"):
             ev.evaluate(valid_individual, ohlcvs=[df])
 
-    def test_backtest_with_y_true_raises(
+    def test_backtest_without_exit_labels_raises(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
-        labels: pd.Series,
     ) -> None:
-        """Backtest-only evaluator raises when y_true is unexpectedly provided."""
+        """VBT backtest-only evaluator raises when exit_labels are missing."""
         ev = IndividualEvaluator(pset=pset, metrics=(SharpeRatioMetric(),))
-        with pytest.raises(ValueError, match="y_true is not used"):
-            ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
+        with pytest.raises(ValueError, match="exit_labels must be provided"):
+            ev.evaluate(valid_individual, ohlcvs=[df])
 
     def test_list_classification_length_mismatch_raises(
         self,
@@ -194,8 +193,8 @@ class TestYTrueValidation:
     ) -> None:
         """When df is a list of datasets, y_true must match the list length."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
-        with pytest.raises(ValueError, match="Length of y_true list must match"):
-            ev.evaluate(valid_individual, ohlcvs=[df, df], signals=[labels])
+        with pytest.raises(ValueError, match="Length of entry_labels list must match"):
+            ev.evaluate(valid_individual, ohlcvs=[df, df], entry_labels=[labels])
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +215,7 @@ class TestSingleDataFrameEvaluation:
     ) -> None:
         """Classification evaluation returns a finite float tuple of length 1."""
         ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
-        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
+        result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         assert isinstance(result, tuple)
         assert len(result) == 1
         assert isinstance(result[0], float)
@@ -231,7 +230,7 @@ class TestSingleDataFrameEvaluation:
     ) -> None:
         """Stub metric returns its fixed value via the classification path."""
         ev = IndividualEvaluator(pset=pset, metrics=(_ConstClassMetric(0.75),))
-        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
+        result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         assert result == pytest.approx((0.75,))
 
     def test_const_backtest_metric_returns_constant(
@@ -239,10 +238,11 @@ class TestSingleDataFrameEvaluation:
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
+        labels: pd.Series,
     ) -> None:
         """Stub backtest metric returns its fixed value via the backtest path."""
         ev = IndividualEvaluator(pset=pset, metrics=(_ConstBacktestMetric(0.42),))
-        result = ev.evaluate(valid_individual, ohlcvs=[df])
+        result = ev.evaluate(valid_individual, ohlcvs=[df], exit_labels=[labels])
         assert result == pytest.approx((0.42,))
 
     def test_tuple_length_matches_metric_count(
@@ -261,7 +261,7 @@ class TestSingleDataFrameEvaluation:
                 _ConstClassMetric(0.3),
             ),
         )
-        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
+        result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         assert len(result) == 3
         assert result == pytest.approx((0.1, 0.2, 0.3))
 
@@ -294,9 +294,9 @@ class TestDictEvaluation:
         y1 = pd.Series([True, False], index=df.index[:2])
         y2 = pd.Series([False, False], index=df.index[:2])
         df2 = df.iloc[:2]
-        single1 = ev.evaluate(valid_individual, ohlcvs=[df2], signals=[y1])[0]
-        single2 = ev.evaluate(valid_individual, ohlcvs=[df2], signals=[y2])[0]
-        avg = ev.evaluate(valid_individual, ohlcvs=[df2, df2], signals=[y1, y2])[0]
+        single1 = ev.evaluate(valid_individual, ohlcvs=[df2], entry_labels=[y1])[0]
+        single2 = ev.evaluate(valid_individual, ohlcvs=[df2], entry_labels=[y2])[0]
+        avg = ev.evaluate(valid_individual, ohlcvs=[df2, df2], entry_labels=[y1, y2])[0]
         assert avg == pytest.approx((single1 + single2) / 2)
 
     def test_backtest_list_averages(
@@ -304,6 +304,7 @@ class TestDictEvaluation:
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
+        labels: pd.Series,
     ) -> None:
         """List backtest input: fitness is the mean across all dataset scores."""
         call_count = 0
@@ -315,7 +316,7 @@ class TestDictEvaluation:
                 return float(call_count)
 
         ev = IndividualEvaluator(pset=pset, metrics=(_CountingMetric(),))
-        result = ev.evaluate(valid_individual, ohlcvs=[df, df])
+        result = ev.evaluate(valid_individual, ohlcvs=[df, df], exit_labels=[labels, labels])
         # call_count == 2 after two evaluations; mean of (1.0, 2.0) == 1.5
         assert result == pytest.approx((1.5,))
         assert call_count == 2
@@ -340,7 +341,7 @@ class TestBacktestGating:
         """run_vbt_backtest is never invoked for a classification-only evaluator."""
         with patch.object(IndividualEvaluator, "run_vbt_backtest") as mock_bt:
             ev = IndividualEvaluator(pset=pset, metrics=(F1Metric(),))
-            ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
+            ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         mock_bt.assert_not_called()
 
     def test_backtest_called_once_for_multiple_backtest_metrics(
@@ -348,6 +349,7 @@ class TestBacktestGating:
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
+        labels: pd.Series,
     ) -> None:
         """run_vbt_backtest is called exactly once even with two backtest metrics."""
         with patch.object(IndividualEvaluator, "run_vbt_backtest") as mock_bt:
@@ -355,7 +357,7 @@ class TestBacktestGating:
                 pset=pset,
                 metrics=(_ConstBacktestMetric(0.1), _ConstBacktestMetric(0.2)),
             )
-            ev.evaluate(valid_individual, ohlcvs=[df])
+            ev.evaluate(valid_individual, ohlcvs=[df], exit_labels=[labels])
         mock_bt.assert_called_once()
 
 
@@ -380,7 +382,7 @@ class TestMixedMetrics:
             pset=pset,
             metrics=(_ConstClassMetric(0.3), _ConstBacktestMetric(0.7)),
         )
-        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
+        result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels], exit_labels=[labels])
         assert len(result) == 2
 
     def test_mixed_metrics_values_correct(
@@ -395,7 +397,7 @@ class TestMixedMetrics:
             pset=pset,
             metrics=(_ConstClassMetric(0.3), _ConstBacktestMetric(0.7)),
         )
-        result = ev.evaluate(valid_individual, ohlcvs=[df], signals=[labels])
+        result = ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels], exit_labels=[labels])
         assert result == pytest.approx((0.3, 0.7))
 
     def test_mixed_requires_y_true(
@@ -404,10 +406,10 @@ class TestMixedMetrics:
         valid_individual: TreeIndividual,
         df: pd.DataFrame,
     ) -> None:
-        """Mixed evaluator raises when y_true is absent."""
+        """Mixed evaluator raises when entry_labels are absent."""
         ev = IndividualEvaluator(
             pset=pset,
             metrics=(_ConstClassMetric(), _ConstBacktestMetric()),
         )
-        with pytest.raises(ValueError, match="train_labels must be provided"):
+        with pytest.raises(ValueError, match="entry_labels must be provided"):
             ev.evaluate(valid_individual, ohlcvs=[df])

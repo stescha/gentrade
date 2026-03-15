@@ -13,6 +13,8 @@ or metric calculation are wrapped in domain-specific exceptions and re-raised.
 This ensures bugs and misconfigurations surface immediately.
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Callable, Literal, cast, overload
 
 import numpy as np
