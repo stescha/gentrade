@@ -8,7 +8,7 @@ from deap import base, gp, tools
 
 from gentrade.algorithms import EaMuPlusLambda
 from gentrade.config import BacktestConfig
-from gentrade.eval_ind import BaseEvaluator, TradeSide, TreeEvaluator
+from gentrade.eval_ind import BaseEvaluator, TradeSide, TreeEvaluator, PairEvaluator
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.optimizer.base import BaseOptimizer
 from gentrade.optimizer.callbacks import Callback
@@ -312,7 +312,4 @@ class PairTreeOptimizer(BaseTreeOptimizer):
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
     ) -> BaseEvaluator:
-        raise NotImplementedError(
-            "PairTreeOptimizer._make_evaluator is not yet implemented. "
-            "PairEvaluator will be wired in Session C."
-        )
+        return PairEvaluator(pset=pset, metrics=metrics, backtest=self._backtest)

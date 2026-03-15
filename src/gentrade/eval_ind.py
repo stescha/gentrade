@@ -30,7 +30,7 @@ else:
     BacktestConfig = Any
 
 from gentrade.backtest_metrics import CppBacktestMetricBase, VbtBacktestMetricBase
-from gentrade.classification_metrics import ClassificationMetricBase
+from gentrade.classification_metrics import ClassificationMetricBase, TreeAggregation
 from gentrade.eval_signals import eval as eval_cpp  # type: ignore
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
 from gentrade.optimizer.types import Metric
@@ -524,6 +524,141 @@ class IndividualEvaluator(BaseEvaluator):
         arr = np.array(fitnesses, dtype=float)
         mean = arr.mean(axis=0)
         return tuple(float(x) for x in mean)
+
+
+# Backwards-compatible export: new name TreeEvaluator refers to the evaluator
+# implementation historically named IndividualEvaluator.
+def _apply_tree_aggregation(
+    tree_agg: TreeAggregation,
+    buy_signals: pd.Series,
+    sell_signals: pd.Series,
+    entry_true: pd.Series | None,
+    exit_true: pd.Series | None,
+    metric_name: str | None = None,
+) -> tuple[pd.Series, pd.Series]:
+    """Aggregate pair-tree signals and labels according to tree_agg.
+
+    Returns (y_true, y_pred) where both are boolean pd.Series suitable for
+    passing to classification metric callables.
+    """
+    name = f" for metric {metric_name}" if metric_name else ""
+    if tree_agg == "buy":
+        if entry_true is None:
+            raise ValueError(f"entry_true is required when tree_aggregation='buy'{name}.")
+        return entry_true, buy_signals
+    if tree_agg == "sell":
+        if exit_true is None:
+            raise ValueError(f"exit_true is required when tree_aggregation='sell'{name}.")
+        return exit_true, sell_signals
+
+    # Statistical aggregations require both label channels
+    if entry_true is None or exit_true is None:
+        raise ValueError(
+            f"Both entry_true and exit_true are required for tree_aggregation='{tree_agg}'{name}.")
+
+    if tree_agg in ("mean", "median", "max"):
+        # Treat these as logical OR across buy/sell signals/labels
+        y_pred = buy_signals | sell_signals
+        y_true = entry_true | exit_true
+        return y_true, y_pred
+    if tree_agg == "min":
+        # Logical AND
+        y_pred = buy_signals & sell_signals
+        y_true = entry_true & exit_true
+        return y_true, y_pred
+
+    raise ValueError(f"Unknown tree_aggregation: {tree_agg}{name}.")
+
+
+class PairEvaluator(IndividualEvaluator):
+    """Evaluator for pair-tree individuals (buy & sell trees).
+
+    Compiles both trees to signals, runs backtests once (if required) and
+    computes metrics. Classification metrics can indicate how to aggregate
+    per-tree outputs via their ``tree_aggregation`` attribute.
+    """
+
+    def __init__(
+        self,
+        pset: gp.PrimitiveSetTyped,
+        metrics: tuple[Metric, ...],
+        backtest: BacktestConfig | None = None,
+    ) -> None:
+        super().__init__(pset=pset, metrics=metrics, backtest=backtest, trade_side="buy")
+
+    def _eval_dataset(
+        self,
+        individual: "TreeIndividual",
+        df: pd.DataFrame,
+        entry_true: pd.Series | None = None,
+        exit_true: pd.Series | None = None,
+    ) -> tuple[float, ...]:
+        # Validate classification metric label requirements based on each metric's
+        # configured tree_aggregation.
+        for m in self.metrics:
+            if isinstance(m, ClassificationMetricBase):
+                agg = getattr(m, "tree_aggregation", "mean")
+                if agg == "buy" and entry_true is None:
+                    raise ValueError("entry_true is required for a 'buy' aggregation.")
+                if agg == "sell" and exit_true is None:
+                    raise ValueError("exit_true is required for a 'sell' aggregation.")
+                if agg in ("mean", "median", "min", "max") and (
+                    entry_true is None or exit_true is None
+                ):
+                    raise ValueError(
+                        "Both entry_true and exit_true are required for statistical aggregations."
+                    )
+
+        # Compile both trees to signals
+        buy_signals = self._compile_tree_to_signals(individual.buy_tree, self.pset, df)
+        sell_signals = self._compile_tree_to_signals(individual.sell_tree, self.pset, df)
+
+        # Run backtests once if required
+        bt_result: BtResult | None = None
+        pf: vbt.Portfolio | None = None
+        if self._needs_backtest:
+            bt_result = self.run_cpp_backtest(individual.buy_tree, df, buy_signals, sell_signals)
+        if self._needs_backtest_vbt:
+            pf = self.run_vbt_backtest(individual.buy_tree, df, buy_signals, sell_signals)
+
+        result: list[float] = []
+        for m in self.metrics:
+            try:
+                if isinstance(m, ClassificationMetricBase):
+                    y_true, y_pred = _apply_tree_aggregation(
+                        getattr(m, "tree_aggregation", "mean"),
+                        buy_signals,
+                        sell_signals,
+                        entry_true,
+                        exit_true,
+                        metric_name=type(m).__name__,
+                    )
+                    val = m(y_true, y_pred)
+                elif isinstance(m, CppBacktestMetricBase):
+                    val = m(bt_result)
+                elif isinstance(m, VbtBacktestMetricBase):
+                    val = m(pf)
+                else:
+                    raise TypeError(f"Unsupported metric type: {type(m).__name__}.")
+            except Exception as e:
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} calculation failed.",
+                    tree=individual,
+                    metric=m,
+                    signals=(buy_signals, sell_signals),
+                    err=e,
+                ) from e
+
+            if not np.isfinite(val):
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} returned non-finite value.",
+                    tree=individual,
+                    metric=m,
+                    value=val,
+                    signals=(buy_signals, sell_signals),
+                )
+            result.append(float(val))
+        return tuple(result)
 
 
 # Backwards-compatible export: new name TreeEvaluator refers to the evaluator
