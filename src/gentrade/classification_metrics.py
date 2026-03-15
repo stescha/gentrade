@@ -14,7 +14,7 @@ Design notes:
   label distributions (e.g., rare zigzag pivots).
 """
 
-from typing import cast, Literal
+from typing import Literal, cast
 
 TreeAggregation = Literal["buy", "sell", "mean", "median", "min", "max"]
 
@@ -32,7 +32,9 @@ class ClassificationMetricBase:
     The optimizer uses ``metric.weight`` for DEAP fitness weighting.
     """
 
-    def __init__(self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate/interpret pair-tree outputs when used
@@ -81,7 +83,9 @@ class F1Metric(ClassificationMetricBase):
     for binary classification tasks where both error types carry similar cost.
     """
 
-    def __init__(self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate pair-tree outputs for this metric.
@@ -106,7 +110,12 @@ class FBetaMetric(ClassificationMetricBase):
       false alarms (e.g., missing a market pivot).
     """
 
-    def __init__(self, beta: float = 2.0, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self,
+        beta: float = 2.0,
+        weight: float = 1.0,
+        tree_aggregation: TreeAggregation = "mean",
+    ) -> None:
         """Args:
         beta: Weight of recall relative to precision.
         weight: DEAP fitness weight.
@@ -135,7 +144,9 @@ class MCCMetric(ClassificationMetricBase):
     because it considers all four quadrants of the confusion matrix.
     """
 
-    def __init__(self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate pair-tree outputs for this metric.
@@ -161,7 +172,9 @@ class BalancedAccuracyMetric(ClassificationMetricBase):
     the model is no better than chance.
     """
 
-    def __init__(self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate pair-tree outputs for this metric.
@@ -183,7 +196,9 @@ class PrecisionMetric(ClassificationMetricBase):
     sparse predictions — combine with a minimum-prediction-rate guard if needed.
     """
 
-    def __init__(self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate pair-tree outputs for this metric.
@@ -203,7 +218,9 @@ class RecallMetric(ClassificationMetricBase):
     minimum-precision guard or use ``FBetaFitness`` instead.
     """
 
-    def __init__(self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate pair-tree outputs for this metric.
@@ -224,7 +241,9 @@ class JaccardMetric(ClassificationMetricBase):
     predictions over broad, high-recall ones.
     """
 
-    def __init__(self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean") -> None:
+    def __init__(
+        self, weight: float = 1.0, tree_aggregation: TreeAggregation = "mean"
+    ) -> None:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate pair-tree outputs for this metric.

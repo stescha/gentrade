@@ -1,5 +1,5 @@
-import pytest
 import pandas as pd
+import pytest
 
 from gentrade.classification_metrics import F1Metric
 from gentrade.eval_ind import _apply_tree_aggregation
