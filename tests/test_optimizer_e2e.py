@@ -93,7 +93,7 @@ class TestE2EClassificationSingleObjective:
             verbose=True,
             validation_interval=2,
         )
-        opt.fit(train_df, train_labels, val_df, val_labels)
+        opt.fit(train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels)
 
         captured = capsys.readouterr()
         assert "Validation results" in captured.out
@@ -149,7 +149,7 @@ class TestE2ECppBacktestSingleObjective:
             seed=42,
             verbose=False,
         )
-        opt.fit(df, labels)
+        opt.fit(df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 30
 
     def test_with_vbt_validation(self) -> None:
@@ -175,7 +175,7 @@ class TestE2ECppBacktestSingleObjective:
             verbose=False,
         )
         # VBT metrics don't need labels for validation
-        opt.fit(train_df, train_labels, val_df, None)
+        opt.fit(train_df, entry_label=train_labels, exit_label=train_labels, X_val=val_df)
         assert len(opt.population_) == 20
 
 
@@ -199,7 +199,7 @@ class TestE2EMultiObjective:
             seed=42,
             verbose=False,
         )
-        opt.fit(df, labels)
+        opt.fit(df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 30
 
     def test_pareto_front_populated(self) -> None:
@@ -218,7 +218,7 @@ class TestE2EMultiObjective:
             seed=42,
             verbose=False,
         )
-        opt.fit(df, labels)
+        opt.fit(df, entry_label=labels, exit_label=labels)
         assert len(opt.hall_of_fame_) >= 1
 
     def test_fitness_tuple_length(self) -> None:
@@ -237,7 +237,7 @@ class TestE2EMultiObjective:
             seed=42,
             verbose=False,
         )
-        opt.fit(df, labels)
+        opt.fit(df, entry_label=labels, exit_label=labels)
 
         for ind in opt.population_:
             assert len(ind.fitness.values) == 2

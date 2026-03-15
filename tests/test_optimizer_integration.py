@@ -149,8 +149,8 @@ class TestTreeOptimizerFitCppBacktest:
             seed=42,
             verbose=False,
         )
-        # C++ backtest needs labels for exits
-        opt.fit(synthetic_df, labels)
+        # C++ backtest needs labels for exits (entry_label acts as buy signal labels)
+        opt.fit(synthetic_df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 10
 
     def test_fit_cpp_with_labels_ok(self, synthetic_df: pd.DataFrame) -> None:
@@ -166,7 +166,7 @@ class TestTreeOptimizerFitCppBacktest:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(synthetic_df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 10
 
 
@@ -196,7 +196,7 @@ class TestTreeOptimizerValidation:
             verbose=False,
         )
         # We can't directly inspect _active_callbacks, but fit should complete
-        opt.fit(train_df, train_labels, val_df, val_labels)
+        opt.fit(train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels)
         assert len(opt.population_) == 10
 
     def test_train_metrics_as_fallback_val(self, synthetic_df: pd.DataFrame) -> None:
@@ -217,7 +217,7 @@ class TestTreeOptimizerValidation:
             seed=42,
             verbose=False,
         )
-        opt.fit(train_df, train_labels, val_df, val_labels)
+        opt.fit(train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels)
         assert len(opt.population_) == 10
 
     def test_val_labels_required_for_classification_val(
@@ -239,8 +239,8 @@ class TestTreeOptimizerValidation:
             seed=42,
             verbose=False,
         )
-        with pytest.raises(ValueError, match="y_val must be provided"):
-            opt.fit(train_df, train_labels, val_df, None)  # Missing y_val
+        with pytest.raises(ValueError, match="entry_label_val must be provided"):
+            opt.fit(train_df, entry_label=train_labels, X_val=val_df)  # Missing val labels
 
 
 @pytest.mark.integration
@@ -263,7 +263,7 @@ class TestMultiObjectiveFit:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(synthetic_df, entry_label=labels, exit_label=labels)
 
         for ind in opt.population_:
             assert len(ind.fitness.values) == 2
@@ -282,7 +282,7 @@ class TestMultiObjectiveFit:
             seed=42,
             verbose=False,
         )
-        opt.fit(synthetic_df, labels)
+        opt.fit(synthetic_df, entry_label=labels, exit_label=labels)
         assert isinstance(opt.hall_of_fame_, tools.ParetoFront)
 
 
