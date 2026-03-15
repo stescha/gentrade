@@ -2,7 +2,6 @@ import multiprocessing as mp
 import time
 from dataclasses import dataclass
 from multiprocessing import pool
-
 from typing import Any
 
 import pandas as pd

@@ -398,8 +398,12 @@ class BaseEvaluator(ABC, Generic[IndT]):
 
         results: list[tuple[float, ...]] = []
         for i, subdf in enumerate(ohlcvs):
-            sub_entry: pd.Series | None = entry_labels[i] if entry_labels is not None else None
-            sub_exit: pd.Series | None = exit_labels[i] if exit_labels is not None else None
+            sub_entry: pd.Series | None = (
+                entry_labels[i] if entry_labels is not None else None
+            )
+            sub_exit: pd.Series | None = (
+                exit_labels[i] if exit_labels is not None else None
+            )
             results.append(self._eval_dataset(individual, subdf, sub_entry, sub_exit))
 
         return self.aggregate_fitness(results) if aggregate else results
@@ -552,7 +556,9 @@ class TreeEvaluator(BaseEvaluator[TreeIndividual]):
         if self._needs_backtest:
             assert backtest_entries is not None
             assert backtest_exits is not None
-            bt_result = self.run_cpp_backtest(tree, df, backtest_entries, backtest_exits)
+            bt_result = self.run_cpp_backtest(
+                tree, df, backtest_entries, backtest_exits
+            )
         if self._needs_backtest_vbt:
             assert backtest_entries is not None
             pf = self.run_vbt_backtest(tree, df, backtest_entries, backtest_exits)
@@ -682,8 +688,12 @@ class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
             TreeEvaluationError: If tree compilation or execution fails.
             MetricCalculationError: If any metric returns NaN, Inf, or raises.
         """
-        buy_signals = self._compile_tree_to_signals(individual.buy_tree, self.pset, df)
-        sell_signals = self._compile_tree_to_signals(individual.sell_tree, self.pset, df)
+        buy_signals = self._compile_tree_to_signals(
+            individual.buy_tree, self.pset, df
+        )
+        sell_signals = self._compile_tree_to_signals(
+            individual.sell_tree, self.pset, df
+        )
 
         bt_result: BtResult | None = None
         pf: Any = None
