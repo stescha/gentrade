@@ -22,7 +22,11 @@ import pandas as pd
 import vectorbt as vbt
 from deap import gp
 
-from gentrade.optimizer.individual import PairTreeIndividual, TreeIndividual, TreeIndividualBase
+from gentrade.optimizer.individual import (
+    PairTreeIndividual,
+    TreeIndividual,
+    TreeIndividualBase,
+)
 
 if TYPE_CHECKING:
     from gentrade.config import BacktestConfig
@@ -359,7 +363,9 @@ class IndividualEvaluator(BaseEvaluator):
             # Guarded by BaseEvaluator.verify_data called in BaseOptimizer.fit()
             assert backtest_entries is not None
             assert backtest_exits is not None
-            bt_result = self.run_cpp_backtest(tree, df, backtest_entries, backtest_exits)
+            bt_result = self.run_cpp_backtest(
+                tree, df, backtest_entries, backtest_exits
+            )
         if self._needs_backtest_vbt:
             # Guarded by BaseEvaluator.verify_data called in BaseOptimizer.fit()
             assert backtest_entries is not None
@@ -499,50 +505,24 @@ class IndividualEvaluator(BaseEvaluator):
 
 
 def _apply_tree_aggregation(
+    buy_metric: float,
+    sell_metric: float,
     tree_agg: TreeAggregation,
-    buy_signals: pd.Series,
-    sell_signals: pd.Series,
-    entry_true: pd.Series | None,
-    exit_true: pd.Series | None,
-    metric_name: str | None = None,
-) -> tuple[pd.Series, pd.Series]:
-    """Aggregate pair-tree signals and labels according to tree_agg.
-
-    Returns (y_true, y_pred) where both are boolean pd.Series suitable for
-    passing to classification metric callables.
-    """
-    name = f" for metric {metric_name}" if metric_name else ""
-    if tree_agg == "buy":
-        if entry_true is None:
-            raise ValueError(
-                f"entry_true is required when tree_aggregation='buy'{name}."
-            )
-        return entry_true, buy_signals
-    if tree_agg == "sell":
-        if exit_true is None:
-            raise ValueError(
-                f"exit_true is required when tree_aggregation='sell'{name}."
-            )
-        return exit_true, sell_signals
-
-    # Statistical aggregations require both label channels
-    if entry_true is None or exit_true is None:
-        raise ValueError(
-            f"Both entry_true and exit_true are required for tree_aggregation='{tree_agg}'{name}."
-        )
-
-    if tree_agg in ("mean", "median", "max"):
-        # Treat these as logical OR across buy/sell signals/labels
-        y_pred = buy_signals | sell_signals
-        y_true = entry_true | exit_true
-        return y_true, y_pred
+) -> float:
+    """Aggregate metric values from buy/sell trees according to the specified method."""
+    if tree_agg == "mean":
+        return (buy_metric + sell_metric) / 2
+    if tree_agg == "median":
+        return np.median([buy_metric, sell_metric])  # type: ignore
     if tree_agg == "min":
-        # Logical AND
-        y_pred = buy_signals & sell_signals
-        y_true = entry_true & exit_true
-        return y_true, y_pred
-
-    raise ValueError(f"Unknown tree_aggregation: {tree_agg}{name}.")
+        return min(buy_metric, sell_metric)
+    if tree_agg == "max":
+        return max(buy_metric, sell_metric)
+    if tree_agg == "buy":
+        return buy_metric
+    if tree_agg == "sell":
+        return sell_metric
+    raise ValueError(f"Unknown tree_aggregation: {tree_agg}.")
 
 
 class PairEvaluator(IndividualEvaluator):
@@ -560,7 +540,9 @@ class PairEvaluator(IndividualEvaluator):
         backtest: BacktestConfig | None = None,
         trade_side: TradeSide = "buy",
     ) -> None:
-        super().__init__(pset=pset, metrics=metrics, backtest=backtest, trade_side=trade_side)
+        super().__init__(
+            pset=pset, metrics=metrics, backtest=backtest, trade_side=trade_side
+        )
 
     def _eval_dataset(
         self,
@@ -584,6 +566,12 @@ class PairEvaluator(IndividualEvaluator):
         bt_result: BtResult | None = None
         pf: vbt.Portfolio | None = None
         if self._needs_backtest:
+            # TODO: Both methods currently get the buy_tree passed. this is counter
+            # intuitive. The tree is only used for error message, so it doesn't affect
+            # the result, but it would be more intuitive to pass the individual itself or
+            # both trees. This needs refactoring of the errors and will be a sperate
+            # task. Keep this
+            # todo and ignore it.
             bt_result = self.run_cpp_backtest(
                 individual.buy_tree, df, buy_signals, sell_signals
             )
@@ -596,15 +584,19 @@ class PairEvaluator(IndividualEvaluator):
         for m in self.metrics:
             try:
                 if isinstance(m, ClassificationMetricBase):
-                    y_true, y_pred = _apply_tree_aggregation(
-                        getattr(m, "tree_aggregation", "mean"),
-                        buy_signals,
-                        sell_signals,
-                        entry_true,
-                        exit_true,
-                        metric_name=type(m).__name__,
-                    )
-                    val = m(y_true, y_pred)
+                    if entry_true is not None and exit_true is not None:
+                        val = _apply_tree_aggregation(
+                            m(entry_true, buy_signals),
+                            m(exit_true, sell_signals),
+                            m.tree_aggregation,
+                        )
+                    elif entry_true is not None:
+                        val = m(entry_true, buy_signals)
+                    else:
+                        # prevalidated
+                        assert exit_true is not None
+                        val = m(exit_true, sell_signals)
+
                 elif isinstance(m, CppBacktestMetricBase):
                     val = m(bt_result)
                 elif isinstance(m, VbtBacktestMetricBase):
