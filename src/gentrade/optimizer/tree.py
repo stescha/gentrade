@@ -8,11 +8,12 @@ from deap import base, gp, tools
 
 from gentrade.algorithms import EaMuPlusLambda
 from gentrade.config import BacktestConfig
-from gentrade.eval_ind import TreeEvaluator, TradeSide
+from gentrade.eval_ind import BaseEvaluator, TradeSide, TreeEvaluator
 from gentrade.growtree import genFull, genGrow, genHalfAndHalf
 from gentrade.optimizer.base import BaseOptimizer
 from gentrade.optimizer.callbacks import Callback
 from gentrade.optimizer.individual import (
+    PairTreeIndividual,
     TreeIndividual,
     apply_operators,
 )
@@ -236,8 +237,9 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         return toolbox
 
     @abstractmethod
-    def _make_individual(self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]) -> TreeIndividual:
-        ...
+    def _make_individual(
+        self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]
+    ) -> TreeIndividual: ...
 
     def create_algorithm(
         self,
@@ -264,7 +266,9 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
 class TreeOptimizer(BaseTreeOptimizer):
     """Thin TreeOptimizer subclass implementing individual creation and evaluator"""
 
-    def _make_individual(self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]) -> TreeIndividual:
+    def _make_individual(
+        self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]
+    ) -> TreeIndividual:
         nodes = tree_gen_func()
         return TreeIndividual([gp.PrimitiveTree(nodes)], weights)
 
@@ -279,4 +283,36 @@ class TreeOptimizer(BaseTreeOptimizer):
             metrics=metrics,
             backtest=self._backtest,
             trade_side=self._trade_side,
+        )
+
+
+class PairTreeOptimizer(BaseTreeOptimizer):
+    """Genetic programming optimizer for pair-tree individuals.
+
+    Each individual contains two trees: a buy (entry) tree and a sell
+    (exit) tree. Both trees are evolved using the same primitive set.
+    Genetic operators (crossover, mutation) are applied independently
+    to each tree position via the :func:`apply_operators` wrapper.
+
+    Note:
+        ``fit()`` is not yet functional until Session C wires ``PairEvaluator``.
+    """
+
+    def _make_individual(
+        self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]
+    ) -> PairTreeIndividual:
+        """Create a pair-tree individual with two independently generated trees."""
+        buy_nodes = tree_gen_func()
+        sell_nodes = tree_gen_func()
+        return PairTreeIndividual(
+            [gp.PrimitiveTree(buy_nodes), gp.PrimitiveTree(sell_nodes)],
+            weights,
+        )
+
+    def _make_evaluator(
+        self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
+    ) -> BaseEvaluator:
+        raise NotImplementedError(
+            "PairTreeOptimizer._make_evaluator is not yet implemented. "
+            "PairEvaluator will be wired in Session C."
         )
