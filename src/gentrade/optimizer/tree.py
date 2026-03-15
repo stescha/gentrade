@@ -1,6 +1,6 @@
 import operator
 from functools import partial
-from typing import Any, Callable, Literal
+from typing import Callable, Literal
 
 from deap import base, gp, tools
 
@@ -238,7 +238,7 @@ class TreeOptimizer(BaseOptimizer):
         self,
         pset: gp.PrimitiveSetTyped,
         metrics: tuple[Metric, ...],
-    ) -> Any:
+    ) -> IndividualEvaluator:
 
         return IndividualEvaluator(
             pset=pset,

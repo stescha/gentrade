@@ -9,7 +9,7 @@ Both are evaluated jointly via :class:`PairIndividualEvaluator`.
 
 import operator
 from functools import partial
-from typing import Any, Callable, Literal
+from typing import Callable, Literal
 
 from deap import base, gp, tools
 
@@ -285,7 +285,7 @@ class PairOptimizer(BaseOptimizer):
         self,
         pset: gp.PrimitiveSetTyped,
         metrics: tuple[Metric, ...],
-    ) -> Any:
+    ) -> PairIndividualEvaluator:
         return PairIndividualEvaluator(
             pset=pset,
             metrics=metrics,
