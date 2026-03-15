@@ -8,6 +8,8 @@ and evaluator creation.
 import logging
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from multiprocessing import pool
 from typing import Any, cast
 
 import numpy as np
@@ -19,13 +21,11 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.algorithms import eaMuPlusLambdaGentrade
-from gentrade.classification_metrics import ClassificationMetricBase
-from gentrade.eval_ind import IndividualEvaluator
+from gentrade.eval_ind import BaseEvaluator
 from gentrade.eval_pop import create_pool
 from gentrade.optimizer.callbacks import Callback, ValidationCallback
 from gentrade.optimizer.individual import TreeIndividual
-from gentrade.optimizer.types import Metric
+from gentrade.optimizer.types import Algorithm, Metric
 
 logger = logging.getLogger(__name__)
 
@@ -36,98 +36,152 @@ LabelInput = pd.Series | dict[str, pd.Series] | list[pd.Series] | None
 
 def _normalize_data_and_labels(
     data: DataInput,
-    labels: LabelInput,
+    entry_labels: LabelInput,
+    exit_labels: LabelInput,
     dataset_name: str,
-) -> tuple[list[pd.DataFrame], list[pd.Series] | None, list[str]]:
+) -> tuple[list[pd.DataFrame], list[pd.Series] | None, list[pd.Series] | None, list[str]]:
     """Normalise and validate dataset inputs for optimizers.
 
-    ``data`` may be one of:
-    * ``pd.DataFrame`` – single dataset
-    * mapping of strings to DataFrames – keyed datasets whose names are used
-      only for logging
-    * list of DataFrames – treated as an ordered collection with no useful
-      names
-    * ``None`` – treated as an empty list
-
-    ``labels`` must mirror ``data`` in structure when provided.  When the
-    argument types mismatch or keys/lengths disagree a ``ValueError`` is raised.
-    We also verify that any paired DataFrame/Series share identical indexes.
+    This variant accepts two optional label collections (entry and exit) and
+    returns normalized lists for both.  The rules are identical to the prior
+    single-label helper: labels must mirror the structure of `data` (dict,
+    list, or single DataFrame) and, when present, must share the same index as
+    their corresponding DataFrame.
 
     Returns:
-        ``(data_list, label_list_or_None, names)`` where ``names`` is a list of
-        strings with the same order as ``data_list``.  For anonymous inputs the
-        canonical name ``gentrade._defaults.KEY_OHLCV`` is used.
+        (data_list, entry_label_list_or_None, exit_label_list_or_None, names)
     """
     # Handle absence first – caller will decide if labels are required later.
     if data is None:
-        return [], None, []
+        return [], None, None, []
 
     # Convenience helpers
-    def _check_index_match(df: pd.DataFrame, ser: pd.Series, key: str) -> None:
+    def _check_index_match(df: pd.DataFrame, ser: pd.Series, key: str, label_kind: str) -> None:
         if not df.index.equals(ser.index):
             raise ValueError(
                 "Index mismatch between "
-                f"{dataset_name}_data and {dataset_name}_labels "
+                f"{dataset_name}_data and {dataset_name}_{label_kind} "
                 f"for key {key!r}."
             )
 
     # Convert mapping to ordered lists, keeping key order for names
     if isinstance(data, dict):
-        if labels is not None and not isinstance(labels, dict):
+        if entry_labels is not None and not isinstance(entry_labels, dict):
             raise ValueError(
                 f"When {dataset_name}_data is a dict, "
-                f"{dataset_name}_labels must also be a dict."
+                f"{dataset_name}_entry_labels must also be a dict."
+            )
+        if exit_labels is not None and not isinstance(exit_labels, dict):
+            raise ValueError(
+                f"When {dataset_name}_data is a dict, "
+                f"{dataset_name}_exit_labels must also be a dict."
             )
         keys = list(data.keys())
         data_list = [data[k] for k in keys]
         names = keys.copy()
-        label_list: list[pd.Series] | None = None
-        if labels is not None:
-            if set(labels.keys()) != set(keys):
+
+        entry_list: list[pd.Series] | None = None
+        exit_list: list[pd.Series] | None = None
+
+        if entry_labels is not None:
+            if set(entry_labels.keys()) != set(keys):
                 raise ValueError(
-                    f"{dataset_name}_data and {dataset_name}_labels "
+                    f"{dataset_name}_data and {dataset_name}_entry_labels "
                     "must have the same keys. "
-                    f"got {keys!r} vs {list(labels.keys())!r}"
+                    f"got {keys!r} vs {list(entry_labels.keys())!r}"
                 )
-            # preserve order of data keys
-            label_list = [labels[k] for k in keys]
-            # verify index alignment
-            for k, df_ in data.items():
-                _check_index_match(df_, labels[k], k)
-        return data_list, label_list, names
+            entry_list = [entry_labels[k] for k in keys]
+
+        if exit_labels is not None:
+            if set(exit_labels.keys()) != set(keys):
+                raise ValueError(
+                    f"{dataset_name}_data and {dataset_name}_exit_labels "
+                    "must have the same keys. "
+                    f"got {keys!r} vs {list(exit_labels.keys())!r}"
+                )
+            exit_list = [exit_labels[k] for k in keys]
+
+        # verify index alignment for any provided labels
+        for k in keys:
+            df_ = data[k]
+            if entry_labels is not None:
+                _check_index_match(df_, entry_labels[k], k, "entry_labels")
+            if exit_labels is not None:
+                _check_index_match(df_, exit_labels[k], k, "exit_labels")
+
+        return data_list, entry_list, exit_list, names
 
     # Non-dict inputs: either DataFrame or list
     if isinstance(data, list):
         data_list = data
         names = [KEY_OHLCV] * len(data_list)
-        if labels is not None:
-            if not isinstance(labels, list):
+
+        entry_list = None
+        exit_list = None
+
+        if entry_labels is not None:
+            if not isinstance(entry_labels, list):
                 raise ValueError(
                     f"When {dataset_name}_data is a list, "
-                    f"{dataset_name}_labels must also be a list."
+                    f"{dataset_name}_entry_labels must also be a list."
                 )
-            if len(labels) != len(data_list):
+            if len(entry_labels) != len(data_list):
                 raise ValueError(
                     f"Length mismatch between {dataset_name}_data "
-                    f"and {dataset_name}_labels"
+                    f"and {dataset_name}_entry_labels"
                 )
-            for i, (df_, lab) in enumerate(zip(data_list, labels, strict=True)):
-                _check_index_match(df_, lab, str(i))
-        return data_list, labels if isinstance(labels, list) else None, names
+            entry_list = entry_labels
+
+        if exit_labels is not None:
+            if not isinstance(exit_labels, list):
+                raise ValueError(
+                    f"When {dataset_name}_data is a list, "
+                    f"{dataset_name}_exit_labels must also be a list."
+                )
+            if len(exit_labels) != len(data_list):
+                raise ValueError(
+                    f"Length mismatch between {dataset_name}_data "
+                    f"and {dataset_name}_exit_labels"
+                )
+            exit_list = exit_labels
+
+        # verify index alignment for any provided labels
+        if entry_list is not None:
+            for i, (df_, lab) in enumerate(zip(data_list, entry_list, strict=True)):
+                _check_index_match(df_, lab, str(i), "entry_labels")
+        if exit_list is not None:
+            for i, (df_, lab) in enumerate(zip(data_list, exit_list, strict=True)):
+                _check_index_match(df_, lab, str(i), "exit_labels")
+
+        return data_list, entry_list, exit_list, names
 
     # Single DataFrame
     if isinstance(data, pd.DataFrame):
         data_list = [data]
         names = [KEY_OHLCV]
-        if labels is not None:
-            if not isinstance(labels, pd.Series):
+
+        entry_list = None
+        exit_list = None
+
+        if entry_labels is not None:
+            if not isinstance(entry_labels, pd.Series):
                 raise ValueError(
                     f"When {dataset_name}_data is a DataFrame, "
-                    f"{dataset_name}_labels must be a Series."
+                    f"{dataset_name}_entry_labels must be a Series."
                 )
-            _check_index_match(data, labels, KEY_OHLCV)
-            return data_list, [labels], names
-        return data_list, None, names
+            _check_index_match(data, entry_labels, KEY_OHLCV, "entry_labels")
+            entry_list = [entry_labels]
+
+        if exit_labels is not None:
+            if not isinstance(exit_labels, pd.Series):
+                raise ValueError(
+                    f"When {dataset_name}_data is a DataFrame, "
+                    f"{dataset_name}_exit_labels must be a Series."
+                )
+            _check_index_match(data, exit_labels, KEY_OHLCV, "exit_labels")
+            exit_list = [exit_labels]
+
+        return data_list, entry_list, exit_list, names
 
     # We shouldn't reach here because typing restricts input, but guard anyway
     raise TypeError(f"Unsupported type for {dataset_name}_data: {type(data)}")
@@ -243,16 +297,40 @@ class BaseOptimizer(ABC):
     @abstractmethod
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
-    ) -> IndividualEvaluator:
-        """Create an :class:`IndividualEvaluator` for the given metrics.
+    ) -> BaseEvaluator:
+        """Create a :class:`BaseEvaluator` for the given metrics.
 
         Args:
             pset: Primitive set used for compiling trees.
             metrics: Tuple of metrics to evaluate during optimization.
 
         Returns:
-            An :class:`IndividualEvaluator` configured for the given
+            A :class:`BaseEvaluator` configured for the given
             metrics and primitive set.
+        """
+        ...
+
+    @abstractmethod
+    def create_algorithm(
+        self,
+        worker_pool: pool.Pool,
+        stats: tools.Statistics,
+        halloffame: tools.HallOfFame,
+        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+    ) -> "Algorithm[Any]":
+        """Return algorithm instance to execute the evolutionary loop.
+
+        Subclasses must return a configured :class:`Algorithm` instance that
+        accepts a population list and returns ``(population, logbook)``.
+
+        Args:
+            worker_pool: Multiprocessing pool for parallel individual evaluation.
+            stats: DEAP statistics object for logging per-generation metrics.
+            halloffame: Hall of fame tracking best individuals.
+            val_callback: Optional callback invoked after each generation.
+
+        Returns:
+            A configured :class:`Algorithm` instance ready to call ``run()``.
         """
         ...
 
@@ -285,21 +363,31 @@ class BaseOptimizer(ABC):
     def fit(
         self,
         X: DataInput,
-        y: LabelInput = None,
+        entry_label: LabelInput = None,
+        exit_label: LabelInput = None,
         X_val: DataInput = None,
-        y_val: LabelInput = None,
+        entry_label_val: LabelInput = None,
+        exit_label_val: LabelInput = None,
     ) -> "BaseOptimizer":
         """Run GP evolution on training data and return self.
 
         Args:
             X: Training OHLCV data. Accepts DataFrame, list of DataFrames,
                 or dict mapping string keys to DataFrames.
-            y: Training labels. Required when classification metrics are present.
+            entry_label: Entry signal ground truth labels. Required when
+                classification metrics are present and trade_side='buy', or
+                when backtest metrics are present and trade_side='sell'.
+                Must mirror X in structure.
+            exit_label: Exit signal ground truth labels. Required when
+                classification metrics are present and trade_side='sell', or
+                when backtest metrics are present and trade_side='buy'.
                 Must mirror X in structure.
             X_val: Validation OHLCV data. When provided, a ValidationCallback
                 is added automatically.
-            y_val: Validation labels. Required when X_val is provided and
-                classification metrics_val are used.
+            entry_label_val: Validation entry labels. Required when X_val is
+                provided with classification metrics and trade_side='buy'.
+            exit_label_val: Validation exit labels. Required when X_val is
+                provided with classification metrics and trade_side='sell'.
 
         Returns:
             self (for chaining).
@@ -308,17 +396,27 @@ class BaseOptimizer(ABC):
             ValueError: When required labels are absent, data is invalid,
                 or selection/objective count mismatches.
         """
-        # 1. Normalize and validate datasets
-        train_data_list, train_labels_list, _ = _normalize_data_and_labels(
-            X, y, "train"
-        )
+        # 1. Normalize and validate datasets (single call for data+labels)
+        (
+            train_data_list,
+            train_entry_list,
+            train_exit_list,
+            _,
+        ) = _normalize_data_and_labels(X, entry_label, exit_label, "train")
+
         val_data_list: list[pd.DataFrame] = []
-        val_labels_list: list[pd.Series] | None = None
+        val_entry_list: list[pd.Series] | None = None
+        val_exit_list: list[pd.Series] | None = None
         val_names: list[str] = []
 
         if X_val is not None:
-            val_data_list, val_labels_list, val_names = _normalize_data_and_labels(
-                X_val, y_val, "val"
+            (
+                val_data_list,
+                val_entry_list,
+                val_exit_list,
+                val_names,
+            ) = _normalize_data_and_labels(
+                X_val, entry_label_val, exit_label_val, "val"
             )
 
         # 2. Seed RNG
@@ -326,28 +424,12 @@ class BaseOptimizer(ABC):
             random.seed(self.seed)
             np.random.seed(self.seed)
 
-        # 3. Validate data/config consistency
-        train_needs_labels = any(
-            isinstance(m, ClassificationMetricBase) for m in self.metrics
-        )
-        if train_needs_labels and y is None:
-            raise ValueError(
-                "y (train_labels) must be provided when classification metrics are "
-                "included. Compute labels outside fit() and pass them in."
-            )
+        # 3. Label validation is deferred to the evaluator based on trade_side
+        # and metrics. The evaluator raises ValueError if required labels are
+        # missing.
 
         # Determine validation metrics
         val_metrics = self.metrics_val if self.metrics_val is not None else self.metrics
-
-        if X_val is not None:
-            val_needs_labels = any(
-                isinstance(m, ClassificationMetricBase) for m in val_metrics
-            )
-            if val_needs_labels and y_val is None:
-                raise ValueError(
-                    "y_val must be provided when X_val is used with "
-                    "classification metrics."
-                )
 
         is_multiobjective = len(self.metrics) > 1
 
@@ -366,7 +448,7 @@ class BaseOptimizer(ABC):
         # 6. Build evaluators
         evaluator = self._make_evaluator(self.pset_, self.metrics)
 
-        val_evaluator: IndividualEvaluator | None = None
+        val_evaluator: BaseEvaluator | None = None
         if val_data_list:
             val_evaluator = self._make_evaluator(self.pset_, val_metrics)
 
@@ -375,7 +457,8 @@ class BaseOptimizer(ABC):
             self.n_jobs,
             evaluator=evaluator,
             train_data=train_data_list,
-            train_labels=train_labels_list,
+            train_entry_labels=train_entry_list,
+            train_exit_labels=train_exit_list,
         )
 
         # 8. Build active callbacks
@@ -384,7 +467,8 @@ class BaseOptimizer(ABC):
         if val_data_list and val_evaluator is not None:
             val_callback = ValidationCallback(
                 val_data=val_data_list,
-                val_labels=val_labels_list,
+                val_entry_labels=val_entry_list,
+                val_exit_labels=val_exit_list,
                 val_evaluator=val_evaluator,
                 val_names=val_names,
                 interval=self.validation_interval,
@@ -440,20 +524,8 @@ class BaseOptimizer(ABC):
             print("-" * 60)
 
         try:
-            pop, logbook = eaMuPlusLambdaGentrade(
-                pool_obj,
-                pop,
-                self.toolbox_,
-                mu=self.mu,
-                lambda_=self.lambda_,
-                cxpb=self.cxpb,
-                mutpb=self.mutpb,
-                ngen=self.generations,
-                stats=stats,
-                halloffame=hof,
-                verbose=self.verbose,
-                val_callback=_gen_callback,
-            )
+            algorithm = self.create_algorithm(pool_obj, stats, hof, _gen_callback)
+            pop, logbook = algorithm.run(pop)
         finally:
             pool_obj.close()
             pool_obj.join()
