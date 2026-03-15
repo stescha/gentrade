@@ -58,7 +58,7 @@ class ValidationCallback:
         val_data: list[pd.DataFrame],
         val_entry_labels: list[pd.Series] | None,
         val_exit_labels: list[pd.Series] | None,
-        val_evaluator: "BaseEvaluator",
+        val_evaluator: "BaseEvaluator[Any]",
         val_names: list[str],
         interval: int = 1,
     ) -> None:

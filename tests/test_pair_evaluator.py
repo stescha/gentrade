@@ -2,7 +2,7 @@
 
 Verifies:
 - PairEvaluator compiles both trees and dispatches correctly.
-- _apply_tree_aggregation aggregates labels per TreeAggregation setting.
+- _apply_tree_aggregation aggregates float metric values per aggregation mode.
 - Per-metric label validation in evaluate() raises ValueError for missing labels.
 - Multi-dataset evaluation averages results.
 """
@@ -70,77 +70,48 @@ def pair_individual() -> PairTreeIndividual:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _apply_tree_aggregation
+# Tests: _apply_tree_aggregation (float-based aggregation)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 class TestApplyTreeAggregation:
-    """_apply_tree_aggregation combines signals and labels per aggregation mode."""
+    """_apply_tree_aggregation combines float metric values per aggregation mode."""
 
-    def _series(self, vals: list[bool]) -> pd.Series:
-        return pd.Series(vals)
+    def test_mean_mode(self) -> None:
+        """mean mode returns arithmetic mean of buy and sell metrics."""
+        result = _apply_tree_aggregation(0.8, 0.6, "mean")
+        assert result == pytest.approx(0.7)
 
-    def test_buy_mode_uses_entry(self) -> None:
-        """buy mode uses entry_true as y_true and buy_signals as y_pred."""
-        buy = self._series([True, False, True])
-        sell = self._series([False, True, False])
-        entry_true = self._series([True, True, False])
-        exit_true = self._series([False, False, True])
-        y_true, y_pred = _apply_tree_aggregation("buy", buy, sell, entry_true, exit_true)
-        assert y_true.tolist() == entry_true.tolist()
-        assert y_pred.tolist() == buy.tolist()
+    def test_median_mode(self) -> None:
+        """median mode returns median of buy and sell metrics."""
+        result = _apply_tree_aggregation(0.8, 0.6, "median")
+        assert result == pytest.approx(0.7)
 
-    def test_sell_mode_uses_exit(self) -> None:
-        """sell mode uses exit_true as y_true and sell_signals as y_pred."""
-        buy = self._series([True, False, True])
-        sell = self._series([False, True, False])
-        entry_true = self._series([True, True, False])
-        exit_true = self._series([False, False, True])
-        y_true, y_pred = _apply_tree_aggregation("sell", buy, sell, entry_true, exit_true)
-        assert y_true.tolist() == exit_true.tolist()
-        assert y_pred.tolist() == sell.tolist()
+    def test_min_mode(self) -> None:
+        """min mode returns minimum of buy and sell metrics."""
+        result = _apply_tree_aggregation(0.8, 0.6, "min")
+        assert result == pytest.approx(0.6)
 
-    def test_mean_mode_or_logic(self) -> None:
-        """mean mode uses OR for both pred and true."""
-        buy = self._series([True, False])
-        sell = self._series([False, True])
-        entry = self._series([True, False])
-        exit_ = self._series([False, True])
-        y_true, y_pred = _apply_tree_aggregation("mean", buy, sell, entry, exit_)
-        assert y_pred.tolist() == [True, True]
-        assert y_true.tolist() == [True, True]
+    def test_max_mode(self) -> None:
+        """max mode returns maximum of buy and sell metrics."""
+        result = _apply_tree_aggregation(0.8, 0.6, "max")
+        assert result == pytest.approx(0.8)
 
-    def test_min_mode_and_logic(self) -> None:
-        """min mode uses AND for both pred and true."""
-        buy = self._series([True, True, False])
-        sell = self._series([True, False, False])
-        entry = self._series([True, True, False])
-        exit_ = self._series([True, False, True])
-        y_true, y_pred = _apply_tree_aggregation("min", buy, sell, entry, exit_)
-        assert y_pred.tolist() == [True, False, False]
-        assert y_true.tolist() == [True, False, False]
+    def test_buy_mode_returns_buy_metric(self) -> None:
+        """buy mode returns the buy (entry) tree metric value."""
+        result = _apply_tree_aggregation(0.8, 0.6, "buy")
+        assert result == pytest.approx(0.8)
 
-    def test_buy_mode_missing_entry_raises(self) -> None:
-        """buy mode raises when entry_true is None."""
-        buy = self._series([True])
-        sell = self._series([False])
-        with pytest.raises(ValueError, match="entry_true is required"):
-            _apply_tree_aggregation("buy", buy, sell, None, None)
+    def test_sell_mode_returns_sell_metric(self) -> None:
+        """sell mode returns the sell (exit) tree metric value."""
+        result = _apply_tree_aggregation(0.8, 0.6, "sell")
+        assert result == pytest.approx(0.6)
 
-    def test_sell_mode_missing_exit_raises(self) -> None:
-        """sell mode raises when exit_true is None."""
-        buy = self._series([True])
-        sell = self._series([False])
-        with pytest.raises(ValueError, match="exit_true is required"):
-            _apply_tree_aggregation("sell", buy, sell, None, None)
-
-    def test_mean_mode_missing_labels_raises(self) -> None:
-        """mean mode raises when either label is None."""
-        buy = self._series([True])
-        sell = self._series([False])
-        with pytest.raises(ValueError, match="Both entry_true and exit_true"):
-            _apply_tree_aggregation("mean", buy, sell, None, None)
+    def test_unknown_mode_raises(self) -> None:
+        """Unknown tree_aggregation raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown tree_aggregation"):
+            _apply_tree_aggregation(0.8, 0.6, "unknown")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -157,11 +128,6 @@ class TestPairEvaluatorConstructor:
         ev = PairEvaluator(pset=pset, metrics=(F1Metric(),))
         assert ev._needs_classification is True
         assert ev._needs_backtest_vbt is False
-
-    def test_default_trade_side_is_buy(self, pset: deap_gp.PrimitiveSetTyped) -> None:
-        """Default trade_side is 'buy'."""
-        ev = PairEvaluator(pset=pset, metrics=(F1Metric(),))
-        assert ev.trade_side == "buy"
 
 
 # ---------------------------------------------------------------------------

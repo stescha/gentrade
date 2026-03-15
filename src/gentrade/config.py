@@ -120,7 +120,7 @@ class _ComponentConfig(BaseModel):
 
 
 class BacktestConfig(_ComponentConfig):
-    """Backtest simulation parameters for ``IndividualEvaluator``.
+    """Backtest simulation parameters for :class:`TreeEvaluator` and :class:`PairEvaluator`.
 
     These parameters are only used when at least one
     ``BacktestMetricConfigBase`` metric is included in the run.  When no

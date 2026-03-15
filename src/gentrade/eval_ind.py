@@ -1,12 +1,11 @@
 """GP tree evaluators for the gentrade evolution pipeline.
 
-A single :class:`IndividualEvaluator` handles both backtest-based and
-classification-based metrics, or any mixture of the two.  At construction time
-it inspects the ``metrics`` tuple and sets internal flags so the expensive
-vectorbt backtest is skipped when no backtest metric is present.
+Provides a generic :class:`BaseEvaluator[IndT]` that centralizes tree
+compilation, backtest execution, multi-dataset iteration, and fitness
+aggregation.  Concrete subclasses specialise for a specific individual type:
 
-The ``evaluate`` method is called once per individual by the DEAP toolbox and
-returns a ``tuple[float, ...]`` with one element per metric.
+* :class:`TreeEvaluator` — single-tree individuals (:class:`TreeIndividual`).
+* :class:`PairEvaluator` — pair-tree individuals (:class:`PairTreeIndividual`).
 
 Error handling follows a fail-fast approach: exceptions during tree evaluation
 or metric calculation are wrapped in domain-specific exceptions and re-raised.
@@ -15,7 +14,8 @@ This ensures bugs and misconfigurations surface immediately.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal, cast
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, TypeVar, cast
 
 import numpy as np
 import pandas as pd
@@ -31,11 +31,7 @@ from gentrade.optimizer.individual import (
 if TYPE_CHECKING:
     from gentrade.config import BacktestConfig
 else:
-    from typing import Any
-
     BacktestConfig = Any
-
-from abc import ABC, abstractmethod
 
 from gentrade.backtest_metrics import CppBacktestMetricBase, VbtBacktestMetricBase
 from gentrade.classification_metrics import ClassificationMetricBase, TreeAggregation
@@ -46,13 +42,25 @@ from gentrade.types import BtResult
 
 TradeSide = Literal["buy", "sell"]
 
+# Type variable for individual types, bounded by TreeIndividualBase
+IndT = TypeVar("IndT", bound=TreeIndividualBase)
 
-class BaseEvaluator(ABC):
-    """Abstract base evaluator for GP trees.
 
-    Holds shared constructor logic determining which evaluation branches
-    are required based on the supplied metrics. Concrete subclasses must
-    implement ``_eval_dataset``.
+class BaseEvaluator(ABC, Generic[IndT]):
+    """Abstract generic base evaluator for GP-tree individuals.
+
+    Key features:
+    - Generic over ``IndT`` (bound by :class:`TreeIndividualBase`).
+    - Centralises shared logic: flag detection, tree compilation, backtest
+      runners, fitness aggregation, and the multi-dataset evaluation loop.
+    - Subclasses implement :meth:`pre_validate_labels` (label requirement
+      checks) and :meth:`_eval_dataset` (per-dataset computation).
+
+    Args:
+        pset: DEAP primitive set used to compile GP trees.
+        metrics: Ordered tuple of metric configs; determines fitness tuple
+            length.
+        backtest: Optional backtest simulation parameters.
     """
 
     def __init__(
@@ -74,85 +82,32 @@ class BaseEvaluator(ABC):
         self._needs_classification: bool = any(
             isinstance(m, ClassificationMetricBase) for m in metrics
         )
-        # For backwards compat: _needs_labels is True if classification OR C++ backtest
+        # _needs_labels is True if any metric requires ground-truth labels
         self._needs_labels: bool = any(
             isinstance(m, (ClassificationMetricBase, CppBacktestMetricBase))
             for m in metrics
         )
 
-    @abstractmethod
-    def _eval_dataset(
-        self,
-        individual: "TreeIndividualBase",
-        df: "pd.DataFrame",
-        entry_true: "pd.Series" | None = None,
-        exit_true: "pd.Series" | None = None,
-    ) -> tuple[float, ...]: ...
-
-    @abstractmethod
-    def evaluate(
-        self,
-        individual: "TreeIndividualBase",
-        *,
-        ohlcvs: list[pd.DataFrame],
-        entry_labels: list[pd.Series] | None = None,
-        exit_labels: list[pd.Series] | None = None,
-        aggregate: bool = True,
-    ) -> tuple[float, ...] | list[tuple[float, ...]]: ...
-
-    def aggregate_fitness(
-        self, fitnesses: list[tuple[float, ...]]
-    ) -> tuple[float, ...]:
-        """Aggregate multiple fitness tuples into one by averaging component-wise."""
-        arr = np.array(fitnesses, dtype=float)
-        mean = arr.mean(axis=0)
-        return tuple(float(x) for x in mean)
-
-
-class IndividualEvaluator(BaseEvaluator):
-    """Unified GP-tree evaluator supporting backtest and classification metrics.
-
-    At construction time the ``metrics`` tuple is scanned once to set the
-    internal flags controlling which evaluation steps are required. The
-    evaluator supports two backtest backends: a fast C++ backtester (used
-    when a ``CppBacktestMetricBase`` is present) which returns a
-    ``BtResult``, and a VectorBT-backed backtester (used by
-    ``VbtBacktestMetricBase``) which returns a ``vbt.Portfolio``.
-    Only the branches needed for the configured metrics are executed, so
-    pure-classification runs do not pay the cost of any backtest.
-
-    The ``trade_side`` parameter determines how entry/exit labels are
-    interpreted:
-    - ``"buy"``: Tree signals are entries; classification metrics use
-      ``entry_true``, backtests use ``exit_true`` for exits.
-    - ``"sell"``: Tree signals are exits; classification metrics use
-      ``exit_true``, backtests use ``entry_true`` for exits.
-
-    Args:
-        pset: DEAP primitive set used to compile GP trees.
-        metrics: Ordered tuple of metric configs; determines fitness tuple length.
-        backtest: Backtest simulation parameters.
-        trade_side: Trading direction; determines label interpretation.
-    """
-
-    def __init__(
-        self,
-        pset: gp.PrimitiveSetTyped,
-        metrics: tuple[Metric, ...],
-        backtest: BacktestConfig | None = None,
-        trade_side: TradeSide = "buy",
-    ) -> None:
-        # Delegate shared initialisation to BaseEvaluator
-        super().__init__(pset=pset, metrics=metrics, backtest=backtest)
-        self.trade_side = trade_side
-
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Shared helpers
     # ------------------------------------------------------------------
 
     def _compile_tree(
         self, individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
     ) -> Callable[..., pd.Series]:
+        """Compile a GP tree to a callable Python function.
+
+        Args:
+            individual: GP tree to compile.
+            pset: Primitive set for compilation.
+
+        Returns:
+            Callable that accepts OHLCV column arrays and returns a
+            ``pd.Series``.
+
+        Raises:
+            TreeEvaluationError: On compilation failure.
+        """
         try:
             func = gp.compile(individual, pset)
             return cast(Callable[..., pd.Series], func)
@@ -230,8 +185,10 @@ class IndividualEvaluator(BaseEvaluator):
 
         Returns:
             VectorBT Portfolio object.
+
+        Raises:
+            TreeEvaluationError: On backtest execution failure.
         """
-        # Default backtest parameters if none provided
         tp_stop = self.backtest.tp_stop if self.backtest else 0.02
         sl_stop = self.backtest.sl_stop if self.backtest else 0.01
         sl_trail = self.backtest.sl_trail if self.backtest else True
@@ -254,7 +211,6 @@ class IndividualEvaluator(BaseEvaluator):
                 fees=fees,
                 init_cash=init_cash,
             )
-
         except Exception as e:
             raise TreeEvaluationError(
                 f"Failed to run backtest: {e}",
@@ -272,13 +228,19 @@ class IndividualEvaluator(BaseEvaluator):
     ) -> BtResult:
         """Run the C++ backtest and return a lightweight result wrapper.
 
-        The C++ backend performs a fast order-by-order simulation and the
-        returned value is wrapped into the ``BtResult`` dataclass which
-        contains arrays for buy/sell times, portfolio values, positions
-        and per-trade PnLs. This method raises ``TreeEvaluationError`` on
-        any failure during the native call.
-        """
+        Args:
+            individual: GP tree that produced the entry signals.
+            ohlcv: OHLCV DataFrame with open, high columns.
+            entries: Boolean entry signal series.
+            exits: Boolean exit signal series.
 
+        Returns:
+            :class:`BtResult` wrapping C++ backtest outputs.
+
+        Raises:
+            ValueError: If no backtest configuration is provided.
+            TreeEvaluationError: On C++ execution failure.
+        """
         if self.backtest is None:
             raise ValueError("Backtest configuration is required for backtest metrics.")
 
@@ -301,73 +263,297 @@ class IndividualEvaluator(BaseEvaluator):
                 err=e,
             ) from e
 
+    def aggregate_fitness(
+        self, fitnesses: list[tuple[float, ...]]
+    ) -> tuple[float, ...]:
+        """Aggregate multiple fitness tuples into one by averaging component-wise.
+
+        Args:
+            fitnesses: List of per-dataset fitness tuples.
+
+        Returns:
+            A single tuple with component-wise mean across all datasets.
+        """
+        arr = np.array(fitnesses, dtype=float)
+        mean = arr.mean(axis=0)
+        return tuple(float(x) for x in mean)
+
+    def _validate_label_lengths(
+        self,
+        ohlcvs: list[pd.DataFrame],
+        entry_labels: list[pd.Series] | None,
+        exit_labels: list[pd.Series] | None,
+    ) -> None:
+        """Validate that label lists match the number of datasets.
+
+        Args:
+            ohlcvs: List of OHLCV DataFrames.
+            entry_labels: Optional list of entry label Series.
+            exit_labels: Optional list of exit label Series.
+
+        Raises:
+            ValueError: If a labels list length does not match ``len(ohlcvs)``.
+        """
+        if entry_labels is not None and len(entry_labels) != len(ohlcvs):
+            raise ValueError(
+                "Length of entry_labels list must match number of datasets"
+            )
+        if exit_labels is not None and len(exit_labels) != len(ohlcvs):
+            raise ValueError(
+                "Length of exit_labels list must match number of datasets"
+            )
+
+    # ------------------------------------------------------------------
+    # Abstract interface
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def pre_validate_labels(
+        self,
+        ohlcvs: list[pd.DataFrame],
+        entry_labels: list[pd.Series] | None,
+        exit_labels: list[pd.Series] | None,
+    ) -> None:
+        """Validate label requirements before evaluation.
+
+        Called once by :meth:`evaluate` before the dataset loop. Subclasses
+        should raise ``ValueError`` if required labels are absent or
+        structurally inconsistent, then call
+        :meth:`_validate_label_lengths` to check list sizes.
+
+        Args:
+            ohlcvs: List of OHLCV DataFrames.
+            entry_labels: Optional list of entry label Series.
+            exit_labels: Optional list of exit label Series.
+
+        Raises:
+            ValueError: If required labels are missing or lengths mismatch.
+        """
+        ...
+
+    @abstractmethod
     def _eval_dataset(
         self,
-        individual: TreeIndividualBase,
+        individual: IndT,
         df: pd.DataFrame,
         entry_true: pd.Series | None = None,
         exit_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
-        """Evaluate a tree individual on a single DataFrame.
+        """Evaluate a single individual on one dataset.
 
-        Compiles the individual's primary tree to executable signals and
-        runs the configured backtest (if needed) and metric calculations.
-        All metrics in the evaluator's metrics tuple are computed and
-        returned in the same order.
+        Args:
+            individual: The GP individual to evaluate.
+            df: OHLCV DataFrame.
+            entry_true: Ground-truth entry labels (if applicable).
+            exit_true: Ground-truth exit labels (if applicable).
+
+        Returns:
+            Tuple of fitness values, one per metric.
+
+        Raises:
+            TreeEvaluationError: On tree compilation or execution failure.
+            MetricCalculationError: On metric computation failure.
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # Concrete orchestration
+    # ------------------------------------------------------------------
+
+    def evaluate(
+        self,
+        individual: IndT,
+        *,
+        ohlcvs: list[pd.DataFrame],
+        entry_labels: list[pd.Series] | None = None,
+        exit_labels: list[pd.Series] | None = None,
+        aggregate: bool = True,
+    ) -> tuple[float, ...] | list[tuple[float, ...]]:
+        """Evaluate an individual across one or more OHLCV datasets.
+
+        Validates label requirements, iterates over datasets, and returns
+        either aggregated or per-dataset fitness values.
+
+        Args:
+            individual: GP individual to evaluate.
+            ohlcvs: List of OHLCV DataFrames.
+            entry_labels: Optional list of entry label Series, one per
+                DataFrame in ``ohlcvs``.
+            exit_labels: Optional list of exit label Series, one per
+                DataFrame in ``ohlcvs``.
+            aggregate: If ``True`` (default), returns a single tuple with
+                component-wise average across datasets. If ``False``, returns
+                a list of per-dataset tuples.
+
+        Returns:
+            Aggregated fitness tuple if ``aggregate=True``; list of tuples
+            otherwise.
+
+        Raises:
+            ValueError: If required labels are missing or lengths mismatch.
+            TreeEvaluationError: If tree compilation or execution fails.
+            MetricCalculationError: If any metric returns NaN, Inf, or raises.
+        """
+        self.pre_validate_labels(ohlcvs, entry_labels, exit_labels)
+
+        results: list[tuple[float, ...]] = []
+        for i, subdf in enumerate(ohlcvs):
+            sub_entry: pd.Series | None = entry_labels[i] if entry_labels is not None else None
+            sub_exit: pd.Series | None = exit_labels[i] if exit_labels is not None else None
+            results.append(self._eval_dataset(individual, subdf, sub_entry, sub_exit))
+
+        return self.aggregate_fitness(results) if aggregate else results
+
+
+def _apply_tree_aggregation(
+    buy_metric: float,
+    sell_metric: float,
+    tree_agg: TreeAggregation,
+) -> float:
+    """Aggregate float metric values from buy/sell trees.
+
+    Args:
+        buy_metric: Metric value from the buy (entry) tree.
+        sell_metric: Metric value from the sell (exit) tree.
+        tree_agg: Aggregation method.
+
+    Returns:
+        A single aggregated float value.
+
+    Raises:
+        ValueError: If ``tree_agg`` is not a recognised aggregation mode.
+    """
+    if tree_agg == "mean":
+        return (buy_metric + sell_metric) / 2
+    if tree_agg == "median":
+        return float(np.median([buy_metric, sell_metric]))
+    if tree_agg == "min":
+        return min(buy_metric, sell_metric)
+    if tree_agg == "max":
+        return max(buy_metric, sell_metric)
+    if tree_agg == "buy":
+        return buy_metric
+    if tree_agg == "sell":
+        return sell_metric
+    raise ValueError(f"Unknown tree_aggregation: {tree_agg}.")
+
+
+class TreeEvaluator(BaseEvaluator[TreeIndividual]):
+    """Single-tree evaluator supporting backtest and classification metrics.
+
+    Concrete implementation of :class:`BaseEvaluator` for
+    :class:`TreeIndividual` (single buy or sell tree). The ``trade_side``
+    parameter controls how labels are mapped to the compiled signal:
+
+    - ``"buy"``: tree signals are entries; classification uses
+      ``entry_labels``, C++ backtest uses ``exit_labels`` for exits.
+    - ``"sell"``: tree signals are exits; classification uses
+      ``exit_labels``, C++ backtest uses ``entry_labels`` for entries.
+
+    Args:
+        pset: DEAP primitive set.
+        metrics: Ordered tuple of metric configs.
+        backtest: Optional backtest simulation parameters.
+        trade_side: Trading direction; determines label interpretation.
+    """
+
+    def __init__(
+        self,
+        pset: gp.PrimitiveSetTyped,
+        metrics: tuple[Metric, ...],
+        backtest: BacktestConfig | None = None,
+        trade_side: TradeSide = "buy",
+    ) -> None:
+        super().__init__(pset=pset, metrics=metrics, backtest=backtest)
+        self.trade_side = trade_side
+
+    def pre_validate_labels(
+        self,
+        ohlcvs: list[pd.DataFrame],
+        entry_labels: list[pd.Series] | None,
+        exit_labels: list[pd.Series] | None,
+    ) -> None:
+        """Validate label requirements based on trade_side and metric types.
+
+        Raises:
+            ValueError: If required labels are missing or list lengths
+                do not match the number of datasets.
+        """
+        if self._needs_classification:
+            if self.trade_side == "buy" and entry_labels is None:
+                raise ValueError(
+                    "entry_labels must be provided for classification metrics "
+                    "when trade_side='buy'."
+                )
+            if self.trade_side == "sell" and exit_labels is None:
+                raise ValueError(
+                    "exit_labels must be provided for classification metrics "
+                    "when trade_side='sell'."
+                )
+
+        # Only C++ backtest requires explicit exit/entry labels; VBT uses
+        # stop-loss/take-profit from BacktestConfig and does not need labels.
+        if self._needs_backtest:
+            if self.trade_side == "buy" and exit_labels is None:
+                raise ValueError(
+                    "exit_labels must be provided for C++ backtest metrics "
+                    "when trade_side='buy'."
+                )
+            if self.trade_side == "sell" and entry_labels is None:
+                raise ValueError(
+                    "entry_labels must be provided for C++ backtest metrics "
+                    "when trade_side='sell'."
+                )
+
+        self._validate_label_lengths(ohlcvs, entry_labels, exit_labels)
+
+    def _eval_dataset(
+        self,
+        individual: TreeIndividual,
+        df: pd.DataFrame,
+        entry_true: pd.Series | None = None,
+        exit_true: pd.Series | None = None,
+    ) -> tuple[float, ...]:
+        """Evaluate a single-tree individual on one dataset.
 
         Args:
             individual: :class:`TreeIndividual` instance to evaluate.
             df: OHLCV DataFrame with columns [open, high, low, close, volume].
-            entry_true: Ground-truth entry labels; required when classification
-                metrics are configured with trade_side='buy', or backtest metrics
-                with trade_side='sell'.
-            exit_true: Ground-truth exit labels; required when classification
-                metrics are configured with trade_side='sell', or backtest metrics
-                with trade_side='buy'.
+            entry_true: Ground-truth entry labels.
+            exit_true: Ground-truth exit labels.
 
         Returns:
-            Tuple of fitness values (float), one per metric in order.
+            Tuple of fitness values, one per metric.
 
         Raises:
-            TreeEvaluationError: If tree compilation fails.
-            MetricCalculationError: If any metric returns NaN, Inf, or raises
-                an exception.
+            TreeEvaluationError: If tree compilation or execution fails.
+            MetricCalculationError: If any metric returns NaN, Inf, or raises.
         """
-        # IndividualEvaluator is only used with TreeIndividual (single-tree) instances.
-        # The cast is safe because PairTreeOptimizer uses PairEvaluator instead.
-        assert isinstance(individual, TreeIndividual), (
-            f"IndividualEvaluator._eval_dataset expects TreeIndividual, got {type(individual).__name__}"
-        )
         tree = individual.tree
         signals = self._compile_tree_to_signals(tree, self.pset, df)
 
-        # Determine which labels map to classification and backtest roles based on trade_side.
+        # Map labels to classification/backtest roles based on trade_side.
         class_labels: pd.Series | None
         backtest_exits: pd.Series | None
         backtest_entries: pd.Series | None
         if self.trade_side == "buy":
-            # buy side: signals = entries, exit_true = exits for backtest
+            # buy: signals = entries; exit_true = exits for backtest
             class_labels = entry_true
             backtest_exits = exit_true
             backtest_entries = signals
         else:
-            # sell side: signals = exits, entry_true = entries for backtest
+            # sell: signals = exits; entry_true = entries for backtest
             class_labels = exit_true
             backtest_exits = signals
             backtest_entries = entry_true
 
-        # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
         bt_result: BtResult | None = None
-        pf: vbt.Portfolio | None = None
+        pf: Any = None
         if self._needs_backtest:
-            # Guarded by BaseEvaluator.verify_data called in BaseOptimizer.fit()
             assert backtest_entries is not None
             assert backtest_exits is not None
-            bt_result = self.run_cpp_backtest(
-                tree, df, backtest_entries, backtest_exits
-            )
+            bt_result = self.run_cpp_backtest(tree, df, backtest_entries, backtest_exits)
         if self._needs_backtest_vbt:
-            # Guarded by BaseEvaluator.verify_data called in BaseOptimizer.fit()
             assert backtest_entries is not None
             pf = self.run_vbt_backtest(tree, df, backtest_entries, backtest_exits)
 
@@ -375,7 +561,6 @@ class IndividualEvaluator(BaseEvaluator):
         for m in self.metrics:
             try:
                 if isinstance(m, ClassificationMetricBase):
-                    # Guarded by BaseEvaluator.verify_data called in BaseOptimizer.fit()
                     assert class_labels is not None
                     val = m(class_labels, signals)
                 elif isinstance(m, CppBacktestMetricBase):
@@ -401,136 +586,27 @@ class IndividualEvaluator(BaseEvaluator):
                     value=val,
                     signals=signals,
                 )
-
             result.append(float(val))
 
         return tuple(result)
 
-    def evaluate(
-        self,
-        individual: TreeIndividualBase,
-        *,
-        ohlcvs: list[pd.DataFrame],
-        entry_labels: list[pd.Series] | None = None,
-        exit_labels: list[pd.Series] | None = None,
-        aggregate: bool = True,
-    ) -> tuple[float, ...] | list[tuple[float, ...]]:
-        """Evaluate a tree individual across one or more OHLCV datasets.
 
-        Compiles the individual's primary tree into executable signals and
-        evaluates all configured metrics. When multiple datasets are provided,
-        evaluates each independently and optionally returns the averaged or
-        per-dataset fitness values.
-
-        The ``trade_side`` attribute determines how labels are used:
-        - ``"buy"``: Tree signals are entries; classification uses
-          ``entry_labels``, backtests use ``exit_labels`` for exits.
-        - ``"sell"``: Tree signals are exits; classification uses
-          ``exit_labels``, backtests use ``entry_labels`` for exits.
-
-        Args:
-            individual: :class:`TreeIndividual` instance to evaluate.
-            ohlcvs: List of OHLCV DataFrames with columns
-                [open, high, low, close, volume].
-            entry_labels: Optional list of ground-truth entry label Series
-                (boolean), one per DataFrame in `ohlcvs`.
-            exit_labels: Optional list of ground-truth exit label Series
-                (boolean), one per DataFrame in `ohlcvs`.
-            aggregate: If True (default), returns a single tuple with
-                component-wise average fitness across all datasets. If False,
-                returns a list of fitness tuples, one per dataset.
-
-        Returns:
-            If `aggregate=True`: a tuple of floats (one per metric)
-            representing the averaged fitness across all datasets.
-            If `aggregate=False`: a list of tuples, one per dataset, each
-            containing fitness values for that dataset.
-
-        Raises:
-            ValueError: If required labels are missing based on metrics and
-                trade_side configuration, or if label list lengths don't match
-                the number of datasets.
-            TreeEvaluationError: If tree compilation fails.
-            MetricCalculationError: If any metric returns NaN, Inf, or raises
-                an exception.
-        """
-        # Pre-validate label requirements based on trade_side and metrics
-        if self._needs_classification:
-            if self.trade_side == "buy" and entry_labels is None:
-                raise ValueError(
-                    "entry_labels must be provided for classification metrics "
-                    "when trade_side='buy'."
-                )
-            if self.trade_side == "sell" and exit_labels is None:
-                raise ValueError(
-                    "exit_labels must be provided for classification metrics "
-                    "when trade_side='sell'."
-                )
-
-        # Only the C++ backtester requires explicit exit/entry labels since it
-        # simulates pair-trade entries AND exits.  VBT backtest derives exits from
-        # stop-loss / take-profit parameters in BacktestConfig and does NOT need
-        # explicit exit labels.
-        if self._needs_backtest:
-            if self.trade_side == "buy" and exit_labels is None:
-                raise ValueError(
-                    "exit_labels must be provided for C++ backtest metrics "
-                    "when trade_side='buy'."
-                )
-            if self.trade_side == "sell" and entry_labels is None:
-                raise ValueError(
-                    "entry_labels must be provided for C++ backtest metrics "
-                    "when trade_side='sell'."
-                )
-
-        # Validate list lengths
-        if entry_labels is not None and len(entry_labels) != len(ohlcvs):
-            raise ValueError(
-                "Length of entry_labels list must match number of datasets"
-            )
-        if exit_labels is not None and len(exit_labels) != len(ohlcvs):
-            raise ValueError("Length of exit_labels list must match number of datasets")
-
-        # Multi-dataset evaluation
-        results: list[tuple[float, ...]] = []
-        for i, subdf in enumerate(ohlcvs):
-            sub_entry: pd.Series | None = None
-            sub_exit: pd.Series | None = None
-            if entry_labels is not None:
-                sub_entry = entry_labels[i]
-            if exit_labels is not None:
-                sub_exit = exit_labels[i]
-            results.append(self._eval_dataset(individual, subdf, sub_entry, sub_exit))
-        return self.aggregate_fitness(results) if aggregate else results
-
-
-def _apply_tree_aggregation(
-    buy_metric: float,
-    sell_metric: float,
-    tree_agg: TreeAggregation,
-) -> float:
-    """Aggregate metric values from buy/sell trees according to the specified method."""
-    if tree_agg == "mean":
-        return (buy_metric + sell_metric) / 2
-    if tree_agg == "median":
-        return np.median([buy_metric, sell_metric])  # type: ignore
-    if tree_agg == "min":
-        return min(buy_metric, sell_metric)
-    if tree_agg == "max":
-        return max(buy_metric, sell_metric)
-    if tree_agg == "buy":
-        return buy_metric
-    if tree_agg == "sell":
-        return sell_metric
-    raise ValueError(f"Unknown tree_aggregation: {tree_agg}.")
-
-
-class PairEvaluator(IndividualEvaluator):
+class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
     """Evaluator for pair-tree individuals (buy & sell trees).
 
-    Compiles both trees to signals, runs backtests once (if required) and
-    computes metrics. Classification metrics can indicate how to aggregate
-    per-tree outputs via their ``tree_aggregation`` attribute.
+    Concrete implementation of :class:`BaseEvaluator` for
+    :class:`PairTreeIndividual`. Both trees are compiled to signals; the
+    backtest (if required) uses both signal channels. Classification
+    metrics use the ``tree_aggregation`` attribute to select which channel(s)
+    to evaluate and how to combine the per-tree metric values.
+
+    Unlike :class:`TreeEvaluator`, no ``trade_side`` parameter is needed
+    because the individual carries both entry and exit trees explicitly.
+
+    Args:
+        pset: DEAP primitive set.
+        metrics: Ordered tuple of metric configs.
+        backtest: Optional backtest simulation parameters.
     """
 
     def __init__(
@@ -538,40 +614,83 @@ class PairEvaluator(IndividualEvaluator):
         pset: gp.PrimitiveSetTyped,
         metrics: tuple[Metric, ...],
         backtest: BacktestConfig | None = None,
-        trade_side: TradeSide = "buy",
     ) -> None:
-        super().__init__(
-            pset=pset, metrics=metrics, backtest=backtest, trade_side=trade_side
-        )
+        super().__init__(pset=pset, metrics=metrics, backtest=backtest)
+
+    def pre_validate_labels(
+        self,
+        ohlcvs: list[pd.DataFrame],
+        entry_labels: list[pd.Series] | None,
+        exit_labels: list[pd.Series] | None,
+    ) -> None:
+        """Validate per-metric label requirements for pair evaluation.
+
+        Checks each classification metric's ``tree_aggregation`` setting to
+        determine which label channels are required.
+
+        Raises:
+            ValueError: If required labels are missing or list lengths
+                do not match the number of datasets.
+        """
+        for m in self.metrics:
+            if isinstance(m, ClassificationMetricBase):
+                agg = getattr(m, "tree_aggregation", "mean")
+                if agg == "buy" and entry_labels is None:
+                    raise ValueError(
+                        "entry_labels must be provided for classification metrics "
+                        "with tree_aggregation='buy'."
+                    )
+                if agg == "sell" and exit_labels is None:
+                    raise ValueError(
+                        "exit_labels must be provided for classification metrics "
+                        "with tree_aggregation='sell'."
+                    )
+                if agg in ("mean", "median", "min", "max") and (
+                    entry_labels is None or exit_labels is None
+                ):
+                    raise ValueError(
+                        "Both entry_labels and exit_labels must be provided for "
+                        "statistical aggregations."
+                    )
+
+        # Backtest metrics use the two tree signals directly — no label override.
+        self._validate_label_lengths(ohlcvs, entry_labels, exit_labels)
 
     def _eval_dataset(
         self,
-        individual: "TreeIndividualBase",
+        individual: PairTreeIndividual,
         df: pd.DataFrame,
         entry_true: pd.Series | None = None,
         exit_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
-        # PairEvaluator is only used with PairTreeIndividual instances.
-        # The cast is safe because TreeOptimizer uses IndividualEvaluator instead.
-        assert isinstance(individual, PairTreeIndividual), (
-            f"PairEvaluator._eval_dataset expects PairTreeIndividual, got {type(individual).__name__}"
-        )
-        # Compile both trees to signals
-        buy_signals = self._compile_tree_to_signals(individual.buy_tree, self.pset, df)
-        sell_signals = self._compile_tree_to_signals(
-            individual.sell_tree, self.pset, df
-        )
+        """Evaluate a pair-tree individual on one dataset.
 
-        # Run backtests once if required
+        Compiles both trees to signals and evaluates all metrics. Backtest
+        metrics use the compiled signals directly; classification metrics
+        aggregate per-tree metric values via :func:`_apply_tree_aggregation`.
+
+        Args:
+            individual: :class:`PairTreeIndividual` to evaluate.
+            df: OHLCV DataFrame.
+            entry_true: Ground-truth entry labels (for classification metrics).
+            exit_true: Ground-truth exit labels (for classification metrics).
+
+        Returns:
+            Tuple of fitness values, one per metric.
+
+        Raises:
+            TreeEvaluationError: If tree compilation or execution fails.
+            MetricCalculationError: If any metric returns NaN, Inf, or raises.
+        """
+        buy_signals = self._compile_tree_to_signals(individual.buy_tree, self.pset, df)
+        sell_signals = self._compile_tree_to_signals(individual.sell_tree, self.pset, df)
+
         bt_result: BtResult | None = None
-        pf: vbt.Portfolio | None = None
+        pf: Any = None
         if self._needs_backtest:
-            # TODO: Both methods currently get the buy_tree passed. this is counter
-            # intuitive. The tree is only used for error message, so it doesn't affect
-            # the result, but it would be more intuitive to pass the individual itself or
-            # both trees. This needs refactoring of the errors and will be a sperate
-            # task. Keep this
-            # todo and ignore it.
+            # TODO: Both run_*_backtest calls receive buy_tree for error reporting.
+            # The tree argument is only used in error messages, not for computation.
+            # A future task should pass the individual itself or both trees.
             bt_result = self.run_cpp_backtest(
                 individual.buy_tree, df, buy_signals, sell_signals
             )
@@ -585,6 +704,7 @@ class PairEvaluator(IndividualEvaluator):
             try:
                 if isinstance(m, ClassificationMetricBase):
                     if entry_true is not None and exit_true is not None:
+                        # Aggregate metric values from both trees.
                         val = _apply_tree_aggregation(
                             m(entry_true, buy_signals),
                             m(exit_true, sell_signals),
@@ -593,10 +713,9 @@ class PairEvaluator(IndividualEvaluator):
                     elif entry_true is not None:
                         val = m(entry_true, buy_signals)
                     else:
-                        # prevalidated
+                        # Pre-validated: sell-side aggregation requires exit_true.
                         assert exit_true is not None
                         val = m(exit_true, sell_signals)
-
                 elif isinstance(m, CppBacktestMetricBase):
                     val = m(bt_result)
                 elif isinstance(m, VbtBacktestMetricBase):
@@ -621,66 +740,5 @@ class PairEvaluator(IndividualEvaluator):
                     signals=buy_signals,
                 )
             result.append(float(val))
+
         return tuple(result)
-
-    def evaluate(
-        self,
-        individual: "TreeIndividualBase",
-        *,
-        ohlcvs: list[pd.DataFrame],
-        entry_labels: list[pd.Series] | None = None,
-        exit_labels: list[pd.Series] | None = None,
-        aggregate: bool = True,
-    ) -> tuple[float, ...] | list[tuple[float, ...]]:
-        """Evaluate a pair-tree individual across datasets with per-metric label validation.
-
-        This override adjusts label pre-validation to honor each classification
-        metric's ``tree_aggregation`` setting (buy/sell/statistical) rather than
-        the single-tree ``trade_side`` semantics used by IndividualEvaluator.
-        """
-        # Per-metric classification label requirements
-        for m in self.metrics:
-            if isinstance(m, ClassificationMetricBase):
-                agg = getattr(m, "tree_aggregation", "mean")
-                if agg == "buy" and entry_labels is None:
-                    raise ValueError(
-                        "entry_labels must be provided for classification metrics with tree_aggregation='buy'."
-                    )
-                if agg == "sell" and exit_labels is None:
-                    raise ValueError(
-                        "exit_labels must be provided for classification metrics with tree_aggregation='sell'."
-                    )
-                if agg in ("mean", "median", "min", "max") and (
-                    entry_labels is None or exit_labels is None
-                ):
-                    raise ValueError(
-                        "Both entry_labels and exit_labels must be provided for statistical aggregations."
-                    )
-
-        # In PairEvaluator, backtest metrics always use the two tree signals
-        # (buy_tree → entries, sell_tree → exits) directly — no label override
-        # is needed or supported.  Only classification metrics require labels.
-
-        # Validate list lengths
-        if entry_labels is not None and len(entry_labels) != len(ohlcvs):
-            raise ValueError(
-                "Length of entry_labels list must match number of datasets"
-            )
-        if exit_labels is not None and len(exit_labels) != len(ohlcvs):
-            raise ValueError("Length of exit_labels list must match number of datasets")
-
-        # Multi-dataset evaluation
-        results: list[tuple[float, ...]] = []
-        for i, subdf in enumerate(ohlcvs):
-            sub_entry: pd.Series | None = None
-            sub_exit: pd.Series | None = None
-            if entry_labels is not None:
-                sub_entry = entry_labels[i]
-            if exit_labels is not None:
-                sub_exit = exit_labels[i]
-            results.append(self._eval_dataset(individual, subdf, sub_entry, sub_exit))
-        return self.aggregate_fitness(results) if aggregate else results
-
-
-# Backwards-compatible alias: TreeEvaluator is IndividualEvaluator
-TreeEvaluator = IndividualEvaluator

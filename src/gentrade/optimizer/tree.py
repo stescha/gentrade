@@ -309,10 +309,9 @@ class PairTreeOptimizer(BaseTreeOptimizer):
 
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
-    ) -> BaseEvaluator:
+    ) -> BaseEvaluator:  # type: ignore[type-arg]
         return PairEvaluator(
             pset=pset,
             metrics=metrics,
             backtest=self._backtest,
-            trade_side=self._trade_side,
         )

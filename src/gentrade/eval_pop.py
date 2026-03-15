@@ -3,6 +3,8 @@ import time
 from dataclasses import dataclass
 from multiprocessing import pool
 
+from typing import Any
+
 import pandas as pd
 
 from gentrade.eval_ind import BaseEvaluator
@@ -40,7 +42,7 @@ class WorkerContext:
     functions then reference ``_worker_ctx`` to access it.
     """
 
-    evaluator: BaseEvaluator
+    evaluator: BaseEvaluator[Any]
     train_data: list[pd.DataFrame]
     train_entry_labels: list[pd.Series] | None
     train_exit_labels: list[pd.Series] | None
@@ -66,7 +68,7 @@ def init_worker(ctx: WorkerContext) -> None:
 
 def create_pool(
     processes: int,
-    evaluator: BaseEvaluator,
+    evaluator: BaseEvaluator[Any],
     train_data: list[pd.DataFrame],
     train_entry_labels: list[pd.Series] | None,
     train_exit_labels: list[pd.Series] | None,

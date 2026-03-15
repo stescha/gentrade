@@ -297,7 +297,7 @@ class BaseOptimizer(ABC):
     @abstractmethod
     def _make_evaluator(
         self, pset: gp.PrimitiveSetTyped, metrics: tuple[Metric, ...]
-    ) -> BaseEvaluator:
+    ) -> BaseEvaluator[Any]:
         """Create a :class:`BaseEvaluator` for the given metrics.
 
         Args:
@@ -483,7 +483,7 @@ class BaseOptimizer(ABC):
         # 6. Build evaluators
         evaluator = self._make_evaluator(self.pset_, self.metrics)
 
-        val_evaluator: BaseEvaluator | None = None
+        val_evaluator: BaseEvaluator[Any] | None = None
         if val_data_list:
             val_evaluator = self._make_evaluator(self.pset_, val_metrics)
 
