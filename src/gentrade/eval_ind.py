@@ -1,9 +1,13 @@
 """GP tree evaluators for the gentrade evolution pipeline.
 
-A single :class:`IndividualEvaluator` handles both backtest-based and
-classification-based metrics, or any mixture of the two.  At construction time
-it inspects the ``metrics`` tuple and sets internal flags so the expensive
-vectorbt backtest is skipped when no backtest metric is present.
+:class:`IndividualEvaluator` handles both backtest-based and
+classification-based metrics for single-tree individuals, or any mixture
+of the two.  :class:`PairIndividualEvaluator` handles pair strategies where
+a buy tree generates entry signals and a sell tree generates exit signals.
+
+At construction time each evaluator inspects the ``metrics`` tuple and sets
+internal flags so the expensive vectorbt backtest is skipped when no backtest
+metric is present.
 
 The ``evaluate`` method is called once per individual by the DEAP toolbox and
 returns a ``tuple[float, ...]`` with one element per metric.
@@ -20,7 +24,7 @@ import pandas as pd
 import vectorbt as vbt
 from deap import gp
 
-from gentrade.optimizer.individual import TreeIndividual
+from gentrade.optimizer.individual import PairIndividual, TreeIndividual, TreeIndividualBase
 
 if TYPE_CHECKING:
     from gentrade.config import BacktestConfig
@@ -230,7 +234,7 @@ class IndividualEvaluator:
 
     def _eval_dataset(
         self,
-        individual: TreeIndividual,
+        individual: TreeIndividualBase,
         df: pd.DataFrame,
         y_true: pd.Series | None = None,
     ) -> tuple[float, ...]:
@@ -242,7 +246,9 @@ class IndividualEvaluator:
         returned in the same order.
 
         Args:
-            individual: :class:`TreeIndividual` instance to evaluate.
+            individual: :class:`TreeIndividualBase` instance to evaluate.
+                For this evaluator the individual must be a
+                :class:`TreeIndividual` (single-tree).
             df: OHLCV DataFrame with columns [open, high, low, close, volume].
             y_true: Ground-truth labels (boolean or -1/+1 signals); required
                 when the evaluator has classification metrics or when running
@@ -261,7 +267,8 @@ class IndividualEvaluator:
         if self._needs_labels and y_true is None:
             raise ValueError("y_true is required for classification metrics.")
 
-        tree = individual.tree
+        tree_ind = cast(TreeIndividual, individual)
+        tree = tree_ind.tree
         signals = self._compile_tree_to_signals(tree, self.pset, df)
 
         # Run the backtest once; reused for all BacktestMetricConfigBase metrics.
@@ -314,7 +321,7 @@ class IndividualEvaluator:
     @overload
     def evaluate(
         self,
-        individual: TreeIndividual,
+        individual: TreeIndividualBase,
         *,
         ohlcvs: list[pd.DataFrame],
         signals: list[pd.Series] | None = None,
@@ -324,7 +331,7 @@ class IndividualEvaluator:
     @overload
     def evaluate(
         self,
-        individual: TreeIndividual,
+        individual: TreeIndividualBase,
         *,
         ohlcvs: list[pd.DataFrame],
         signals: list[pd.Series] | None = None,
@@ -333,7 +340,7 @@ class IndividualEvaluator:
 
     def evaluate(
         self,
-        individual: TreeIndividual,
+        individual: TreeIndividualBase,
         *,
         ohlcvs: list[pd.DataFrame],
         signals: list[pd.Series] | None = None,
@@ -347,7 +354,7 @@ class IndividualEvaluator:
         per-dataset fitness values.
 
         Args:
-            individual: :class:`TreeIndividual` instance to evaluate.
+            individual: :class:`TreeIndividualBase` instance to evaluate.
             ohlcvs: List of OHLCV DataFrames with columns
                 [open, high, low, close, volume].
             signals: Optional list of ground-truth label Series
@@ -402,3 +409,114 @@ class IndividualEvaluator:
         arr = np.array(fitnesses, dtype=float)
         mean = arr.mean(axis=0)
         return tuple(float(x) for x in mean)
+
+
+class PairIndividualEvaluator(IndividualEvaluator):
+    """Evaluator for pair GP individuals (buy tree + sell tree).
+
+    Extends :class:`IndividualEvaluator` for pair-strategy individuals where
+    one tree generates entry signals and a second tree generates exit signals.
+    Both trees are compiled from the same primitive set.
+
+    Only C++ backtest and VBT backtest metrics are supported; classification
+    metrics are incompatible since there are no external labels—the sell tree
+    itself acts as the exit signal.
+
+    Args:
+        pset: DEAP primitive set used to compile both GP trees.
+        metrics: Ordered tuple of backtest metric configs.
+        backtest: Backtest simulation parameters.
+
+    Raises:
+        ValueError: If any classification metric is included in ``metrics``.
+    """
+
+    def __init__(
+        self,
+        pset: gp.PrimitiveSetTyped,
+        metrics: tuple[Metric, ...],
+        backtest: "BacktestConfig | None" = None,
+    ) -> None:
+        if any(isinstance(m, ClassificationMetricBase) for m in metrics):
+            raise ValueError(
+                "PairIndividualEvaluator does not support classification metrics. "
+                "Use backtest metrics (CppBacktestMetricBase or VbtBacktestMetricBase) only."
+            )
+        super().__init__(pset=pset, metrics=metrics, backtest=backtest)
+        # Pair evaluation derives exits from the sell tree — no external labels needed.
+        self._needs_labels = False
+
+    def _eval_dataset(
+        self,
+        individual: TreeIndividualBase,
+        df: pd.DataFrame,
+        y_true: pd.Series | None = None,
+    ) -> tuple[float, ...]:
+        """Evaluate a pair individual on a single DataFrame.
+
+        Compiles both the buy tree (entry signals) and sell tree (exit signals)
+        then runs a C++ or VBT backtest. Labels (y_true) are ignored because
+        the sell tree produces the exit signals directly.
+
+        Args:
+            individual: A :class:`PairIndividual` instance (passed as
+                ``TreeIndividual`` to satisfy the base class signature).
+            df: OHLCV DataFrame with columns [open, high, low, close, volume].
+            y_true: Unused; present only for signature compatibility.
+
+        Returns:
+            Tuple of fitness values (float), one per metric in order.
+
+        Raises:
+            TreeEvaluationError: If either tree compilation or execution fails.
+            MetricCalculationError: If a metric returns a non-finite value or
+                raises an exception.
+        """
+        pair_ind = cast(PairIndividual, individual)
+        buy_tree = pair_ind.buy_tree
+        sell_tree = pair_ind.sell_tree
+
+        entries = self._compile_tree_to_signals(buy_tree, self.pset, df)
+        exits = self._compile_tree_to_signals(sell_tree, self.pset, df)
+
+        # Run backtests once; reused for all metrics.
+        bt_result: BtResult | None = None
+        if self._needs_backtest:
+            bt_result = self.run_cpp_backtest(buy_tree, df, entries, exits)
+
+        pf: vbt.Portfolio | None = None  # type: ignore
+        if self._needs_backtest_vbt:
+            pf = self.run_vbt_backtest(buy_tree, df, entries)
+
+        result: list[float] = []
+        for m in self.metrics:
+            try:
+                if isinstance(m, CppBacktestMetricBase):
+                    val = m(bt_result)
+                elif isinstance(m, VbtBacktestMetricBase):
+                    val = m(pf)
+                else:
+                    raise TypeError(
+                        f"Unsupported metric type for pair evaluation: {type(m).__name__}."
+                    )
+            except Exception as e:
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} calculation failed.",
+                    tree=buy_tree,
+                    metric=m,
+                    signals=entries,
+                    err=e,
+                ) from e
+
+            if not np.isfinite(val):
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} returned non-finite value.",
+                    tree=buy_tree,
+                    metric=m,
+                    value=val,
+                    signals=entries,
+                )
+
+            result.append(float(val))
+
+        return tuple(result)

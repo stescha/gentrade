@@ -4,6 +4,8 @@ These tests run actual fit() calls but with tiny population sizes to keep
 execution fast.
 """
 
+from typing import cast
+
 import pandas as pd
 import pytest
 from deap import tools
@@ -16,6 +18,7 @@ from gentrade.config import (
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.minimal_pset import create_pset_default_medium, zigzag_pivots
 from gentrade.optimizer import TreeOptimizer
+from gentrade.optimizer.individual import TreeIndividual
 
 
 def _get_zigzag_labels(df: pd.DataFrame) -> pd.Series:
@@ -333,7 +336,7 @@ class TestSeededDeterminism:
                 verbose=False,
             )
             opt.fit(df, labels)
-            return [len(ind.tree) for ind in opt.population_]
+            return [len(cast(TreeIndividual, ind).tree) for ind in opt.population_]
 
         struct1 = run_evolution(42)
         struct2 = run_evolution(42)
@@ -356,7 +359,7 @@ class TestSeededDeterminism:
                 verbose=False,
             )
             opt.fit(df, labels)
-            return [len(ind.tree) for ind in opt.population_]
+            return [len(cast(TreeIndividual, ind).tree) for ind in opt.population_]
 
         struct1 = run_evolution(42)
         struct2 = run_evolution(43)

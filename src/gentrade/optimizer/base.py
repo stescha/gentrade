@@ -24,7 +24,7 @@ from gentrade.classification_metrics import ClassificationMetricBase
 from gentrade.eval_ind import IndividualEvaluator
 from gentrade.eval_pop import create_pool
 from gentrade.optimizer.callbacks import Callback, ValidationCallback
-from gentrade.optimizer.individual import TreeIndividual
+from gentrade.optimizer.individual import TreeIndividualBase
 from gentrade.optimizer.types import Metric
 
 logger = logging.getLogger(__name__)
@@ -206,12 +206,12 @@ class BaseOptimizer(ABC):
         self.callbacks = callbacks
 
         # Fitted attributes (set during fit)
-        self.population_: list[TreeIndividual]
+        self.population_: list[TreeIndividualBase]
         self.logbook_: tools.Logbook
         self.hall_of_fame_: tools.HallOfFame
         self.pset_: gp.PrimitiveSetTyped
         self.toolbox_: base.Toolbox
-        self.best_individual_: TreeIndividual | None = None
+        self.best_individual_: TreeIndividualBase | None = None
         self.current_generation_: int = 0
 
     @abstractmethod
@@ -424,7 +424,7 @@ class BaseOptimizer(ABC):
             best_ind: Any | None = None,
         ) -> None:
             self.current_generation_ = gen
-            self.best_individual_ = cast(TreeIndividual, best_ind)
+            self.best_individual_ = cast(TreeIndividualBase, best_ind)
             for cb in _active_callbacks:
                 cb.on_generation_end(self, gen, population, best_ind)
 
@@ -472,6 +472,6 @@ class BaseOptimizer(ABC):
             print("=== Results ===")
             best = hof[0]
             print(f"Best individual fitness: {best.fitness.values}")
-            print(f"Best individual: {str(best.tree)[:100]}...")
+            print(f"Best individual: {str(best[0])[:100]}...")
 
         return self

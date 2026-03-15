@@ -90,6 +90,60 @@ class TreeIndividualBase(list[gp.PrimitiveTree]):
         self.fitness = fitness_cls()
 
 
+class PairIndividual(TreeIndividualBase):
+    """A GP individual containing exactly two primitive trees with fitness tracking.
+
+    Represents a pair strategy where one tree generates entry (buy) signals and
+    the other generates exit (sell) signals. Both trees operate on the same OHLCV
+    data and produce boolean Series.
+
+    Attributes:
+        fitness: A :class:`deap.base.Fitness` instance with weights matching
+            the number of optimization objectives.
+    """
+
+    def __init__(
+        self,
+        content: Iterable[gp.PrimitiveTree],
+        weights: Tuple[float, ...],
+    ) -> None:
+        """Initialize a pair individual with exactly two trees and fitness weights.
+
+        Args:
+            content: Iterable of exactly two :class:`deap.gp.PrimitiveTree`
+                instances; ``content[0]`` is the buy tree and ``content[1]``
+                is the sell tree.
+            weights: Tuple of objective weights used to create the Fitness instance.
+
+        Raises:
+            ValueError: If content does not contain exactly two trees.
+        """
+        trees = list(content)
+        if len(trees) != 2:
+            raise ValueError(
+                f"PairIndividual must contain exactly two trees, got {len(trees)}"
+            )
+        super().__init__(trees, weights)
+
+    @property
+    def buy_tree(self) -> gp.PrimitiveTree:
+        """Return the buy (entry signal) tree.
+
+        Returns:
+            The first :class:`deap.gp.PrimitiveTree` (index 0).
+        """
+        return self[0]
+
+    @property
+    def sell_tree(self) -> gp.PrimitiveTree:
+        """Return the sell (exit signal) tree.
+
+        Returns:
+            The second :class:`deap.gp.PrimitiveTree` (index 1).
+        """
+        return self[1]
+
+
 class TreeIndividual(TreeIndividualBase):
     """A GP individual containing exactly one primitive tree with fitness tracking."""
 

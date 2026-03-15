@@ -6,7 +6,7 @@ from multiprocessing import pool
 import pandas as pd
 
 from gentrade.eval_ind import IndividualEvaluator
-from gentrade.optimizer.individual import TreeIndividual
+from gentrade.optimizer.individual import TreeIndividualBase
 
 
 # The multiprocessing module serializes (pickles) any objects that are
@@ -91,7 +91,7 @@ def create_pool(
     return mp.Pool(processes=processes, initializer=init_worker, initargs=(ctx,))
 
 
-def worker_evaluate(individual: TreeIndividual) -> tuple[float, ...]:
+def worker_evaluate(individual: TreeIndividualBase) -> tuple[float, ...]:
     """Top-level evaluation callback used with ``Pool.map``.
 
     Delegates directly to the evaluator stored in the global context.  The
@@ -113,7 +113,7 @@ def worker_evaluate(individual: TreeIndividual) -> tuple[float, ...]:
 
 
 def evaluate_population(
-    population: list[TreeIndividual], pool: pool.Pool
+    population: list[TreeIndividualBase], pool: pool.Pool
 ) -> tuple[int, float]:
     """Evaluate all individuals in the population that have invalid fitness.
     The evaluation is performed in parallel using the provided pool and the
