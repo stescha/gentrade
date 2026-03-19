@@ -25,7 +25,11 @@ from gentrade._defaults import (
 from gentrade.callbacks import Callback, ValidationCallback
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.eval_pop import create_pool
-from gentrade.individual import PairTreeIndividual, TreeIndividual
+from gentrade.individual import (
+    PairTreeIndividual,
+    TreeIndividual,
+    ensure_creator_fitness_class,
+)
 from gentrade.types import Algorithm, Metric
 
 logger = logging.getLogger(__name__)
@@ -483,6 +487,10 @@ class BaseOptimizer(ABC):
         val_evaluator: BaseEvaluator[Any] | None = None
         if val_data_list:
             val_evaluator = self._make_evaluator(self.pset_, val_metrics)
+
+        # 6.5 Ensure Fitness classes are registered before pool creation (for IPC)
+        weights = tuple(m.weight for m in self.metrics)
+        ensure_creator_fitness_class(weights)
 
         # 7. Create pool
         pool_obj = create_pool(

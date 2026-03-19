@@ -12,8 +12,23 @@ from typing import Any, Callable, Iterable, Tuple, cast
 
 from deap import base, creator, gp
 
-# Cache for created Fitness classes, keyed by exact weights tuple.
-_fitness_classes_cache: dict[tuple[float, ...], type[base.Fitness]] = {}
+# Note: DEAP's `creator` registry is authoritative. We avoid a process-local
+# cache here to keep registration semantics simple and robust across
+# multiprocessing start methods (`fork`, `spawn`, `forkserver`). Worker
+# processes will explicitly ensure registration via `ensure_creator_fitness_class`.
+
+
+def ensure_creator_fitness_class(weights: tuple[float, ...]) -> None:
+    """Ensure a DEAP Fitness class exists for the given weights.
+
+    This should be called before starting any multiprocessing pool to ensure
+    worker processes (which may use 'spawn' or 'forkserver') can unpickle
+    individuals.
+
+    Args:
+        weights: Tuple of objective weights.
+    """
+    _get_or_create_fitness_class(weights)
 
 
 def _get_or_create_fitness_class(weights: Tuple[float, ...]) -> type[base.Fitness]:
@@ -30,26 +45,19 @@ def _get_or_create_fitness_class(weights: Tuple[float, ...]) -> type[base.Fitnes
         A :class:`deap.base.Fitness` subclass configured with the provided
         weights.
     """
-    if weights in _fitness_classes_cache:
-        return _fitness_classes_cache[weights]
-
     # Create a unique class name based on weights
     # Replace '-' with 'm' and '.' with 'p' to make a valid identifier
     class_name = "Fitness_" + "_".join(
         str(w).replace("-", "m").replace(".", "p") for w in weights
     )
 
-    # Check if already present in deap.creator namespace
+    # Check DEAP's creator registry first; it's the single source of truth.
     if hasattr(creator, class_name):
-        cls = getattr(creator, class_name)
-        _fitness_classes_cache[weights] = cls
-        return cast(type[base.Fitness], cls)
+        return cast(type[base.Fitness], getattr(creator, class_name))
 
-    # Create via DEAP's creator using the requested weights
+    # Otherwise create the class and return it.
     creator.create(class_name, base.Fitness, weights=weights)
-    cls = getattr(creator, class_name)
-    _fitness_classes_cache[weights] = cls
-    return cast(type[base.Fitness], cls)
+    return cast(type[base.Fitness], getattr(creator, class_name))
 
 
 class TreeIndividualBase(list[gp.PrimitiveTree]):
