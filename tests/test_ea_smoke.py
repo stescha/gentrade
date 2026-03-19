@@ -50,11 +50,15 @@ class TestEaSmokeCreateAlgorithm:
         )
         opt.fit(X=synthetic_df, entry_label=labels)
 
-        pool_mock = MagicMock()
         stats = tools.Statistics(lambda ind: ind.fitness.values)
         hof = tools.HallOfFame(1)
 
-        algo = opt.create_algorithm(pool_mock, stats, hof, None)
+        algo = opt.create_algorithm(
+            evaluator=MagicMock(),
+            stats=stats,
+            halloffame=hof,
+            val_callback=None,
+        )
 
         assert isinstance(algo, EaMuPlusLambda)
         assert callable(algo.run)
@@ -81,11 +85,15 @@ class TestEaSmokeCreateAlgorithm:
         )
         opt.fit(X=synthetic_df, entry_label=labels)
 
-        pool_mock = MagicMock()
         stats = tools.Statistics(lambda ind: ind.fitness.values)
         hof = tools.HallOfFame(1)
 
-        algo = opt.create_algorithm(pool_mock, stats, hof, None)
+        algo = opt.create_algorithm(
+            evaluator=MagicMock(),
+            stats=stats,
+            halloffame=hof,
+            val_callback=None,
+        )
 
         assert isinstance(algo, EaMuPlusLambda)
         assert algo.mu == 6

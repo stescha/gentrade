@@ -1,11 +1,15 @@
 import random
-from multiprocessing import pool
-from typing import Any, Callable, Generic
+from typing import TYPE_CHECKING, Any, Callable, Generic
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from deap import base, tools
 
-from .eval_pop import evaluate_population
-from .types import IndividualT
+from gentrade.callbacks import Callback
+from gentrade.eval_ind import BaseEvaluator
+from gentrade.eval_pop import create_pool, evaluate_population
+from gentrade.types import IndividualT
 
 
 def varOr(
@@ -72,7 +76,7 @@ def varOr(
 
 
 def eaMuPlusLambdaGentrade(
-    pool: pool.Pool,
+    pool: Any,
     population: list[Any],
     toolbox: base.Toolbox,
     mu: int,
@@ -171,9 +175,7 @@ class EaMuPlusLambda(Generic[IndividualT]):
 
     def __init__(
         self,
-        pool: pool.Pool,
         toolbox: base.Toolbox,
-        *,
         mu: int,
         lambda_: int,
         cxpb: float,
@@ -182,6 +184,14 @@ class EaMuPlusLambda(Generic[IndividualT]):
         stats: tools.Statistics | None = None,
         halloffame: tools.HallOfFame | None = None,
         verbose: bool = True,
+        n_jobs: int = 1,
+        evaluator: BaseEvaluator[Any] | None = None,
+        train_data: list["pd.DataFrame"] | None = None,
+        train_entry_labels: list["pd.Series"] | None = None,
+        train_exit_labels: list["pd.Series"] | None = None,
+        weights: tuple[float, ...] | None = None,
+        seed: int | None = None,
+        callbacks: list[Callback] | None = None,
         val_callback: Callable[[int, int, list[IndividualT], IndividualT | None], None]
         | None = None,
     ) -> None:
@@ -200,7 +210,6 @@ class EaMuPlusLambda(Generic[IndividualT]):
             verbose: Whether to print per-generation statistics.
             val_callback: Optional callback invoked after each generation.
         """
-        self.pool = pool
         self.toolbox = toolbox
         self.mu = mu
         self.lambda_ = lambda_
@@ -210,30 +219,59 @@ class EaMuPlusLambda(Generic[IndividualT]):
         self.stats = stats
         self.halloffame = halloffame
         self.verbose = verbose
+        self.n_jobs = n_jobs
+        self.evaluator = evaluator
+        self.train_data = train_data
+        self.train_entry_labels = train_entry_labels
+        self.train_exit_labels = train_exit_labels
+        self.weights = weights
+        self.seed = seed
+        self.callbacks = callbacks
         self.val_callback = val_callback
 
     def run(
-        self, population: list[IndividualT]
+        self,
+        train_data: list["pd.DataFrame"],
+        train_entry_labels: list["pd.Series"] | None,
+        train_exit_labels: list["pd.Series"] | None,
     ) -> tuple[list[IndividualT], tools.Logbook]:
         """Execute the evolutionary algorithm on the given population.
 
         Args:
-            population: Initial population list.
+            train_data: List of training data DataFrames, one per asset.
+            train_entry_labels: List of Series with entry labels, or None if not used.
+            train_exit_labels: List of Series with exit labels, or None if not used.
 
         Returns:
             A tuple of (final_population, logbook).
         """
-        return eaMuPlusLambdaGentrade(
-            self.pool,
-            population,
-            self.toolbox,
-            mu=self.mu,
-            lambda_=self.lambda_,
-            cxpb=self.cxpb,
-            mutpb=self.mutpb,
-            ngen=self.ngen,
-            stats=self.stats,
-            halloffame=self.halloffame,
-            verbose=self.verbose,
-            val_callback=self.val_callback,
+        # create worker pool for this run using evaluator and training data
+        if self.evaluator is None:
+            raise RuntimeError("EaMuPlusLambda requires an evaluator to run")
+        pool_obj = create_pool(
+            self.n_jobs,
+            evaluator=self.evaluator,
+            train_data=train_data,
+            train_entry_labels=train_entry_labels,
+            train_exit_labels=train_exit_labels,
         )
+
+        pop = self.toolbox.population(n=self.mu)
+        try:
+            return eaMuPlusLambdaGentrade(
+                pool_obj,
+                pop,
+                self.toolbox,
+                mu=self.mu,
+                lambda_=self.lambda_,
+                cxpb=self.cxpb,
+                mutpb=self.mutpb,
+                ngen=self.ngen,
+                stats=self.stats,
+                halloffame=self.halloffame,
+                verbose=self.verbose,
+                val_callback=self.val_callback,
+            )
+        finally:
+            pool_obj.close()
+            pool_obj.join()
