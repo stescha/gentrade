@@ -10,8 +10,7 @@ construction, toolbox wiring, and evaluator creation for either
 import logging
 import random
 from abc import ABC, abstractmethod
-from multiprocessing import pool
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -24,7 +23,6 @@ from gentrade._defaults import (
 )
 from gentrade.callbacks import Callback, ValidationCallback
 from gentrade.eval_ind import BaseEvaluator
-from gentrade.eval_pop import create_pool
 from gentrade.individual import (
     PairTreeIndividual,
     TreeIndividual,
@@ -222,7 +220,6 @@ class BaseOptimizer(ABC):
         pset_: Constructed :class:`deap.gp.PrimitiveSetTyped` (useful for
             compiling and executing individuals post-optimization).
         best_individual_: The best individual found (updated per generation).
-        current_generation_: The most recently completed generation number.
     """
 
     def __init__(
@@ -280,7 +277,6 @@ class BaseOptimizer(ABC):
         self.pset_: gp.PrimitiveSetTyped
         self.toolbox_: base.Toolbox
         self.best_individual_: TreeIndividual | None = None
-        self.current_generation_: int = 0
 
     @abstractmethod
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -327,7 +323,7 @@ class BaseOptimizer(ABC):
     @abstractmethod
     def create_algorithm(
         self,
-        worker_pool: pool.Pool,
+        evaluator: BaseEvaluator[Any],
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
@@ -338,7 +334,7 @@ class BaseOptimizer(ABC):
         accepts a population list and returns ``(population, logbook)``.
 
         Args:
-            worker_pool: Multiprocessing pool for parallel individual evaluation.
+            evaluator: Evaluator used for fitness computation.
             stats: DEAP statistics object for logging per-generation metrics.
             halloffame: Hall of fame tracking best individuals.
             val_callback: Optional callback invoked after each generation.
@@ -492,15 +488,6 @@ class BaseOptimizer(ABC):
         weights = tuple(m.weight for m in self.metrics)
         ensure_creator_fitness_class(weights)
 
-        # 7. Create pool
-        pool_obj = create_pool(
-            self.n_jobs,
-            evaluator=evaluator,
-            train_data=train_data_list,
-            train_entry_labels=train_entry_list,
-            train_exit_labels=train_exit_list,
-        )
-
         # 8. Build active callbacks
         _active_callbacks: list[Callback] = list(self.callbacks or [])
 
@@ -535,24 +522,17 @@ class BaseOptimizer(ABC):
             stats.register("max", np.max)
             hof = tools.HallOfFame(self.hof_size)
 
-        # 11. Create initial population
-        pop = self.toolbox_.population(n=self.mu)
-        if self.verbose:
-            logger.info("Created initial population of %d individuals", len(pop))
-
-        # 12. Build generation callback closure
+        # 11. Build generation callback closure
         def _gen_callback(
             gen: int,
             ngen: int,
             population: list[Any],
             best_ind: Any | None = None,
         ) -> None:
-            self.current_generation_ = gen
-            self.best_individual_ = cast(TreeIndividual, best_ind)
             for cb in _active_callbacks:
                 cb.on_generation_end(self, gen, population, best_ind)
 
-        # 13. Run evolution
+        # 12. Run evolution
         if self.verbose:
             print("=== GP Evolution Run ===")
             print(f"Seed: {self.seed}")
@@ -563,19 +543,15 @@ class BaseOptimizer(ABC):
             )
             print("-" * 60)
 
-        try:
-            algorithm = self.create_algorithm(pool_obj, stats, hof, _gen_callback)
-            pop, logbook = algorithm.run(pop)
-        finally:
-            pool_obj.close()
-            pool_obj.join()
+        algorithm = self.create_algorithm(evaluator, stats, hof, _gen_callback)
+        pop, logbook = algorithm.run(train_data_list, train_entry_list, train_exit_list)
 
-        # 14. Store fitted attributes
+        # 13. Store fitted attributes
         self.population_ = pop
         self.logbook_ = logbook
         self.hall_of_fame_ = hof
 
-        # 15. Call on_fit_end for all callbacks
+        # 14. Call on_fit_end for all callbacks
         for cb in _active_callbacks:
             cb.on_fit_end(self)
 

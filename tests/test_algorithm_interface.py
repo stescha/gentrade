@@ -15,16 +15,15 @@ class TestAlgorithmProtocol:
 
     def test_ea_mu_plus_lambda_is_algorithm(self) -> None:
         """EaMuPlusLambda has a callable run method matching Algorithm Protocol."""
-        pool_mock = MagicMock()
         toolbox_mock = MagicMock()
         algo: EaMuPlusLambda[Any] = EaMuPlusLambda(
-            pool=pool_mock,
             toolbox=toolbox_mock,
             mu=4,
             lambda_=8,
             cxpb=0.5,
             mutpb=0.2,
             ngen=1,
+            evaluator=MagicMock(),
         )
         # Structural check: verify run is callable
         assert callable(algo.run)
@@ -44,10 +43,8 @@ class TestEaMuPlusLambdaConstructor:
         halloffame: tools.HallOfFame | None = None,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None = None,
     ) -> "EaMuPlusLambda[Any]":
-        pool_mock = MagicMock()
         toolbox_mock = MagicMock()
         return EaMuPlusLambda(
-            pool=pool_mock,
             toolbox=toolbox_mock,
             mu=mu,
             lambda_=lambda_,
@@ -57,6 +54,7 @@ class TestEaMuPlusLambdaConstructor:
             stats=stats,
             halloffame=halloffame,
             val_callback=val_callback,
+            evaluator=MagicMock(),
         )
 
     def test_stores_params(self) -> None:
@@ -93,22 +91,29 @@ class TestEaMuPlusLambdaRun:
         pool_mock = MagicMock()
         toolbox_mock = MagicMock()
         algo: EaMuPlusLambda[Any] = EaMuPlusLambda(
-            pool=pool_mock,
             toolbox=toolbox_mock,
             mu=4,
             lambda_=8,
             cxpb=0.5,
             mutpb=0.2,
             ngen=1,
+            evaluator=MagicMock(),
         )
 
         fake_population: list[Any] = [object()]
         fake_logbook = tools.Logbook()
-        with patch(
-            "gentrade.algorithms.eaMuPlusLambdaGentrade",
-            return_value=(fake_population, fake_logbook),
-        ) as mock_fn:
-            result_pop, result_lb = algo.run(fake_population)
+        with (
+            patch("gentrade.algorithms.create_pool", return_value=pool_mock),
+            patch(
+                "gentrade.algorithms.eaMuPlusLambdaGentrade",
+                return_value=(fake_population, fake_logbook),
+            ) as mock_fn,
+        ):
+            result_pop, result_lb = algo.run(
+                train_data=[],
+                train_entry_labels=None,
+                train_exit_labels=None,
+            )
 
         mock_fn.assert_called_once()
         assert result_pop is fake_population
@@ -119,20 +124,27 @@ class TestEaMuPlusLambdaRun:
         pool_mock = MagicMock()
         toolbox_mock = MagicMock()
         algo: EaMuPlusLambda[Any] = EaMuPlusLambda(
-            pool=pool_mock,
             toolbox=toolbox_mock,
             mu=4,
             lambda_=8,
             cxpb=0.5,
             mutpb=0.2,
             ngen=1,
+            evaluator=MagicMock(),
         )
         fake_logbook = tools.Logbook()
-        with patch(
-            "gentrade.algorithms.eaMuPlusLambdaGentrade",
-            return_value=([], fake_logbook),
+        with (
+            patch("gentrade.algorithms.create_pool", return_value=pool_mock),
+            patch(
+                "gentrade.algorithms.eaMuPlusLambdaGentrade",
+                return_value=([], fake_logbook),
+            ),
         ):
-            result = algo.run([])
+            result = algo.run(
+                train_data=[],
+                train_entry_labels=None,
+                train_exit_labels=None,
+            )
 
         assert isinstance(result, tuple)
         assert len(result) == 2

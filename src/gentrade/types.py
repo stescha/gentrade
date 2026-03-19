@@ -11,6 +11,7 @@ from typing import (
     Union,
 )
 
+import pandas as pd
 from deap import tools
 
 from gentrade.individual import TreeIndividualBase
@@ -41,12 +42,16 @@ class Algorithm(Protocol[IndividualT]):
     """Structural interface for evolutionary algorithms.
 
     Implementations are configured via constructor. `run` accepts a
-    population list and returns (population, logbook). The type parameter
-    ``IndividualT`` preserves the individual type through input and output.
+    population list and training data and returns (population, logbook).
+    The type parameter ``IndividualT`` preserves the individual type
+    through input and output.
     """
 
     def run(
-        self, population: list[IndividualT]
+        self,
+        train_data: list["pd.DataFrame"],
+        train_entry_labels: list["pd.Series"] | None,
+        train_exit_labels: list["pd.Series"] | None,
     ) -> tuple[list[IndividualT], tools.Logbook]: ...
 
 

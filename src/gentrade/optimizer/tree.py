@@ -1,7 +1,6 @@
 import operator
 from abc import ABC, abstractmethod
 from functools import partial
-from multiprocessing import pool
 from typing import Any, Callable, Literal
 
 from deap import base, gp, tools
@@ -240,14 +239,15 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
 
     def create_algorithm(
         self,
-        worker_pool: pool.Pool,
+        evaluator: Any,
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
         val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
     ) -> Algorithm[TreeIndividual]:
         return EaMuPlusLambda(
-            pool=worker_pool,
             toolbox=self.toolbox_,
+            evaluator=evaluator,
+            n_jobs=self.n_jobs,
             mu=self.mu,
             lambda_=self.lambda_,
             cxpb=self.cxpb,
