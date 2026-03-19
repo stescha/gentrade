@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 
 from gentrade.eval_ind import BaseEvaluator
-from gentrade.individual import TreeIndividualBase
+from gentrade.individual import TreeIndividualBase, ensure_creator_fitness_class
 
 
 # The multiprocessing module serializes (pickles) any objects that are
@@ -60,10 +60,14 @@ def init_worker(ctx: WorkerContext) -> None:
     ``ctx`` argument is the same ``WorkerContext`` object that was passed
     to ``create_pool`` in the main process; it is unpickled here and
     assigned to the module‑level ``_worker_ctx`` variable for later use.
+    The necessary DEAP creator classes are registered in the
+    worker's global namespace before any unpickling occurs.
 
     Args:
         ctx: the context object to store in the worker.
     """
+    weights = tuple(m.weight for m in ctx.evaluator.metrics)
+    ensure_creator_fitness_class(weights)
     global _worker_ctx
     _worker_ctx = ctx
 
