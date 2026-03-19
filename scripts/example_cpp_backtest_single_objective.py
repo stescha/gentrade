@@ -15,29 +15,33 @@ from gentrade.optimizer import TreeOptimizer
 from gentrade.tradetools import load_binance_ohlcv, load_binance_ohlcvs, plot_signals
 from gentrade.types import MutationOp, SelectionOp
 
-opt = TreeOptimizer(
-    pset=create_pset_default_large,
-    metrics=(MeanPnlCppMetric(min_trades=10),),
-    metrics_val=(MeanPnlCppMetric(min_trades=0),),
-    backtest=BacktestConfig(fees=0.001),
-    mutation=cast(MutationOp[gp.PrimitiveTree], gp.mutUniform),
-    crossover=gp.cxOnePointLeafBiased,
-    crossover_params={"termpb": 0.1},
-    selection=cast(SelectionOp[gp.PrimitiveTree], tools.selDoubleTournament),
-    selection_params={"fitness_size": 5, "parsimony_size": 1.2, "fitness_first": True},
-    mu=4000,
-    lambda_=2000,
-    generations=30,
-    cxpb=0.6,
-    mutpb=0.3,
-    n_jobs=32,
-    tree_gen="grow",
-    tree_max_depth=8,
-    tree_max_height=20,
-    trade_side="buy",
-)
-
 if __name__ == "__main__":
+    opt = TreeOptimizer(
+        pset=create_pset_default_large,
+        metrics=(MeanPnlCppMetric(min_trades=10),),
+        metrics_val=(MeanPnlCppMetric(min_trades=0),),
+        backtest=BacktestConfig(fees=0.001),
+        mutation=cast(MutationOp[gp.PrimitiveTree], gp.mutUniform),
+        crossover=gp.cxOnePointLeafBiased,
+        crossover_params={"termpb": 0.1},
+        selection=cast(SelectionOp[gp.PrimitiveTree], tools.selDoubleTournament),
+        selection_params={
+            "fitness_size": 5,
+            "parsimony_size": 1.2,
+            "fitness_first": True,
+        },
+        mu=4000,
+        lambda_=2000,
+        generations=30,
+        cxpb=0.6,
+        mutpb=0.3,
+        n_jobs=32,
+        tree_gen="grow",
+        tree_max_depth=8,
+        tree_max_height=20,
+        trade_side="buy",
+    )
+
     start, count = 200_000, 20_000
     pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC", "MCOETH", "NEOBTC"]
     target_ohlcv = "ETHUSDT"

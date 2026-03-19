@@ -11,29 +11,29 @@ from gentrade.optimizer import TreeOptimizer
 from gentrade.tradetools import load_binance_ohlcv, load_binance_ohlcvs, plot_signals
 from gentrade.types import MutationOp
 
-opt = TreeOptimizer(
-    pset=create_pset_default_large,  # factory callable
-    metrics=(F1Metric(), MeanPnlCppMetric(min_trades=10)),
-    metrics_val=(F1Metric(), MeanPnlCppMetric()),  # VBT metric val only
-    mutation=cast(MutationOp[gp.PrimitiveTree], gp.mutUniform),
-    crossover=gp.cxOnePointLeafBiased,
-    crossover_params={"termpb": 0.1},
-    selection=tools.selNSGA2,  # type: ignore
-    # selection_params={"fitness_size": 5, "parsimony_size": 1.2, "fitness_first": True}
-    mu=4000,
-    lambda_=2000,
-    generations=30,
-    cxpb=0.6,
-    mutpb=0.3,
-    n_jobs=32,
-    tree_gen="grow",
-    tree_max_depth=8,
-    tree_max_height=20,
-    validation_interval=1,
-    trade_side="buy",
-)
-
 if __name__ == "__main__":
+    opt = TreeOptimizer(
+        pset=create_pset_default_large,  # factory callable
+        metrics=(F1Metric(), MeanPnlCppMetric(min_trades=10)),
+        metrics_val=(F1Metric(), MeanPnlCppMetric()),  # VBT metric val only
+        mutation=cast(MutationOp[gp.PrimitiveTree], gp.mutUniform),
+        crossover=gp.cxOnePointLeafBiased,
+        crossover_params={"termpb": 0.1},
+        selection=tools.selNSGA2,  # type: ignore
+        # selection_params={"fitness_size": 5, "parsimony_size": 1.2, "fitness_first": True}
+        mu=4000,
+        lambda_=2000,
+        generations=30,
+        cxpb=0.6,
+        mutpb=0.3,
+        n_jobs=32,
+        tree_gen="grow",
+        tree_max_depth=8,
+        tree_max_height=20,
+        validation_interval=1,
+        trade_side="buy",
+    )
+
     start, count = 200_000, 20_000
     pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC", "MCOETH", "NEOBTC"]
     df_train = load_binance_ohlcvs(pairs, start=start, count=count)

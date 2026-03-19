@@ -28,23 +28,31 @@ if __name__ == "__main__":
     opt = PairTreeOptimizer(
         pset=create_pset_default_large,
         metrics=(
-            F1Metric(tree_aggregation="mean"),
+            F1Metric(tree_aggregation="buy"),
+            F1Metric(tree_aggregation="sell"),
             # MeanPnlCppMetric(min_trades=10, weight=1),
         ),
-        metrics_val=(F1Metric(tree_aggregation="mean"), MeanPnlCppMetric(min_trades=1)),
+        metrics_val=(
+            F1Metric(tree_aggregation="mean"),
+            F1Metric(tree_aggregation="buy"),
+            F1Metric(tree_aggregation="sell"),
+            MeanPnlCppMetric(min_trades=0),
+        ),
         backtest=BacktestConfig(fees=0.001),
         mutation=gp.mutUniform,  # type: ignore
         crossover=gp.cxOnePointLeafBiased,
         crossover_params={"termpb": 0.1},
         # selection=tools.selNSGA2,  # type: ignore
-        selection=tools.selDoubleTournament,  # type: ignore
-        selection_params={
-            "fitness_size": 5,
-            "parsimony_size": 1.2,
-            "fitness_first": True,
-        },
-        mu=3000,
-        lambda_=2000,
+        # selection=tools.selDoubleTournament,  # type: ignore
+        # selection_params={
+        #     "fitness_size": 5,
+        #     "parsimony_size": 1.2,
+        #     "fitness_first": True,
+        # },
+        selection=tools.selAutomaticEpsilonLexicase,  # type: ignore
+        select_best=tools.selAutomaticEpsilonLexicase,  # type: ignore
+        mu=2000,
+        lambda_=1000,
         generations=30,
         cxpb=0.6,
         mutpb=0.3,
@@ -57,7 +65,8 @@ if __name__ == "__main__":
     )
 
     start, count = 200_000, 20_000
-    pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC", "MCOETH", "NEOBTC"]
+    # pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC", "MCOETH", "NEOBTC"]
+    pairs = ["ETHUSDT"]
     df_train = load_binance_ohlcvs(pairs, start=start, count=count)
     df_val = load_binance_ohlcv("ETHUSDT", start=start + count, count=int(count * 0.5))
     labels_train = zigzag_pivots(df_train, 0.03, -1)
