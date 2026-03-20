@@ -23,6 +23,67 @@ def backtest_metric() -> MeanPnlMetric:
     return MeanPnlMetric()
 
 
+@pytest.mark.unit
+class TestMigrationParamValidation:
+    """Verify _validate_migration_params raises on invalid configs."""
+
+    def test_migration_rate_zero_always_valid(self, pset: gp.PrimitiveSetTyped) -> None:
+        """migration_rate=0 requires no other migration params."""
+        # Should not raise
+        TreeOptimizer(
+            pset=pset,
+            metrics=(F1Metric(),),
+            mu=10,
+            lambda_=20,
+            generations=1,
+            migration_rate=0,
+            migration_count=0,  # invalid normally, but ok when rate=0
+            n_islands=1,  # invalid normally, but ok when rate=0
+        )
+
+    def test_migration_count_zero_raises_when_active(
+        self, pset: gp.PrimitiveSetTyped
+    ) -> None:
+        """migration_count=0 raises when migration_rate > 0."""
+        with pytest.raises(ValueError, match="migration_count must be >= 1"):
+            TreeOptimizer(
+                pset=pset,
+                metrics=(F1Metric(),),
+                mu=10,
+                lambda_=20,
+                generations=1,
+                migration_rate=1,
+                migration_count=0,
+                n_islands=2,
+            )
+
+    def test_n_islands_one_raises_when_active(self, pset: gp.PrimitiveSetTyped) -> None:
+        """n_islands=1 raises when migration_rate > 0."""
+        with pytest.raises(ValueError, match="n_islands must be >= 2"):
+            TreeOptimizer(
+                pset=pset,
+                metrics=(F1Metric(),),
+                mu=10,
+                lambda_=20,
+                generations=1,
+                migration_rate=1,
+                migration_count=2,
+                n_islands=1,
+            )
+
+    def test_negative_migration_rate_raises(self, pset: gp.PrimitiveSetTyped) -> None:
+        """Negative migration_rate raises ValueError."""
+        with pytest.raises(ValueError, match="migration_rate must be >= 0"):
+            TreeOptimizer(
+                pset=pset,
+                metrics=(F1Metric(),),
+                mu=10,
+                lambda_=20,
+                generations=1,
+                migration_rate=-1,
+            )
+
+
 def test_tree_optimizer_init(
     pset: gp.PrimitiveSetTyped, classification_metric: F1Metric
 ) -> None:

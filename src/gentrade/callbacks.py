@@ -31,6 +31,7 @@ class Callback(Protocol):
         ngen: int,
         population: list[Any],
         best_ind: Any | None = None,
+        island_id: int | None = None,
     ) -> None:
         """Called after each generation completes.
 
@@ -89,6 +90,7 @@ class ValidationCallback:
         ngen: int,
         population: list[Any],
         best_ind: Any | None = None,
+        island_id: int | None = None,
     ) -> None:
         """Evaluate best individual on validation data if interval matches.
 

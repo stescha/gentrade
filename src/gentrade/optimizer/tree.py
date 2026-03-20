@@ -168,6 +168,10 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         validation_interval: int = 1,
         metrics_val: tuple[Metric, ...] | None = None,
         callbacks: list[Callback] | None = None,
+        # Island migration params
+        migration_rate: int = 0,
+        migration_count: int = 5,
+        n_islands: int = 4,
     ) -> None:
         super().__init__(
             metrics=metrics,
@@ -184,6 +188,10 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
             metrics_val=metrics_val,
             callbacks=callbacks,
         )
+        self.migration_rate = migration_rate
+        self.migration_count = migration_count
+        self.n_islands = n_islands
+        self._validate_migration_params()
         self._pset_factory = pset if callable(pset) else (lambda: pset)
         self._backtest = backtest or BacktestConfig()
         self._trade_side = trade_side
@@ -237,13 +245,54 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         toolbox.register("population", tools.initRepeat, list, toolbox.individual)
         return toolbox
 
+    def _validate_migration_params(self) -> None:
+        """Validate migration parameter consistency.
+
+        Raises:
+            ValueError: If migration parameters are inconsistent.
+        """
+        if self.migration_rate < 0:
+            raise ValueError("migration_rate must be >= 0")
+        if self.migration_rate > 0:
+            if self.migration_count < 1:
+                raise ValueError("migration_count must be >= 1 when migration_rate > 0")
+            if self.n_islands < 2:
+                raise ValueError("n_islands must be >= 2 when migration_rate > 0")
+
     def create_algorithm(
         self,
         evaluator: Any,
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+        val_callback: Callable[..., None] | None,
     ) -> Algorithm[TreeIndividual]:
+        # Island mode
+        if getattr(self, "migration_rate", 0) > 0:
+            # deferred import to avoid cycles
+            from gentrade.island import IslandEaMuPlusLambda
+
+            weights = tuple(m.weight for m in self.metrics)
+            return IslandEaMuPlusLambda(
+                toolbox=self.toolbox_,
+                evaluator=evaluator,
+                n_jobs=self.n_jobs,
+                mu=self.mu,
+                lambda_=self.lambda_,
+                cxpb=self.cxpb,
+                mutpb=self.mutpb,
+                ngen=self.generations,
+                stats=stats,
+                halloffame=halloffame,
+                verbose=self.verbose,
+                n_islands=self.n_islands,
+                migration_rate=self.migration_rate,
+                migration_count=self.migration_count,
+                seed=self.seed,
+                weights=weights,
+                callbacks=self.callbacks,
+                val_callback=val_callback,
+            )
+
         return EaMuPlusLambda(
             toolbox=self.toolbox_,
             evaluator=evaluator,

@@ -275,6 +275,7 @@ class TestE2ECallbacks:
                 ngen: int,
                 population: list[Any],
                 best_ind: Any | None = None,
+                island_id: int | None = None,
             ) -> None:
                 self.gen_end_calls.append(gen)
 
@@ -317,6 +318,7 @@ class TestE2ECallbacks:
                 ngen: int,
                 population: list[Any],
                 best_ind: Any | None = None,
+                island_id: int | None = None,
             ) -> None:
                 self.count += 1
 

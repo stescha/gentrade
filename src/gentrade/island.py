@@ -1,0 +1,411 @@
+"""Island-model evolutionary algorithm with ring migration.
+
+Provides :class:`IslandEaMuPlusLambda` together with supporting helpers.
+"""
+
+from __future__ import annotations
+
+import multiprocessing as mp
+import random
+from dataclasses import dataclass
+from multiprocessing import Queue
+from typing import Any, Callable, Generic
+
+import numpy as np
+import pandas as pd
+from deap import base, tools
+
+from gentrade.algorithms import varOr
+from gentrade.callbacks import Callback
+from gentrade.eval_ind import BaseEvaluator
+from gentrade.individual import TreeIndividualBase, ensure_creator_fitness_class
+from gentrade.types import IndividualT
+
+
+@dataclass
+class Island:
+    """Per-island state container with inbox/outbox queues.
+
+    Attributes:
+        island_id: Logical identifier for this island (0-indexed).
+        inbox: Queue from which this island receives immigrants.
+        outbox: Queue to which this island sends emigrants.
+    """
+
+    island_id: int
+    inbox: Queue[Any]
+    outbox: Queue[Any]
+
+
+class IslandEaMuPlusLambda(Generic[IndividualT]):
+    """Island-model evolutionary algorithm with ring migration.
+
+    Distributes `n_islands` independent (mu+lambda) evolution loops across
+    `min(n_jobs, n_islands)` OS worker processes. Islands exchange individuals
+    periodically via unbounded queues in a ring topology (island i → island
+    (i+1) % n_islands). Conforms to the Algorithm protocol.
+
+    Attributes:
+        demes_: Per-island final populations; set after :meth:`run` completes.
+    """
+
+    def __init__(
+        self,
+        toolbox: base.Toolbox,
+        evaluator: BaseEvaluator[Any],
+        n_jobs: int,
+        mu: int,
+        lambda_: int,
+        cxpb: float,
+        mutpb: float,
+        ngen: int,
+        stats: tools.Statistics | None = None,
+        halloffame: tools.HallOfFame | None = None,
+        verbose: bool = True,
+        n_islands: int = 4,
+        migration_rate: int = 10,
+        migration_count: int = 5,
+        seed: int | None = None,
+        weights: tuple[float, ...] | None = None,
+        callbacks: list[Callback] | None = None,
+        val_callback: Callable[..., None] | None = None,
+    ) -> None:
+        self.toolbox = toolbox
+        self.evaluator = evaluator
+        self.n_jobs = n_jobs
+        self.mu = mu
+        self.lambda_ = lambda_
+        self.cxpb = cxpb
+        self.mutpb = mutpb
+        self.ngen = ngen
+        self.stats = stats
+        self.halloffame = halloffame
+        self.verbose = verbose
+        self.n_islands = n_islands
+        self.migration_rate = migration_rate
+        self.migration_count = migration_count
+        self.seed = seed
+        self.weights = weights
+        self.callbacks = callbacks
+        self.val_callback = val_callback
+
+        self.demes_: list[list[Any]] | None = None
+
+    def _create_islands(self) -> list[Island]:
+        """Create islands connected in a ring topology.
+
+        Island i's outbox is island (i+1 % n)'s inbox.
+        """
+        queues: list[Queue[Any]] = [mp.Queue() for _ in range(self.n_islands)]
+        islands: list[Island] = []
+        for i in range(self.n_islands):
+            inbox = queues[i]
+            outbox = queues[(i + 1) % self.n_islands]
+            islands.append(Island(island_id=i, inbox=inbox, outbox=outbox))
+        return islands
+
+    def _partition_islands(self, islands: list[Island]) -> list[list[Island]]:
+        """Distribute islands round-robin across active worker processes."""
+        active = min(self.n_jobs, self.n_islands)
+        buckets: list[list[Island]] = [[] for _ in range(active)]
+        for i, island in enumerate(islands):
+            buckets[i % active].append(island)
+        return buckets
+
+    def run(
+        self,
+        train_data: list["pd.DataFrame"],
+        train_entry_labels: list["pd.Series"] | None,
+        train_exit_labels: list["pd.Series"] | None,
+    ) -> tuple[list[IndividualT], tools.Logbook]:
+        """Launch island workers, collect results, and merge populations.
+
+        Returns:
+            Tuple of (best mu individuals from all islands, merged logbook).
+        """
+        islands = self._create_islands()
+        buckets = self._partition_islands(islands)
+        n_workers = len(buckets)
+
+        # Per-worker seeds derived from master seed
+        if self.seed is not None:
+            rng = np.random.default_rng(self.seed)
+            seeds_arr = rng.integers(0, 2**31 - 1, size=n_workers)
+            worker_seeds: list[int | None] = [int(s) for s in seeds_arr]
+        else:
+            worker_seeds = [None] * n_workers
+
+        result_queue: Queue[tuple[int, list[Any], tools.Logbook]] = mp.Queue()
+
+        processes: list[mp.Process] = []
+        for worker_idx, bucket in enumerate(buckets):
+            p = mp.Process(
+                target=_worker_target,
+                kwargs={
+                    "assigned_islands": bucket,
+                    "toolbox": self.toolbox,
+                    "evaluator": self.evaluator,
+                    "train_data": train_data,
+                    "train_entry_labels": train_entry_labels,
+                    "train_exit_labels": train_exit_labels,
+                    "mu": self.mu,
+                    "lambda_": self.lambda_,
+                    "cxpb": self.cxpb,
+                    "mutpb": self.mutpb,
+                    "ngen": self.ngen,
+                    "migration_rate": self.migration_rate,
+                    "migration_count": self.migration_count,
+                    "stats": self.stats,
+                    "weights": self.weights,
+                    "seed": worker_seeds[worker_idx],
+                    "callbacks": self.callbacks,
+                    "val_callback": self.val_callback,
+                    "verbose": self.verbose,
+                    "result_queue": result_queue,
+                },
+            )
+            processes.append(p)
+
+        for p in processes:
+            p.start()
+
+        raw_results: dict[int, tuple[list[Any], tools.Logbook]] = {}
+        for _ in range(self.n_islands):
+            island_id, pop, logbook = result_queue.get()
+            raw_results[island_id] = (pop, logbook)
+
+        for p in processes:
+            p.join()
+
+        ordered = [raw_results[i] for i in range(self.n_islands)]
+        return self._merge_results(ordered, islands)
+
+    def _merge_results(
+        self,
+        results: list[tuple[list[Any], tools.Logbook]],
+        islands: list[Island],
+    ) -> tuple[list[IndividualT], tools.Logbook]:
+        """Merge per-island populations and logbooks.
+
+        Stores raw per-island populations in :attr:`demes_`. Returns the best
+        ``mu`` individuals (by toolbox selection) and a merged logbook with an
+        ``island_id`` column.
+        """
+        self.demes_ = [pop for pop, _ in results]
+
+        all_individuals: list[Any] = []
+        for pop, _ in results:
+            all_individuals.extend(pop)
+        merged_pop: list[IndividualT] = self.toolbox.select(all_individuals, self.mu)
+
+        if self.halloffame is not None:
+            self.halloffame.update(all_individuals)
+
+        merged_logbook = tools.Logbook()
+        for island, (_, logbook) in zip(islands, results, strict=True):
+            for record in logbook:
+                entry = dict(record)
+                entry["island_id"] = island.island_id
+                merged_logbook.record(**entry)
+
+        return merged_pop, merged_logbook
+
+
+def _worker_target(
+    assigned_islands: list[Island],
+    toolbox: base.Toolbox,
+    evaluator: BaseEvaluator[Any],
+    train_data: list["pd.DataFrame"],
+    train_entry_labels: list["pd.Series"] | None,
+    train_exit_labels: list["pd.Series"] | None,
+    mu: int,
+    lambda_: int,
+    cxpb: float,
+    mutpb: float,
+    ngen: int,
+    migration_rate: int,
+    migration_count: int,
+    stats: tools.Statistics | None,
+    weights: tuple[float, ...] | None,
+    seed: int | None,
+    callbacks: list[Callback] | None,
+    val_callback: Callable[..., None] | None,
+    verbose: bool,
+    result_queue: "Queue[tuple[int, list[Any], tools.Logbook]]",
+) -> None:
+    """Worker process entry point. Evolves each assigned island sequentially.
+
+    Seeding, DEAP creator registration, and per-island evolution are
+    performed inside this function.
+    """
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    if weights is not None:
+        ensure_creator_fitness_class(weights)
+
+    for island in assigned_islands:
+        pop, logbook = _evolve_island(
+            island=island,
+            toolbox=toolbox,
+            evaluator=evaluator,
+            train_data=train_data,
+            train_entry_labels=train_entry_labels,
+            train_exit_labels=train_exit_labels,
+            mu=mu,
+            lambda_=lambda_,
+            cxpb=cxpb,
+            mutpb=mutpb,
+            ngen=ngen,
+            migration_rate=migration_rate,
+            migration_count=migration_count,
+            stats=stats,
+            callbacks=callbacks,
+            val_callback=val_callback,
+            verbose=verbose,
+        )
+        result_queue.put((island.island_id, pop, logbook))
+
+
+def _evolve_island(
+    island: Island,
+    toolbox: base.Toolbox,
+    evaluator: BaseEvaluator[Any],
+    train_data: list["pd.DataFrame"],
+    train_entry_labels: list["pd.Series"] | None,
+    train_exit_labels: list["pd.Series"] | None,
+    mu: int,
+    lambda_: int,
+    cxpb: float,
+    mutpb: float,
+    ngen: int,
+    migration_rate: int,
+    migration_count: int,
+    stats: tools.Statistics | None,
+    callbacks: list[Callback] | None,
+    val_callback: Callable[..., None] | None,
+    verbose: bool,
+) -> tuple[list[Any], tools.Logbook]:
+    """Run (mu+lambda) evolution for one island with periodic ring migration.
+
+    Migration order per generation: IMPORT → VARIATION → EVALUATE → SELECT → EXPORT.
+    """
+    logbook = tools.Logbook()
+    logbook.header = ["gen", "nevals"] + (stats.fields if stats else [])
+
+    population: list[Any] = toolbox.population(n=mu)
+    _evaluate_inline(
+        population, evaluator, train_data, train_entry_labels, train_exit_labels
+    )
+    nevals = len(population)
+
+    record = stats.compile(population) if stats is not None else {}
+    logbook.record(gen=0, nevals=nevals, **record)
+    if verbose:
+        print(f"[Island {island.island_id}] Gen 0: {nevals} evals")
+
+    for gen in range(1, ngen + 1):
+        # IMPORT: drain inbox and merge immigrants
+        if migration_rate > 0 and gen % migration_rate == 0:
+            immigrants = _drain_inbox(island.inbox)
+            if immigrants:
+                population = _merge_immigrants(
+                    population, immigrants, mu, lambda_, toolbox
+                )
+
+        # VARIATION
+        offspring = varOr(population, toolbox, lambda_, cxpb, mutpb)
+
+        # EVALUATE
+        _evaluate_inline(
+            offspring, evaluator, train_data, train_entry_labels, train_exit_labels
+        )
+        nevals = len(offspring)
+
+        # SELECT
+        population[:] = toolbox.select(population + offspring, mu)
+
+        # EXPORT: send emigrants to outbox
+        if migration_rate > 0 and gen % migration_rate == 0:
+            emigrants = toolbox.select_best(population, migration_count)
+            for ind in emigrants:
+                island.outbox.put(toolbox.clone(ind))
+
+        record = stats.compile(population) if stats is not None else {}
+        logbook.record(gen=gen, nevals=nevals, **record)
+        if verbose:
+            print(f"[Island {island.island_id}] Gen {gen}: {nevals} evals")
+
+        best_ind = toolbox.select_best(population, k=1)[0]
+        if val_callback is not None:
+            val_callback(gen, ngen, population, best_ind, island_id=island.island_id)
+        if callbacks is not None:
+            for cb in callbacks:
+                cb.on_generation_end(
+                    gen, ngen, population, best_ind, island_id=island.island_id
+                )
+
+    return population, logbook
+
+
+def _evaluate_inline(
+    population: list[TreeIndividualBase],
+    evaluator: BaseEvaluator[Any],
+    train_data: list["pd.DataFrame"],
+    train_entry_labels: list["pd.Series"] | None,
+    train_exit_labels: list["pd.Series"] | None,
+) -> None:
+    """Evaluate individuals with invalid fitness in-place (no pool)."""
+    for ind in population:
+        if not ind.fitness.valid:
+            fitness = evaluator.evaluate(
+                ind,
+                ohlcvs=train_data,
+                entry_labels=train_entry_labels,
+                exit_labels=train_exit_labels,
+                aggregate=True,
+            )
+            ind.fitness.values = fitness
+
+
+def _drain_inbox(inbox: "Queue[Any]") -> list[Any]:
+    """Non-blocking drain of all items currently in the inbox queue."""
+    import queue  # stdlib; local import to avoid polluting module namespace
+
+    immigrants = []
+    while True:
+        try:
+            immigrants.append(inbox.get_nowait())
+        except queue.Empty:
+            break
+    return immigrants
+
+
+def _merge_immigrants(
+    population: list[Any],
+    immigrants: list[Any],
+    mu: int,
+    lambda_: int,
+    toolbox: base.Toolbox,
+) -> list[Any]:
+    """Merge immigrants into the island population.
+
+    Invalidates immigrant fitness before merging so they are re-evaluated
+    during the next EVALUATE phase. If inbox overflow occurs (immigrants
+    would push total above mu+lambda), randomly samples to cap the merge.
+    """
+    max_size = mu + lambda_
+    if len(immigrants) > max_size:
+        immigrants = random.sample(immigrants, max_size)
+
+    for ind in immigrants:
+        clone = toolbox.clone(ind)
+        try:
+            del clone.fitness.values
+        except Exception:
+            # Some mock objects may not have fitness attribute; ignore in tests
+            pass
+        population.append(clone)
+
+    return population

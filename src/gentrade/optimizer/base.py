@@ -277,6 +277,8 @@ class BaseOptimizer(ABC):
         self.pset_: gp.PrimitiveSetTyped
         self.toolbox_: base.Toolbox
         self.best_individual_: TreeIndividual | None = None
+        # Per-island demes (when island mode returns per-island populations)
+        self.demes_: list[list[TreeIndividual]] | None = None
 
     @abstractmethod
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -326,7 +328,7 @@ class BaseOptimizer(ABC):
         evaluator: BaseEvaluator[Any],
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+        val_callback: Callable[..., None] | None,
     ) -> "Algorithm[Any]":
         """Return algorithm instance to execute the evolutionary loop.
 
@@ -528,9 +530,12 @@ class BaseOptimizer(ABC):
             ngen: int,
             population: list[Any],
             best_ind: Any | None = None,
+            island_id: int | None = None,
         ) -> None:
             for cb in _active_callbacks:
-                cb.on_generation_end(gen, ngen, population, best_ind)
+                cb.on_generation_end(
+                    gen, ngen, population, best_ind, island_id=island_id
+                )
 
         # 12. Run evolution
         if self.verbose:
@@ -551,6 +556,12 @@ class BaseOptimizer(ABC):
         self.logbook_ = logbook
         self.hall_of_fame_ = hof
         self.best_individual_ = self.toolbox_.select_best(pop, 1)[0] if pop else None
+
+        # Store per-island populations; demes_ is optional on Algorithm implementations
+        if hasattr(algorithm, "demes_"):
+            self.demes_ = algorithm.demes_
+        else:
+            self.demes_ = [pop]
 
         # 14. Call on_fit_end for all callbacks
         for cb in _active_callbacks:
