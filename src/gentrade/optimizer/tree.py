@@ -271,6 +271,11 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
             # deferred import to avoid cycles
             from gentrade.island import IslandEaMuPlusLambda
 
+            print(
+                "Using `IslandEaMuPlusLambda` algorithm with migration_rate "
+                f"{self.migration_rate}.",
+            )
+
             weights = tuple(m.weight for m in self.metrics)
             return IslandEaMuPlusLambda(
                 toolbox=self.toolbox_,
@@ -293,6 +298,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
                 val_callback=val_callback,
             )
 
+        print("Using standard `EaMuPlusLambda` algorithm without migration.")
         return EaMuPlusLambda(
             toolbox=self.toolbox_,
             evaluator=evaluator,

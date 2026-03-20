@@ -9,6 +9,7 @@ construction, toolbox wiring, and evaluator creation for either
 
 import logging
 import random
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable
 
@@ -549,7 +550,12 @@ class BaseOptimizer(ABC):
             print("-" * 60)
 
         algorithm = self.create_algorithm(evaluator, stats, hof, _gen_callback)
+        start = time.perf_counter()
         pop, logbook = algorithm.run(train_data_list, train_entry_list, train_exit_list)
+        duration = time.perf_counter() - start
+        logger.debug(
+            f"Evolution completed in {duration:.2f} s. {duration / self.generations:.2f} s/gen."
+        )
 
         # 13. Store fitted attributes
         self.population_ = pop

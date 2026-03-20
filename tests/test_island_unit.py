@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from deap import base
+
 from gentrade.island import (
     IslandEaMuPlusLambda,
     _drain_inbox,
@@ -108,6 +109,56 @@ class TestIslandCreation:
         assert len(buckets) == 2
         assert len(buckets[0]) == 1
         assert len(buckets[1]) == 1
+
+    def test_create_worker_seeds_deterministic_with_seed(self) -> None:
+        """Given a fixed seed, worker seeds are reproducible."""
+        toolbox = MagicMock(spec=base.Toolbox)
+        evaluator = MagicMock()
+
+        algo: IslandEaMuPlusLambda[Any] = IslandEaMuPlusLambda(
+            toolbox=toolbox,
+            evaluator=evaluator,
+            n_jobs=4,
+            mu=5,
+            lambda_=5,
+            cxpb=0.5,
+            mutpb=0.2,
+            ngen=1,
+            n_islands=4,
+            seed=1234,
+        )
+
+        seeds_first = algo._create_worker_seeds(4)
+        seeds_second = algo._create_worker_seeds(4)
+
+        assert seeds_first == seeds_second
+        assert len(seeds_first) == 4
+        assert all(isinstance(s, int) for s in seeds_first)
+
+    def test_create_worker_seeds_nondeterministic_with_none_seed(self) -> None:
+        """With seed=None, worker seeds should vary across runs."""
+        toolbox = MagicMock(spec=base.Toolbox)
+        evaluator = MagicMock()
+
+        algo: IslandEaMuPlusLambda[Any] = IslandEaMuPlusLambda(
+            toolbox=toolbox,
+            evaluator=evaluator,
+            n_jobs=4,
+            mu=5,
+            lambda_=5,
+            cxpb=0.5,
+            mutpb=0.2,
+            ngen=1,
+            n_islands=4,
+            seed=None,
+        )
+
+        seeds_first = algo._create_worker_seeds(4)
+        seeds_second = algo._create_worker_seeds(4)
+        # each island must have different seeds, and the two calls should produce
+        # different seeds
+        assert all(f != s for f, s in zip(seeds_first, seeds_second, strict=True))
+        assert all(isinstance(s, int) for s in seeds_first)
 
 
 @pytest.mark.unit

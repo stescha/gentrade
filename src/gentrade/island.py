@@ -3,8 +3,7 @@
 Provides :class:`IslandEaMuPlusLambda` together with supporting helpers.
 """
 
-from __future__ import annotations
-
+import logging
 import multiprocessing as mp
 import random
 from dataclasses import dataclass
@@ -21,6 +20,8 @@ from gentrade.eval_ind import BaseEvaluator
 from gentrade.individual import TreeIndividualBase, ensure_creator_fitness_class
 from gentrade.types import IndividualT
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Island:
@@ -33,8 +34,8 @@ class Island:
     """
 
     island_id: int
-    inbox: Queue[Any]
-    outbox: Queue[Any]
+    inbox: Queue  # type: ignore
+    outbox: Queue  # type: ignore
 
 
 class IslandEaMuPlusLambda(Generic[IndividualT]):
@@ -112,6 +113,20 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
             buckets[i % active].append(island)
         return buckets
 
+    def _create_worker_seeds(self, n_workers: int) -> list[int]:
+        """Derive per-worker seeds from master seed to ensure different random states
+        across workers. If self.seed is not None, the same sequence of worker seeds will
+        be generated on each run, enabling reproducibility. If self.seed is None, worker
+        seeds will be non-d eterministic across runs.
+
+        Args:
+            n_workers: The number of worker processes for which to generate seeds.
+        """
+        rng = np.random.default_rng(self.seed)
+        seeds_arr = rng.integers(0, 2**31 - 1, size=n_workers)
+        seeds_list: list[int] = seeds_arr.tolist()
+        return seeds_list
+
     def run(
         self,
         train_data: list["pd.DataFrame"],
@@ -126,14 +141,8 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         islands = self._create_islands()
         buckets = self._partition_islands(islands)
         n_workers = len(buckets)
-
+        worker_seeds = self._create_worker_seeds(n_workers)
         # Per-worker seeds derived from master seed
-        if self.seed is not None:
-            rng = np.random.default_rng(self.seed)
-            seeds_arr = rng.integers(0, 2**31 - 1, size=n_workers)
-            worker_seeds: list[int | None] = [int(s) for s in seeds_arr]
-        else:
-            worker_seeds = [None] * n_workers
 
         result_queue: Queue[tuple[int, list[Any], tools.Logbook]] = mp.Queue()
 
@@ -165,6 +174,9 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
                 },
             )
             processes.append(p)
+        logger.debug(
+            f"Launching {n_workers} worker processes for {self.n_islands} islands"
+        )
 
         for p in processes:
             p.start()
@@ -196,11 +208,20 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         all_individuals: list[Any] = []
         for pop, _ in results:
             all_individuals.extend(pop)
-        merged_pop: list[IndividualT] = self.toolbox.select(all_individuals, self.mu)
 
+        # start = time.perf_counter()
+        # merged_pop: list[IndividualT] = self.toolbox.select(all_individuals, self.mu)
+        # logger.debug(
+        #     f"Merging populations (individual count = {len(all_individuals)}): "
+        #     f"{time.perf_counter() - start:.4f} seconds"
+        # )
+
+        merged_pop = all_individuals
+        logger.debug("Updating hall of fame with merged population ...")
         if self.halloffame is not None:
             self.halloffame.update(all_individuals)
 
+        logger.debug("Merging logbooks ...")
         merged_logbook = tools.Logbook()
         for island, (_, logbook) in zip(islands, results, strict=True):
             for record in logbook:
