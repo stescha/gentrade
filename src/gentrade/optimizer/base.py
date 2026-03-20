@@ -550,6 +550,7 @@ class BaseOptimizer(ABC):
         self.population_ = pop
         self.logbook_ = logbook
         self.hall_of_fame_ = hof
+        self.best_individual_ = self.toolbox_.select_best(pop, 1)[0] if pop else None
 
         # 14. Call on_fit_end for all callbacks
         for cb in _active_callbacks:
