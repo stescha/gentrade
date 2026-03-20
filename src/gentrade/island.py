@@ -96,7 +96,9 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
 
         Island i's outbox is island (i+1 % n)'s inbox.
         """
-        queues: list[SimpleQueue[Any]] = [mp.SimpleQueue() for _ in range(self.n_islands)]
+        queues: list[SimpleQueue[Any]] = [
+            mp.SimpleQueue() for _ in range(self.n_islands)
+        ]
         islands: list[Island] = []
         for i in range(self.n_islands):
             inbox = queues[i]
@@ -184,8 +186,10 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
             island_id, pop, logbook = result_queue.get()
             raw_results[island_id] = (pop, logbook)
 
-        for p in processes:
+        for i, p in enumerate(processes):
+            print(f"Joining process {i} with PID {p.pid} ...")
             p.join()
+            print(f"Joined. Exit code: {p.exitcode}")
 
         return self._merge_results(raw_results)
 
@@ -194,9 +198,8 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
     ) -> tuple[list[IndividualT], tools.Logbook]:
         """Merge per-island populations and logbooks.
 
-        Stores raw per-island populations in :attr:`demes_`. Returns the best
-        ``mu`` individuals (by toolbox selection) and a merged logbook with an
-        ``island_id`` column.
+        Stores raw per-island populations in :attr:`demes_`. Returns the flattened
+        population and a merged logbook with an ``island_id`` column.
         """
         results = OrderedDict(sorted(results.items()))
         self.demes_ = [pop for pop, _ in results.values()]
@@ -205,14 +208,6 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         for pop in self.demes_:
             all_individuals.extend(pop)
 
-        # start = time.perf_counter()
-        # merged_pop: list[IndividualT] = self.toolbox.select(all_individuals, self.mu)
-        # logger.debug(
-        #     f"Merging populations (individual count = {len(all_individuals)}): "
-        #     f"{time.perf_counter() - start:.4f} seconds"
-        # )
-
-        merged_pop = all_individuals
         logger.debug("Updating hall of fame with merged population ...")
         start = time.perf_counter()
         if self.halloffame is not None:
@@ -223,17 +218,14 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
 
         start = time.perf_counter()
         merged_logbook = tools.Logbook()
-        N_EVAL_SUM = 0
         for island_id, (_, logbook) in results.items():
-            N_EVAL_SUM += sum(record["nevals"] for record in logbook)
             for record in logbook:
                 entry = dict(record)
                 entry["island_id"] = island_id
                 merged_logbook.record(**entry)
         duration = time.perf_counter() - start
         logger.debug(f"Done! Duration: {duration:.4f} seconds")
-        logger.debug(f"Total evaluations across all islands: {N_EVAL_SUM}")
-        return merged_pop, merged_logbook
+        return all_individuals, merged_logbook
 
 
 def _worker_target(
@@ -331,11 +323,20 @@ def _evolve_island(
         # IMPORT: drain inbox and merge immigrants
         if migration_rate > 0 and gen % migration_rate == 0:
             immigrants = _drain_inbox(island.inbox)
+            immigrants = [toolbox.clone(im) for im in immigrants]
             if immigrants:
-                population = _merge_immigrants(
-                    population, immigrants, mu, lambda_, toolbox
+                immigrants = _select_immigrants(
+                    immigrants,
+                    toolbox,
+                    mu,
+                    lambda_,
+                    migration_count,
+                    evaluator,
+                    train_data,
+                    train_entry_labels,
+                    train_exit_labels,
                 )
-
+                population.extend(immigrants)
         # VARIATION
         offspring = varOr(population, toolbox, lambda_, cxpb, mutpb)
 
@@ -399,30 +400,40 @@ def _drain_inbox(inbox: "SimpleQueue[Any]") -> list[Any]:
     return immigrants
 
 
-def _merge_immigrants(
-    population: list[Any],
+def _select_immigrants(
     immigrants: list[Any],
+    toolbox: base.Toolbox,
     mu: int,
     lambda_: int,
-    toolbox: base.Toolbox,
+    migration_count: int,
+    evaluator: BaseEvaluator[Any],
+    train_data: list[pd.DataFrame],
+    train_entry_labels: list[pd.Series] | None,
+    train_exit_labels: list[pd.Series] | None,
 ) -> list[Any]:
-    """Merge immigrants into the island population.
+    """Merge immigrants into the island population and return the result.
 
-    Invalidates immigrant fitness before merging so they are re-evaluated
-    during the next EVALUATE phase. If inbox overflow occurs (immigrants
-    would push total above mu+lambda), randomly samples to cap the merge.
+    Caps the number of immigrants at ``migration_count`` before merging to
+    limit the selection pressure of any single migration event.  The combined
+    pool is then trimmed to ``mu`` via the toolbox selection operator so the
+    population size stays constant.
+
+    Args:
+        population: The current island population.
+        immigrants: Freshly evaluated individuals received from the inbox.
+        toolbox: DEAP toolbox providing the ``select`` operator.
+        mu: Target population size after merging.
+        lambda_: Offspring count (used to cap intermediate pool size).
+        migration_count: Maximum number of immigrants to admit.
     """
-    max_size = mu + lambda_
-    if len(immigrants) > max_size:
-        immigrants = random.sample(immigrants, max_size)
+    # Cap immigrants before the expensive selection call.
+    if len(immigrants) > mu + lambda_:
+        immigrants = random.sample(immigrants, mu + lambda_)
 
-    for ind in immigrants:
-        clone = toolbox.clone(ind)
-        try:
-            del clone.fitness.values
-        except Exception:
-            # Some mock objects may not have fitness attribute; ignore in tests
-            pass
-        population.append(clone)
+    _evaluate_inline(
+        immigrants, evaluator, train_data, train_entry_labels, train_exit_labels
+    )
 
-    return population
+    if len(immigrants) > migration_count:
+        immigrants = toolbox.select(immigrants, migration_count)
+    return immigrants
