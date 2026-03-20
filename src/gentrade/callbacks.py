@@ -27,8 +27,8 @@ class Callback(Protocol):
 
     def on_generation_end(
         self,
-        optimizer: "BaseOptimizer",
         gen: int,
+        ngen: int,
         population: list[Any],
         best_ind: Any | None = None,
     ) -> None:
@@ -85,8 +85,8 @@ class ValidationCallback:
 
     def on_generation_end(
         self,
-        optimizer: "BaseOptimizer",
         gen: int,
+        ngen: int,
         population: list[Any],
         best_ind: Any | None = None,
     ) -> None:
@@ -95,7 +95,6 @@ class ValidationCallback:
         Runs at gen==1 (first), every N-th generation, and always at the
         last generation.
         """
-        ngen = optimizer.generations
         # Run at gen 1, every Nth, and always at the last generation
         if gen != 1 and (gen - 1) % self._interval != 0 and gen != ngen:
             return

@@ -271,8 +271,8 @@ class TestE2ECallbacks:
 
             def on_generation_end(
                 self,
-                optimizer: Any,
                 gen: int,
+                ngen: int,
                 population: list[Any],
                 best_ind: Any | None = None,
             ) -> None:
@@ -313,8 +313,8 @@ class TestE2ECallbacks:
 
             def on_generation_end(
                 self,
-                optimizer: Any,
                 gen: int,
+                ngen: int,
                 population: list[Any],
                 best_ind: Any | None = None,
             ) -> None:
