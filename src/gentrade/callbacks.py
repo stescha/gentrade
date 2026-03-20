@@ -94,6 +94,12 @@ class ValidationCallback:
 
         Runs at gen==1 (first), every N-th generation, and always at the
         last generation.
+
+        Args:
+            gen: The 1-indexed generation number that just completed.
+            ngen: The total number of generations configured for the run.
+            population: The current population after selection.
+            best_ind: The best individual from the current population, or None.
         """
         # Run at gen 1, every Nth, and always at the last generation
         if gen != 1 and (gen - 1) % self._interval != 0 and gen != ngen:
