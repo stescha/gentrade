@@ -530,7 +530,7 @@ class BaseOptimizer(ABC):
             best_ind: Any | None = None,
         ) -> None:
             for cb in _active_callbacks:
-                cb.on_generation_end(self, gen, population, best_ind)
+                cb.on_generation_end(gen, ngen, population, best_ind)
 
         # 12. Run evolution
         if self.verbose:
