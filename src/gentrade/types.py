@@ -38,6 +38,10 @@ IndividualT = TypeVar("IndividualT", bound=TreeIndividualBase)
 OperatorKwargs = Dict[str, Any]
 
 
+DataInput = pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame] | None
+LabelInput = pd.Series | dict[str, pd.Series] | list[pd.Series] | None
+
+
 class Algorithm(Protocol[IndividualT]):
     """Structural interface for evolutionary algorithms.
 

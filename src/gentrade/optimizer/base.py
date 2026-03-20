@@ -9,6 +9,7 @@ construction, toolbox wiring, and evaluator creation for either
 
 import logging
 import random
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable
 
@@ -28,13 +29,11 @@ from gentrade.individual import (
     TreeIndividual,
     ensure_creator_fitness_class,
 )
-from gentrade.types import Algorithm, Metric
+from gentrade.types import Algorithm, DataInput, LabelInput, Metric
 
 logger = logging.getLogger(__name__)
 
 # Type aliases for data inputs
-DataInput = pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame] | None
-LabelInput = pd.Series | dict[str, pd.Series] | list[pd.Series] | None
 
 
 def _normalize_data_and_labels(
@@ -277,6 +276,9 @@ class BaseOptimizer(ABC):
         self.pset_: gp.PrimitiveSetTyped
         self.toolbox_: base.Toolbox
         self.best_individual_: TreeIndividual | None = None
+        self.duration_: float = -1
+        # Per-island demes (when island mode returns per-island populations)
+        self.demes_: list[list[TreeIndividual]] | None = None
 
     @abstractmethod
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -326,7 +328,7 @@ class BaseOptimizer(ABC):
         evaluator: BaseEvaluator[Any],
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+        val_callback: Callable[..., None] | None,
     ) -> "Algorithm[Any]":
         """Return algorithm instance to execute the evolutionary loop.
 
@@ -406,6 +408,17 @@ class BaseOptimizer(ABC):
             ValueError: When required labels are absent, data is invalid,
                 or selection/objective count mismatches.
         """
+        # Reset fitted attributes in case of multiple fit calls on same instance
+        is_multiobjective = len(self.metrics) > 1
+
+        self.duration_ = -1
+        self.population_ = []
+        self.logbook_ = tools.Logbook()
+        self.hall_of_fame_ = tools.HallOfFame(self.hof_size)
+        if is_multiobjective:
+            self.hall_of_fame_ = tools.ParetoFront()
+        self.best_individual_ = None
+
         # 1. Normalize and validate datasets (single call for data+labels)
         (
             train_data_list,
@@ -463,8 +476,6 @@ class BaseOptimizer(ABC):
                         "with classification metrics and trade_side='sell'."
                     )
 
-        is_multiobjective = len(self.metrics) > 1
-
         # 4. Build pset
         self.pset_ = self._build_pset()
         if self.verbose:
@@ -508,19 +519,16 @@ class BaseOptimizer(ABC):
 
         # 10. Setup stats and HoF
         stats = tools.Statistics(lambda ind: ind.fitness.values)
-        hof: tools.HallOfFame
         if is_multiobjective:
             stats.register("avg", np.mean, axis=0)
             stats.register("std", np.std, axis=0)
             stats.register("min", np.min, axis=0)
             stats.register("max", np.max, axis=0)
-            hof = tools.ParetoFront()
         else:
             stats.register("avg", np.mean)
             stats.register("std", np.std)
             stats.register("min", np.min)
             stats.register("max", np.max)
-            hof = tools.HallOfFame(self.hof_size)
 
         # 11. Build generation callback closure
         def _gen_callback(
@@ -528,43 +536,59 @@ class BaseOptimizer(ABC):
             ngen: int,
             population: list[Any],
             best_ind: Any | None = None,
+            island_id: int | None = None,
         ) -> None:
             for cb in _active_callbacks:
-                cb.on_generation_end(gen, ngen, population, best_ind)
+                cb.on_generation_end(
+                    gen, ngen, population, best_ind, island_id=island_id
+                )
 
         # 12. Run evolution
         if self.verbose:
-            print("=== GP Evolution Run ===")
-            print(f"Seed: {self.seed}")
-            print(f"Metrics: {[type(m).__name__ for m in self.metrics]}")
-            print(
+            logger.info("=== GP Evolution Run ===")
+            logger.info(f"Seed: {self.seed}")
+            logger.info(f"Metrics: {[type(m).__name__ for m in self.metrics]}")
+            logger.info(
                 f"Evolution: mu={self.mu}, λ={self.lambda_}, "
                 f"gen={self.generations}, cxpb={self.cxpb}, mutpb={self.mutpb}"
             )
-            print("-" * 60)
 
-        algorithm = self.create_algorithm(evaluator, stats, hof, _gen_callback)
+        algorithm = self.create_algorithm(
+            evaluator, stats, self.hall_of_fame_, _gen_callback
+        )
+        start = time.perf_counter()
         pop, logbook = algorithm.run(train_data_list, train_entry_list, train_exit_list)
+        duration = time.perf_counter() - start
 
         # 13. Store fitted attributes
+        self.duration_ = duration
         self.population_ = pop
         self.logbook_ = logbook
-        self.hall_of_fame_ = hof
-        self.best_individual_ = self.toolbox_.select_best(pop, 1)[0] if pop else None
+        # self.hall_of_fame_ = hof
+        self.best_individual_ = self.hall_of_fame_[0] if self.hall_of_fame_ else None
+        # TODO: Clarify best selection in case of multi-objective
+        # self.best_individual_ = self.toolbox_.select_best(pop, 1)[0] if pop else None
+
+        # Store per-island populations; demes_ is optional on Algorithm implementations
+        if hasattr(algorithm, "demes_"):
+            self.demes_ = algorithm.demes_
+        else:
+            self.demes_ = [pop]
 
         # 14. Call on_fit_end for all callbacks
         for cb in _active_callbacks:
             cb.on_fit_end(self)
 
         if self.verbose:
-            print("-" * 60)
-            print("=== Results ===")
-            best = hof[0]
+            logger.info("-" * 60)
+            logger.info("=== Results ===")
+            best = self.best_individual_
+            assert best is not None, "Hall of fame is empty after evolution."
             # TODO: remove checks here.
-            print(f"Best individual fitness: {best.fitness.values}")
+            logger.info(f"Best individual fitness: {best.fitness.values}")
             if isinstance(best, TreeIndividual):
-                print(f"Best individual tree: {str(best.tree)[:100]}...")
+                logger.info(f"Best individual tree: {str(best.tree)}...")
             elif isinstance(best, PairTreeIndividual):
-                print(f"Best buy tree: {str(best.buy_tree)[:100]}...")
-                print(f"Best sell tree: {str(best.sell_tree)[:100]}...")
+                logger.info(f"Best buy tree: {str(best.buy_tree)}...")
+                logger.info(f"Best sell tree: {str(best.sell_tree)}...")
         return self

@@ -60,6 +60,10 @@ def varOr(
     for _ in range(lambda_):
         op_choice = random.random()
         if op_choice < cxpb:  # Apply crossover
+            # Clone parents to ensure offspring are independent objects.
+            # This prevents shared-state bugs when the same Python object
+            # may be referenced in multiple islands or worker contexts
+            # (e.g., when islands run sequentially in the same process).
             ind1, ind2 = [toolbox.clone(i) for i in random.sample(population, 2)]
             ind1, ind2 = toolbox.mate(ind1, ind2)
             del ind1.fitness.values
@@ -70,7 +74,7 @@ def varOr(
             del ind.fitness.values
             offspring.append(ind)
         else:  # Apply reproduction
-            offspring.append(random.choice(population))
+            offspring.append(toolbox.clone(random.choice(population)))
 
     return offspring
 

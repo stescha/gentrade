@@ -1,3 +1,4 @@
+import logging
 import operator
 from abc import ABC, abstractmethod
 from functools import partial
@@ -20,12 +21,16 @@ from gentrade.optimizer.base import BaseOptimizer
 from gentrade.types import (
     Algorithm,
     CrossoverOp,
+    DataInput,
+    LabelInput,
     Metric,
     MutationOp,
     OperatorKwargs,
     SelectionOp,
     TradeSide,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _create_tree_toolbox(
@@ -168,6 +173,15 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         validation_interval: int = 1,
         metrics_val: tuple[Metric, ...] | None = None,
         callbacks: list[Callback] | None = None,
+        # Island migration params (0 = disabled)
+        migration_rate: int = 0,
+        migration_count: int = 5,
+        n_islands: int = 4,
+        depot_capacity: int = 50,
+        pull_timeout: float = 2.0,
+        pull_max_retries: int = 3,
+        push_timeout: float = 2.0,
+        replace_selection_op: SelectionOp[gp.PrimitiveTree] = tools.selWorst,  # type: ignore[assignment]
     ) -> None:
         super().__init__(
             metrics=metrics,
@@ -184,6 +198,10 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
             metrics_val=metrics_val,
             callbacks=callbacks,
         )
+        self.migration_rate = migration_rate
+        self.migration_count = migration_count
+        self.n_islands = n_islands
+        self._validate_migration_params()
         self._pset_factory = pset if callable(pset) else (lambda: pset)
         self._backtest = backtest or BacktestConfig()
         self._trade_side = trade_side
@@ -202,6 +220,17 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         self.tree_max_height = tree_max_height
         self.tree_gen = tree_gen
 
+        # Island migration params
+        self.migration_rate = migration_rate
+        self.migration_count = migration_count
+        self.n_islands = n_islands
+        self.depot_capacity = depot_capacity
+        self.pull_timeout = pull_timeout
+        self.pull_max_retries = pull_max_retries
+        self.push_timeout = push_timeout
+        self.replace_selection_op = replace_selection_op
+
+        self._validate_migration_params()
         self._validate_selection_objective_count(selection)
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -237,13 +266,91 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         toolbox.register("population", tools.initRepeat, list, toolbox.individual)
         return toolbox
 
+    def _validate_migration_params(self) -> None:
+        """Validate migration parameter consistency.
+
+        Raises:
+            ValueError: If migration parameters are inconsistent.
+        """
+        if self.migration_rate < 0:
+            raise ValueError("migration_rate must be >= 0")
+        if self.migration_rate > 0:
+            if self.migration_count < 1:
+                raise ValueError("migration_count must be >= 1 when migration_rate > 0")
+            if self.n_islands < 2:
+                raise ValueError("n_islands must be >= 2 when migration_rate > 0")
+            if self.n_islands > self.n_jobs:
+                raise ValueError(
+                    f"n_islands ({self.n_islands}) must not exceed "
+                    f"n_jobs ({self.n_jobs})"
+                )
+
     def create_algorithm(
         self,
         evaluator: Any,
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+        val_callback: Callable[..., None] | None,
     ) -> Algorithm[TreeIndividual]:
+        """Create the evolutionary algorithm, choosing island or standard mode.
+
+        When ``migration_rate > 0`` an :class:`~gentrade.island.IslandEaMuPlusLambda`
+        is returned; otherwise the standard :class:`~gentrade.algorithms.EaMuPlusLambda`
+        is used with the provided worker pool.
+
+        Args:
+            worker_pool: Multiprocessing pool for parallel evaluation (used
+                in standard mode only).
+            stats: DEAP statistics object.
+            halloffame: Hall of fame to update after evolution.
+            val_callback: Optional per-generation callback.
+
+        Returns:
+            Configured algorithm instance.
+        """
+        if self.migration_rate > 0:
+            # Deferred import: island.py imports from algorithms.py and
+            # individual.py, which import from optimizer/ at test collection time.
+            # Importing at module level would create a circular import chain;
+            # deferring here breaks the cycle without sacrificing runtime access.
+            from gentrade.island import IslandEaMuPlusLambda  # noqa: PLC0415
+
+            logger.info(
+                "Using IslandEaMuPlusLambda with %d islands, "
+                "migration_rate=%d, migration_count=%d",
+                self.n_islands,
+                self.migration_rate,
+                self.migration_count,
+            )
+
+            weights = tuple(m.weight for m in self.metrics)
+            return IslandEaMuPlusLambda(
+                toolbox=self.toolbox_,
+                evaluator=evaluator,
+                n_islands=self.n_islands,
+                n_jobs=self.n_jobs,
+                mu=self.mu,
+                lambda_=self.lambda_,
+                ngen=self.generations,
+                cxpb=self.cxpb,
+                mutpb=self.mutpb,
+                migration_rate=self.migration_rate,
+                migration_count=self.migration_count,
+                depot_capacity=self.depot_capacity,
+                pull_timeout=self.pull_timeout,
+                pull_max_retries=self.pull_max_retries,
+                push_timeout=self.push_timeout,
+                replace_selection_op=self.replace_selection_op,
+                select_best_op=self.select_best,
+                weights=weights,
+                stats=stats,
+                halloffame=halloffame,
+                seed=self.seed,
+                val_callback=val_callback,
+                verbose=self.verbose,
+            )
+
+        logger.debug("Using standard EaMuPlusLambda (no island migration)")
         return EaMuPlusLambda(
             toolbox=self.toolbox_,
             evaluator=evaluator,
@@ -263,6 +370,46 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
     def _make_individual(
         self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]
     ) -> TreeIndividualBase: ...
+
+    def fit(
+        self,
+        X: DataInput,
+        X_val: DataInput = None,
+        entry_label: LabelInput = None,
+        exit_label: LabelInput = None,
+        entry_label_val: LabelInput = None,
+        exit_label_val: LabelInput = None,
+    ) -> BaseOptimizer:
+        """Fit the optimizer to the training data and labels."""
+        ret = super().fit(
+            X=X,
+            entry_label=entry_label,
+            exit_label=exit_label,
+            X_val=X_val,
+            entry_label_val=entry_label_val,
+            exit_label_val=exit_label_val,
+        )
+        logger.debug("Evolution completed!")
+        n_demes = len(self.demes_) if self.demes_ is not None else 1
+        duration_gen = self.duration_ / (self.generations * n_demes)
+        n_evals = sum(record["nevals"] for record in self.logbook_)
+        duration_ind = self.duration_ / n_evals
+
+        n_evals_max = n_demes * self.mu + n_demes * self.generations * self.lambda_
+
+        logger.debug("Evolution completed!")
+        logger.debug(f"Duration (total): {self.duration_:.2f} seconds")
+        logger.debug(
+            f"Duration (per generation): {duration_gen:.3f} seconds/generation"
+        )
+        logger.debug(
+            f"Duration (per individual): {duration_ind:.6f} seconds/individual"
+        )
+
+        logger.debug(f"Population size: {len(self.population_)}")
+        logger.debug(f"Total evaluations: {n_evals} / {n_evals_max}")
+        logger.debug(f"Best fitness: {self.hall_of_fame_[0].fitness.values}")
+        return ret
 
 
 class TreeOptimizer(BaseTreeOptimizer):
