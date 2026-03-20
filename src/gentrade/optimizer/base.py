@@ -29,13 +29,11 @@ from gentrade.individual import (
     TreeIndividual,
     ensure_creator_fitness_class,
 )
-from gentrade.types import Algorithm, Metric
+from gentrade.types import Algorithm, DataInput, LabelInput, Metric
 
 logger = logging.getLogger(__name__)
 
 # Type aliases for data inputs
-DataInput = pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame] | None
-LabelInput = pd.Series | dict[str, pd.Series] | list[pd.Series] | None
 
 
 def _normalize_data_and_labels(
@@ -553,11 +551,9 @@ class BaseOptimizer(ABC):
         start = time.perf_counter()
         pop, logbook = algorithm.run(train_data_list, train_entry_list, train_exit_list)
         duration = time.perf_counter() - start
-        logger.debug(
-            f"Evolution completed in {duration:.2f} s. {duration / self.generations:.2f} s/gen."
-        )
 
         # 13. Store fitted attributes
+        self.duration_ = duration
         self.population_ = pop
         self.logbook_ = logbook
         self.hall_of_fame_ = hof

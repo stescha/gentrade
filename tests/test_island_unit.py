@@ -167,12 +167,12 @@ class TestDrainInbox:
 
     def test_drain_empty_queue(self) -> None:
         """Empty queue returns empty list immediately."""
-        q: mp.Queue[int] = mp.Queue()
+        q: mp.SimpleQueue[int] = mp.SimpleQueue()
         assert _drain_inbox(q) == []
 
     def test_drain_returns_all_items(self) -> None:
-        """All queued items are returned and queue is empty after drain."""
-        q: mp.Queue[int] = mp.Queue()
+        """All items are returned. Uses SimpleQueue for predictable delivery."""
+        q: mp.SimpleQueue[int] = mp.SimpleQueue()
         for i in range(5):
             q.put(i)
         result = _drain_inbox(q)

@@ -66,7 +66,9 @@ class TestIslandOptimizerFit:
             n_jobs=1,
         )
         opt.fit(X=island_df, entry_label=labels)
-        assert len(opt.population_) == mu
+        # In island mode, population_ is the combined population of all islands,
+        # so its size should be n_islands * mu
+        assert len(opt.population_) == 2 * mu
 
     def test_logbook_has_island_id_column(self, island_df: pd.DataFrame) -> None:
         """logbook_ records have island_id field in island mode."""

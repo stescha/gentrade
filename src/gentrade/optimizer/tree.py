@@ -1,3 +1,4 @@
+import logging
 import operator
 from abc import ABC, abstractmethod
 from functools import partial
@@ -20,12 +21,16 @@ from gentrade.optimizer.base import BaseOptimizer
 from gentrade.types import (
     Algorithm,
     CrossoverOp,
+    DataInput,
+    LabelInput,
     Metric,
     MutationOp,
     OperatorKwargs,
     SelectionOp,
     TradeSide,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _create_tree_toolbox(
@@ -210,6 +215,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         self.tree_max_height = tree_max_height
         self.tree_gen = tree_gen
 
+        self.demes_: list[list[Any]]
         self._validate_selection_objective_count(selection)
 
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -294,7 +300,6 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
                 migration_count=self.migration_count,
                 seed=self.seed,
                 weights=weights,
-                callbacks=self.callbacks,
                 val_callback=val_callback,
             )
 
@@ -318,6 +323,38 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
     def _make_individual(
         self, tree_gen_func: Callable[[], list[Any]], weights: tuple[float, ...]
     ) -> TreeIndividualBase: ...
+
+    def fit(
+        self,
+        X: DataInput,
+        X_val: DataInput = None,
+        entry_label: LabelInput = None,
+        exit_label: LabelInput = None,
+        entry_label_val: LabelInput = None,
+        exit_label_val: LabelInput = None,
+    ) -> BaseOptimizer:
+        """Fit the optimizer to the training data and labels."""
+        ret = super().fit(
+            X=X,
+            entry_label=entry_label,
+            exit_label=exit_label,
+            X_val=X_val,
+            entry_label_val=entry_label_val,
+            exit_label_val=exit_label_val,
+        )
+
+        duration_gen = self.duration_ / self.generations
+        n_evals = sum(record["nevals"] for record in self.logbook_)
+
+        n_demes = len(self.demes_)
+        n_evals_max = n_demes * self.mu + n_demes * self.generations * self.lambda_
+
+        logger.debug("Evolution completed!")
+        logger.debug(f"Duration (total): {self.duration_:.2f} seconds")
+        logger.debug(f"Duration (per generation): {duration_gen:.2f} seconds/gen")
+        logger.debug(f"Population size: {len(self.population_)}")
+        logger.debug(f"Total evaluations: {n_evals} / {n_evals_max}")
+        return ret
 
 
 class TreeOptimizer(BaseTreeOptimizer):

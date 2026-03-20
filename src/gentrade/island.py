@@ -6,8 +6,10 @@ Provides :class:`IslandEaMuPlusLambda` together with supporting helpers.
 import logging
 import multiprocessing as mp
 import random
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
-from multiprocessing import Queue
+from multiprocessing import Queue, SimpleQueue
 from typing import Any, Callable, Generic
 
 import numpy as np
@@ -15,7 +17,6 @@ import pandas as pd
 from deap import base, tools
 
 from gentrade.algorithms import varOr
-from gentrade.callbacks import Callback
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.individual import TreeIndividualBase, ensure_creator_fitness_class
 from gentrade.types import IndividualT
@@ -34,8 +35,8 @@ class Island:
     """
 
     island_id: int
-    inbox: Queue  # type: ignore
-    outbox: Queue  # type: ignore
+    inbox: SimpleQueue  # type: ignore
+    outbox: SimpleQueue  # type: ignore
 
 
 class IslandEaMuPlusLambda(Generic[IndividualT]):
@@ -68,7 +69,6 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         migration_count: int = 5,
         seed: int | None = None,
         weights: tuple[float, ...] | None = None,
-        callbacks: list[Callback] | None = None,
         val_callback: Callable[..., None] | None = None,
     ) -> None:
         self.toolbox = toolbox
@@ -87,7 +87,6 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         self.migration_count = migration_count
         self.seed = seed
         self.weights = weights
-        self.callbacks = callbacks
         self.val_callback = val_callback
 
         self.demes_: list[list[Any]] | None = None
@@ -97,7 +96,7 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
 
         Island i's outbox is island (i+1 % n)'s inbox.
         """
-        queues: list[Queue[Any]] = [mp.Queue() for _ in range(self.n_islands)]
+        queues: list[SimpleQueue[Any]] = [mp.SimpleQueue() for _ in range(self.n_islands)]
         islands: list[Island] = []
         for i in range(self.n_islands):
             inbox = queues[i]
@@ -144,7 +143,7 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         worker_seeds = self._create_worker_seeds(n_workers)
         # Per-worker seeds derived from master seed
 
-        result_queue: Queue[tuple[int, list[Any], tools.Logbook]] = mp.Queue()
+        result_queue: Queue[tuple[int, list[Any], tools.Logbook]] = Queue()
 
         processes: list[mp.Process] = []
         for worker_idx, bucket in enumerate(buckets):
@@ -167,7 +166,6 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
                     "stats": self.stats,
                     "weights": self.weights,
                     "seed": worker_seeds[worker_idx],
-                    "callbacks": self.callbacks,
                     "val_callback": self.val_callback,
                     "verbose": self.verbose,
                     "result_queue": result_queue,
@@ -189,13 +187,10 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         for p in processes:
             p.join()
 
-        ordered = [raw_results[i] for i in range(self.n_islands)]
-        return self._merge_results(ordered, islands)
+        return self._merge_results(raw_results)
 
     def _merge_results(
-        self,
-        results: list[tuple[list[Any], tools.Logbook]],
-        islands: list[Island],
+        self, results: dict[int, tuple[list[Any], tools.Logbook]]
     ) -> tuple[list[IndividualT], tools.Logbook]:
         """Merge per-island populations and logbooks.
 
@@ -203,10 +198,11 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         ``mu`` individuals (by toolbox selection) and a merged logbook with an
         ``island_id`` column.
         """
-        self.demes_ = [pop for pop, _ in results]
+        results = OrderedDict(sorted(results.items()))
+        self.demes_ = [pop for pop, _ in results.values()]
 
         all_individuals: list[Any] = []
-        for pop, _ in results:
+        for pop in self.demes_:
             all_individuals.extend(pop)
 
         # start = time.perf_counter()
@@ -218,17 +214,25 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
 
         merged_pop = all_individuals
         logger.debug("Updating hall of fame with merged population ...")
+        start = time.perf_counter()
         if self.halloffame is not None:
             self.halloffame.update(all_individuals)
-
+        duration = time.perf_counter() - start
+        logger.debug(f"Done! Duration: {duration:.4f} seconds")
         logger.debug("Merging logbooks ...")
+
+        start = time.perf_counter()
         merged_logbook = tools.Logbook()
-        for island, (_, logbook) in zip(islands, results, strict=True):
+        N_EVAL_SUM = 0
+        for island_id, (_, logbook) in results.items():
+            N_EVAL_SUM += sum(record["nevals"] for record in logbook)
             for record in logbook:
                 entry = dict(record)
-                entry["island_id"] = island.island_id
+                entry["island_id"] = island_id
                 merged_logbook.record(**entry)
-
+        duration = time.perf_counter() - start
+        logger.debug(f"Done! Duration: {duration:.4f} seconds")
+        logger.debug(f"Total evaluations across all islands: {N_EVAL_SUM}")
         return merged_pop, merged_logbook
 
 
@@ -249,7 +253,6 @@ def _worker_target(
     stats: tools.Statistics | None,
     weights: tuple[float, ...] | None,
     seed: int | None,
-    callbacks: list[Callback] | None,
     val_callback: Callable[..., None] | None,
     verbose: bool,
     result_queue: "Queue[tuple[int, list[Any], tools.Logbook]]",
@@ -282,7 +285,6 @@ def _worker_target(
             migration_rate=migration_rate,
             migration_count=migration_count,
             stats=stats,
-            callbacks=callbacks,
             val_callback=val_callback,
             verbose=verbose,
         )
@@ -304,7 +306,6 @@ def _evolve_island(
     migration_rate: int,
     migration_count: int,
     stats: tools.Statistics | None,
-    callbacks: list[Callback] | None,
     val_callback: Callable[..., None] | None,
     verbose: bool,
 ) -> tuple[list[Any], tools.Logbook]:
@@ -361,11 +362,6 @@ def _evolve_island(
         best_ind = toolbox.select_best(population, k=1)[0]
         if val_callback is not None:
             val_callback(gen, ngen, population, best_ind, island_id=island.island_id)
-        if callbacks is not None:
-            for cb in callbacks:
-                cb.on_generation_end(
-                    gen, ngen, population, best_ind, island_id=island.island_id
-                )
 
     return population, logbook
 
@@ -390,16 +386,16 @@ def _evaluate_inline(
             ind.fitness.values = fitness
 
 
-def _drain_inbox(inbox: "Queue[Any]") -> list[Any]:
-    """Non-blocking drain of all items currently in the inbox queue."""
-    import queue  # stdlib; local import to avoid polluting module namespace
+def _drain_inbox(inbox: "SimpleQueue[Any]") -> list[Any]:
+    """Non-blocking drain of all items currently in the inbox queue.
 
+    SimpleQueue's get() is always blocking and does not accept arguments.
+    Since SimpleQueue flushes immediately to the pipe, empty() is reliable
+    for non-blocking drains.
+    """
     immigrants = []
-    while True:
-        try:
-            immigrants.append(inbox.get_nowait())
-        except queue.Empty:
-            break
+    while not inbox.empty():
+        immigrants.append(inbox.get())
     return immigrants
 
 
