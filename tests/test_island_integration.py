@@ -9,6 +9,7 @@ from deap import tools
 from gentrade.algorithms import EaMuPlusLambda
 from gentrade.classification_metrics import F1Metric
 from gentrade.data import generate_synthetic_ohlcv
+from gentrade.island import IslandEaMuPlusLambda
 from gentrade.minimal_pset import create_pset_default_medium, zigzag_pivots
 from gentrade.optimizer import TreeOptimizer
 
@@ -49,7 +50,7 @@ class TestIslandOptimizerFit:
         assert len(opt.demes_) == 2
 
     def test_population_size_after_island_fit(self, island_df: pd.DataFrame) -> None:
-        """len(population_) == mu after island fit."""
+        """len(population_) == n_islands * mu after island fit."""
         labels = _labels(island_df)
         mu = 4
         opt = TreeOptimizer(
@@ -66,8 +67,6 @@ class TestIslandOptimizerFit:
             n_jobs=1,
         )
         opt.fit(X=island_df, entry_label=labels)
-        # In island mode, population_ is the combined population of all islands,
-        # so its size should be n_islands * mu
         assert len(opt.population_) == 2 * mu
 
     def test_logbook_has_island_id_column(self, island_df: pd.DataFrame) -> None:
@@ -101,7 +100,6 @@ class TestIslandOptimizerFit:
             seed=42,
             verbose=False,
         )
-        # Build the pset and toolbox first
         opt.pset_ = opt._build_pset()
         opt.toolbox_ = opt._build_toolbox(opt.pset_)
 
@@ -109,6 +107,31 @@ class TestIslandOptimizerFit:
         hof = tools.HallOfFame(1)
         algo = opt.create_algorithm(MagicMock(), stats, hof, None)
         assert isinstance(algo, EaMuPlusLambda)
+
+    def test_migration_rate_nonzero_uses_island_ea(
+        self, island_df: pd.DataFrame
+    ) -> None:
+        """migration_rate > 0 produces IslandEaMuPlusLambda."""
+        opt = TreeOptimizer(
+            pset=create_pset_default_medium,
+            metrics=(F1Metric(),),
+            mu=4,
+            lambda_=8,
+            generations=1,
+            seed=42,
+            verbose=False,
+            migration_rate=1,
+            migration_count=2,
+            n_islands=2,
+            n_jobs=1,
+        )
+        opt.pset_ = opt._build_pset()
+        opt.toolbox_ = opt._build_toolbox(opt.pset_)
+
+        stats = tools.Statistics(lambda ind: ind.fitness.values)
+        hof = tools.HallOfFame(1)
+        algo = opt.create_algorithm(MagicMock(), stats, hof, None)
+        assert isinstance(algo, IslandEaMuPlusLambda)
 
     def test_all_fitness_valid_after_island_fit(self, island_df: pd.DataFrame) -> None:
         """All individuals have valid fitness after island fit."""

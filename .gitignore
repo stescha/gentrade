@@ -149,4 +149,4 @@ cython_debug/
 sandbox/
 
 # local forks or vendored repos
-vendor/zigzag/
+vendor/zigzag/zigzag/

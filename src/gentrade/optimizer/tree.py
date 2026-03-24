@@ -177,6 +177,10 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         migration_rate: int = 0,
         migration_count: int = 5,
         n_islands: int = 4,
+        depot_capacity: int = 50,
+        pull_timeout: float = 1.0,
+        pull_max_retries: int = 3,
+        push_timeout: float = 2.0,
     ) -> None:
         super().__init__(
             metrics=metrics,
@@ -196,6 +200,10 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         self.migration_rate = migration_rate
         self.migration_count = migration_count
         self.n_islands = n_islands
+        self.depot_capacity = depot_capacity
+        self.pull_timeout = pull_timeout
+        self.pull_max_retries = pull_max_retries
+        self.push_timeout = push_timeout
         self._validate_migration_params()
         self._pset_factory = pset if callable(pset) else (lambda: pset)
         self._backtest = backtest or BacktestConfig()
@@ -298,6 +306,10 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
                 n_islands=self.n_islands,
                 migration_rate=self.migration_rate,
                 migration_count=self.migration_count,
+                depot_capacity=self.depot_capacity,
+                pull_timeout=self.pull_timeout,
+                pull_max_retries=self.pull_max_retries,
+                push_timeout=self.push_timeout,
                 seed=self.seed,
                 weights=weights,
                 val_callback=val_callback,
