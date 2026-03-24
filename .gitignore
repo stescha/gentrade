@@ -149,3 +149,5 @@ sandbox/
 
 # local forks or vendored repos
 vendor/zigzag/
+# locally compiled zigzag copy (runtime artifact, not for commit)
+zigzag/

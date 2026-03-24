@@ -277,6 +277,7 @@ class BaseOptimizer(ABC):
         self.toolbox_: base.Toolbox
         self.best_individual_: TreeIndividual | None = None
         self.current_generation_: int = 0
+        self.demes_: list[list[Any]] | None = None
 
     @abstractmethod
     def _build_pset(self) -> gp.PrimitiveSetTyped:
@@ -326,7 +327,7 @@ class BaseOptimizer(ABC):
         worker_pool: pool.Pool,
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[[int, int, list[Any], Any | None], None] | None,
+        val_callback: Callable[..., None] | None,
     ) -> "Algorithm[Any]":
         """Return algorithm instance to execute the evolutionary loop.
 
@@ -484,6 +485,13 @@ class BaseOptimizer(ABC):
         if val_data_list:
             val_evaluator = self._make_evaluator(self.pset_, val_metrics)
 
+        # Store evaluator and train data so create_algorithm can access them
+        # (needed by island mode, which doesn't use a pool).
+        self._fit_evaluator_: BaseEvaluator[Any] = evaluator
+        self._fit_train_data_: list[pd.DataFrame] = train_data_list
+        self._fit_train_entry_labels_: list[pd.Series] | None = train_entry_list
+        self._fit_train_exit_labels_: list[pd.Series] | None = train_exit_list
+
         # 7. Create pool
         pool_obj = create_pool(
             self.n_jobs,
@@ -538,6 +546,7 @@ class BaseOptimizer(ABC):
             ngen: int,
             population: list[Any],
             best_ind: Any | None = None,
+            island_id: int | None = None,
         ) -> None:
             self.current_generation_ = gen
             self.best_individual_ = cast(TreeIndividual, best_ind)
@@ -566,6 +575,12 @@ class BaseOptimizer(ABC):
         self.population_ = pop
         self.logbook_ = logbook
         self.hall_of_fame_ = hof
+
+        # Store per-island populations when algorithm supports it
+        if hasattr(algorithm, "demes_") and algorithm.demes_ is not None:
+            self.demes_ = algorithm.demes_
+        else:
+            self.demes_ = [pop]
 
         # 15. Call on_fit_end for all callbacks
         for cb in _active_callbacks:
