@@ -30,7 +30,6 @@ if __name__ == "__main__":
         metrics=(
             F1Metric(tree_aggregation="buy"),
             F1Metric(tree_aggregation="sell"),
-            # MeanPnlCppMetric(min_trades=10, weight=1),
         ),
         metrics_val=(
             F1Metric(tree_aggregation="mean"),
@@ -42,13 +41,6 @@ if __name__ == "__main__":
         mutation=gp.mutUniform,  # type: ignore
         crossover=gp.cxOnePointLeafBiased,
         crossover_params={"termpb": 0.1},
-        # selection=tools.selNSGA2,  # type: ignore
-        # selection=tools.selDoubleTournament,  # type: ignore
-        # selection_params={
-        #     "fitness_size": 5,
-        #     "parsimony_size": 1.2,
-        #     "fitness_first": True,
-        # },
         selection=tools.selAutomaticEpsilonLexicase,  # type: ignore
         select_best=tools.selAutomaticEpsilonLexicase,  # type: ignore
         mu=2000,
