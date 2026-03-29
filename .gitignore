@@ -18,6 +18,7 @@ __pycache__/
 
 # C extensions
 *.so
+!src/gentrade/eval_signals.cpython-311-x86_64-linux-gnu.so 
 
 # Distribution / packaging
 .Python
@@ -147,5 +148,9 @@ cython_debug/
 .notes/
 sandbox/
 
+# Ignored due dist/ 
+!vendor/dist/
+
 # local forks or vendored repos
 vendor/zigzag/
+
