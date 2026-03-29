@@ -127,6 +127,10 @@ class MeanPnlCppMetric(CppBacktestMetricBase):
     """
 
     def __call__(self, bt_result: BtResult) -> float:
-        if len(bt_result.pnls) < self.min_trades:
+        if len(bt_result.trade_returns) < self.min_trades:
             return 0.0
-        return float(np.mean(bt_result.pnls)) if len(bt_result.pnls) > 0 else 0.0
+        return (
+            float(np.mean(bt_result.trade_returns))
+            if len(bt_result.trade_returns) > 0
+            else 0.0
+        )

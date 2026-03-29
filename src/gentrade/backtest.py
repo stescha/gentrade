@@ -8,11 +8,44 @@ from gentrade.eval_signals import eval as eval_cpp  # type: ignore
 
 @dataclass
 class BtResult:
+    """Container for results produced by the C++ backtester (`eval`).
+
+    Attributes:
+    - buy_times: numpy array of integer execution indices where buy orders
+        were executed. Each element is an index into the input OHLCV series
+        and equals the signal time plus the internal order delay (i.e.,
+        ``t + order_delay``). The order delay is set to 1 and cant be changed.
+    - sell_times: numpy array of integer execution indices where sell orders
+        were executed. Elements pair with ``buy_times`` by index: the i-th
+        element of ``buy_times`` and ``sell_times`` mark the same trade.
+    - values: numpy array of portfolio values (cash + position * close
+        price) at each input time. Length equals the number of rows in the
+        input OHLCV series. The backtester sets ``values[t] = balance +
+        position * close[t]``.
+    - positions: numpy array of integer positions held at each time (0 or 1).
+        Length equals the number of rows in the input OHLCV series.
+    - trade_returns: numpy array with one entry per closed trade. Each
+        element is the trade return computed by the backtester using the
+        formula:
+
+        ((sell_price - buy_price)
+         - (sell_fee * sell_price + buy_fee * buy_price))
+        / buy_price
+
+        This value is a trade return (fractional, relative to the buy price),
+        not an absolute currency P&L.
+
+    Pairing guarantee:
+    - ``buy_times``, ``sell_times``, and ``trade_returns`` are aligned by
+        index: the i-th element of each corresponds to the same trade
+        (entry, exit, return).
+    """
+
     buy_times: np.ndarray
     sell_times: np.ndarray
     values: np.ndarray
     positions: np.ndarray
-    pnls: np.ndarray
+    trade_returns: np.ndarray
 
 
 def backtest_signals_cpp(
@@ -40,7 +73,7 @@ def backtest_signals_cpp(
     """
 
     try:
-        buy_times, sell_times, values, positions, pnls = eval_cpp(
+        buy_times, sell_times, values, positions, trade_returns = eval_cpp(
             ohlcv["open"].values,
             ohlcv["high"].values,
             entries.values,
@@ -55,5 +88,5 @@ def backtest_signals_cpp(
         sell_times=sell_times,
         values=values,
         positions=positions,
-        pnls=pnls,
+        trade_returns=trade_returns,
     )

@@ -18,7 +18,7 @@ namespace py = pybind11;
 // Simple pybind11 thin-wrapper around a lightweight C++ backtester.
 // The exported function `eval` accepts arrays for price series and entry/exit
 // flags and returns five arrays: buy_times, sell_times, portfolio values,
-// positions, and per-trade PnLs. The arrays are transferred using NumPy
+// positions, and trade_returns (relative PnL). The arrays are transferred using NumPy
 // compatible buffers (C-contiguous) to avoid copies where possible.
 
 py::array_t<double> cpp2py_double(std::vector<double> vec, int arr_size){
@@ -48,7 +48,7 @@ py::array_t<int> cpp2py_int(std::vector<int> vec, int arr_size){
 //  - open_arr, close_arr: price arrays (double)
 //  - buys_arr, sells_arr: integer flag arrays (0/1) marking order signals
 //  - buy_fee, sell_fee: fee fractions applied on trade execution
-// Returns: tuple(buy_times, sell_times, values, positions, pnls)
+// Returns: tuple(buy_times, sell_times, values, positions, trade_returns)
 std::tuple<py::array_t<int>, py::array_t<int>, py::array_t<double>, py::array_t<int>, py::array_t<double>>
           eval(py::array_t<double, py::array::c_style | py::array::forcecast> open_arr,
                          py::array_t<double, py::array::c_style | py::array::forcecast> close_arr,
@@ -72,7 +72,7 @@ std::tuple<py::array_t<int>, py::array_t<int>, py::array_t<double>, py::array_t<
   // call pure C++ function
   std::vector<int> buy_times(0);
   std::vector<int> sell_times(0);
-  std::vector<double> pnls(0);
+  std::vector<double> trade_returns(0);
   std::vector<double> values(close_arr.size());
   std::vector<int> positions(close_arr.size(), 0);
 
@@ -107,7 +107,7 @@ std::tuple<py::array_t<int>, py::array_t<int>, py::array_t<double>, py::array_t<
         position = 0;
         sell_times.push_back(t+order_delay);
         buy_times.push_back(buy_time);
-        pnls.push_back(pnl);
+        trade_returns.push_back(pnl);
 
       }
 
@@ -121,7 +121,7 @@ std::tuple<py::array_t<int>, py::array_t<int>, py::array_t<double>, py::array_t<
     sell_price = open[t];
     balance += sell_price*position*(1-sell_fee);
     pnl = ((sell_price - buy_price) - (sell_fee*sell_price + buy_fee*buy_price))/buy_price;
-    pnls.push_back(pnl);
+    trade_returns.push_back(pnl);
     position = 0;
     buy_times.push_back(buy_time);
     sell_times.push_back(t);
@@ -133,7 +133,7 @@ std::tuple<py::array_t<int>, py::array_t<int>, py::array_t<double>, py::array_t<
                          cpp2py_int(sell_times, sell_times.size()),
                          cpp2py_double(values, values.size()),
                          cpp2py_int(positions, positions.size()),
-                         cpp2py_double(pnls, pnls.size()));
+                         cpp2py_double(trade_returns, trade_returns.size()));
 }
 
 
