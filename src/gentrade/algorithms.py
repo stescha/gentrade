@@ -1,4 +1,6 @@
+import copy
 import random
+import time
 from typing import TYPE_CHECKING, Any, Callable, Generic
 
 if TYPE_CHECKING:
@@ -8,7 +10,7 @@ from deap import base, tools
 
 from gentrade.callbacks import Callback
 from gentrade.eval_ind import BaseEvaluator
-from gentrade.eval_pop import create_pool, evaluate_population
+from gentrade.eval_pop import create_pool, worker_evaluate
 from gentrade.types import IndividualT
 
 
@@ -124,13 +126,19 @@ def eaMuPlusLambdaGentrade(
     logbook = tools.Logbook()
     logbook.header = ["gen", "nevals"] + (stats.fields if stats else [])
 
-    nevals, duration = evaluate_population(population, pool)
+    invalid_ind = [ind for ind in population if not ind.fitness.valid]
+    n_evals = len(invalid_ind)
+    start = time.perf_counter()
+    fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
+    duration = time.perf_counter() - start
+    for ind, fit in zip(invalid_ind, fitnesses, strict=True):
+        ind.fitness.values = fit
 
     if halloffame is not None:
         halloffame.update(population)
 
     record = stats.compile(population) if stats is not None else {}
-    logbook.record(gen=0, nevals=nevals, **record)
+    logbook.record(gen=0, nevals=n_evals, **record)
     if verbose:
         print(logbook.stream)
 
@@ -140,7 +148,13 @@ def eaMuPlusLambdaGentrade(
         offspring = varOr(population, toolbox, lambda_, cxpb, mutpb)
 
         # Evaluate the individuals with an invalid fitness
-        nevals, duration = evaluate_population(offspring, pool)
+        invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        n_evals = len(invalid_ind)
+        start = time.perf_counter()
+        fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
+        duration = time.perf_counter() - start
+        for ind, fit in zip(invalid_ind, fitnesses, strict=True):
+            ind.fitness.values = fit
 
         # Update the hall of fame with the generated individuals
         if halloffame is not None:
@@ -151,11 +165,11 @@ def eaMuPlusLambdaGentrade(
 
         # Update the statistics with the new population
         record = stats.compile(population) if stats is not None else {}
-        logbook.record(gen=gen, nevals=nevals, **record)
+        logbook.record(gen=gen, nevals=n_evals, **record)
         if verbose:
             print(
                 f"Gen {gen} evaluation time: {duration:.4f} s"
-                f" {duration / nevals:.5f} s/individual"
+                f" {duration / n_evals:.5f} s/individual"
             )
             print(logbook.stream)
 
@@ -252,6 +266,11 @@ class EaMuPlusLambda(Generic[IndividualT]):
         # create worker pool for this run using evaluator and training data
         if self.evaluator is None:
             raise RuntimeError("EaMuPlusLambda requires an evaluator to run")
+
+        toolbox = copy.copy(self.toolbox)
+        # toolbox.register(
+        # worker_toolbox.register("evaluate", worker_evaluate)
+
         pool_obj = create_pool(
             self.n_jobs,
             evaluator=self.evaluator,
@@ -259,13 +278,14 @@ class EaMuPlusLambda(Generic[IndividualT]):
             train_entry_labels=train_entry_labels,
             train_exit_labels=train_exit_labels,
         )
-
-        pop = self.toolbox.population(n=self.mu)
+        toolbox.register("map", pool_obj.map)
+        toolbox.register("evaluate", worker_evaluate)
+        pop = toolbox.population(n=self.mu)
         try:
             return eaMuPlusLambdaGentrade(
                 pool_obj,
                 pop,
-                self.toolbox,
+                toolbox,
                 mu=self.mu,
                 lambda_=self.lambda_,
                 cxpb=self.cxpb,
