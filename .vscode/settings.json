@@ -36,13 +36,11 @@
   
   // Specify mypy config file relative to the workspace folder (don't use ${workspaceFolder} here)
   "mypy.configFile": "pyproject.toml",
-  "python-envs.pythonProjects": [
-    {
-      "path": ".",
-      "envManager": "ms-python.python:poetry",
-      "packageManager": "ms-python.python:poetry"
-    }
-  ],
+
+  
+  // Specify mypy config file relative to the workspace folder (don't use ${workspaceFolder} here)
+  "python-envs.defaultEnvManager": "ms-python.python:poetry",
+  "python-envs.defaultPackageManager": "ms-python.python:poetry"
 
 }
 
