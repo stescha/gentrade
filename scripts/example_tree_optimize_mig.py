@@ -36,11 +36,14 @@ np.random.seed(seed)
 
 now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 filename = Path(__file__).stem
-handler = logging.FileHandler(f"logs/{filename}_{now}.log")
+# handler = logging.FileHandler(f"logs/{filename}_{now}.log")
+handler = logging.StreamHandler()
+
 formatter = logging.Formatter("%(asctime)s [%(name)s] [%(levelname)s]:  %(message)s")
 
 for logger_name in (
     "gentrade.island",
+    "gentrade.algorithms",
     "gentrade.optimizer.tree",
     "gentrade.optimizer.base",
 ):
@@ -91,15 +94,15 @@ if __name__ == "__main__":
         tree_max_depth=8,
         tree_max_height=20,
         tree_min_depth=2,
-        mu=1000,  # population size per island
-        lambda_=100,  # offspring size per island
+        mu=500,  # population size per island
+        lambda_=1000,  # offspring size per island
         generations=50,
         cxpb=0.6,
         mutpb=0.3,
         # seed=None,
         verbose=True,
         # Island migration params (0 = disabled)
-        migration_rate=10,
+        migration_rate=0,
         migration_count=5,
         n_jobs=32,
         n_islands=32,

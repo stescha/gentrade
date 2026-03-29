@@ -38,7 +38,8 @@ np.random.seed(seed)
 
 now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 filename = Path(__file__).stem
-handler = logging.FileHandler(f"logs/{filename}_{now}.log")
+# handler = logging.FileHandler(f"logs/{filename}_{now}.log")
+handler = logging.StreamHandler()
 formatter = logging.Formatter("%(asctime)s [%(name)s] [%(levelname)s]:  %(message)s")
 
 for logger_name in (
@@ -50,10 +51,6 @@ for logger_name in (
     logger.setLevel(logging.DEBUG)
 
     if not logger.handlers:
-        # formatter = logging.Formatter("[%(name)s] %(levelname)s: %(message)s")
-
-        # handler = logging.StreamHandler()
-        # handler.setFormatter(formatter)
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         logger.propagate = False
