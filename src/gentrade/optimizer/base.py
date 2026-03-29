@@ -8,6 +8,7 @@ construction, toolbox wiring, and evaluator creation for either
 """
 
 import logging
+import operator
 import random
 import time
 from abc import ABC, abstractmethod
@@ -193,6 +194,24 @@ def _normalize_data_and_labels(
     raise TypeError(f"Unsupported type for {dataset_name}_data: {type(data)}")
 
 
+def create_hof_factory(
+    multi_object: bool,
+    hof_size: int | None = None,
+    similar: Callable[[Any, Any], bool] = operator.eq,
+) -> Callable[[], tools.HallOfFame]:
+    def factory() -> tools.HallOfFame:
+        if multi_object:
+            return tools.ParetoFront(similar=similar)
+        else:
+            if hof_size is None:
+                raise ValueError(
+                    "hof_size must be provided for single-objective optimization."
+                )
+            return tools.HallOfFame(hof_size, similar=similar)
+
+    return factory
+
+
 class BaseOptimizer(ABC):
     """Abstract base for genetic programming optimizers.
 
@@ -326,9 +345,9 @@ class BaseOptimizer(ABC):
     def create_algorithm(
         self,
         evaluator: BaseEvaluator[Any],
+        val_evaluator: BaseEvaluator[Any] | None,
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[..., None] | None,
     ) -> "Algorithm[Any]":
         """Return algorithm instance to execute the evolutionary loop.
 
@@ -414,9 +433,6 @@ class BaseOptimizer(ABC):
         self.duration_ = -1
         self.population_ = []
         self.logbook_ = tools.Logbook()
-        self.hall_of_fame_ = tools.HallOfFame(self.hof_size)
-        if is_multiobjective:
-            self.hall_of_fame_ = tools.ParetoFront()
         self.best_individual_ = None
 
         # 1. Normalize and validate datasets (single call for data+labels)
@@ -552,22 +568,35 @@ class BaseOptimizer(ABC):
                 f"Evolution: mu={self.mu}, λ={self.lambda_}, "
                 f"gen={self.generations}, cxpb={self.cxpb}, mutpb={self.mutpb}"
             )
-
+        hof_factory = create_hof_factory(is_multiobjective, self.hof_size)
         algorithm = self.create_algorithm(
-            evaluator, stats, self.hall_of_fame_, _gen_callback
+            evaluator,
+            val_evaluator,
+            stats,
+            hof_factory(),
         )
         start = time.perf_counter()
-        pop, logbook = algorithm.run(train_data_list, train_entry_list, train_exit_list)
+        pop, logbook, hof = algorithm.run(
+            self.toolbox_,
+            train_data_list,
+            train_entry_list,
+            train_exit_list,
+            val_data=val_data_list,
+            val_entry_labels=val_entry_list,
+            val_exit_labels=val_exit_list,
+            hof_factory=hof_factory,
+        )
         duration = time.perf_counter() - start
 
         # 13. Store fitted attributes
         self.duration_ = duration
         self.population_ = pop
         self.logbook_ = logbook
-        # self.hall_of_fame_ = hof
-        self.best_individual_ = self.hall_of_fame_[0] if self.hall_of_fame_ else None
+        hof = hof if hof else create_hof_factory(is_multiobjective, self.hof_size)()
+        self.hall_of_fame_ = hof
         # TODO: Clarify best selection in case of multi-objective
         # self.best_individual_ = self.toolbox_.select_best(pop, 1)[0] if pop else None
+        self.best_individual_ = hof[0] if len(hof) > 0 else None
 
         # Store per-island populations; demes_ is optional on Algorithm implementations
         if hasattr(algorithm, "demes_"):

@@ -287,11 +287,11 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
 
     def create_algorithm(
         self,
-        evaluator: Any,
+        evaluator: BaseEvaluator[Any],
+        val_evaluator: BaseEvaluator[Any] | None,
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[..., None] | None,
-    ) -> Algorithm[TreeIndividual]:
+    ) -> Algorithm[Any]:
         """Create the evolutionary algorithm, choosing island or standard mode.
 
         When ``migration_rate > 0`` an :class:`~gentrade.island.IslandEaMuPlusLambda`
@@ -303,7 +303,6 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
                 in standard mode only).
             stats: DEAP statistics object.
             halloffame: Hall of fame to update after evolution.
-            val_callback: Optional per-generation callback.
 
         Returns:
             Configured algorithm instance.
@@ -313,7 +312,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
             # individual.py, which import from optimizer/ at test collection time.
             # Importing at module level would create a circular import chain;
             # deferring here breaks the cycle without sacrificing runtime access.
-            from gentrade.island import IslandEaMuPlusLambda  # noqa: PLC0415
+            from gentrade.island import IslandMigration  # noqa: PLC0415
 
             logger.info(
                 "Using IslandEaMuPlusLambda with %d islands, "
@@ -324,8 +323,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
             )
 
             weights = tuple(m.weight for m in self.metrics)
-            return IslandEaMuPlusLambda(
-                toolbox=self.toolbox_,
+            return IslandMigration(
                 evaluator=evaluator,
                 n_islands=self.n_islands,
                 n_jobs=self.n_jobs,
@@ -346,24 +344,21 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
                 stats=stats,
                 halloffame=halloffame,
                 seed=self.seed,
-                val_callback=val_callback,
                 verbose=self.verbose,
             )
 
         logger.debug("Using standard EaMuPlusLambda (no island migration)")
-        return EaMuPlusLambda(
-            toolbox=self.toolbox_,
-            evaluator=evaluator,
-            n_jobs=self.n_jobs,
+        return EaMuPlusLambda[Any](
             mu=self.mu,
             lambda_=self.lambda_,
             cxpb=self.cxpb,
             mutpb=self.mutpb,
             ngen=self.generations,
+            evaluator=evaluator,
+            val_evaluator=val_evaluator,
             stats=stats,
-            halloffame=halloffame,
+            n_jobs=self.n_jobs,
             verbose=self.verbose,
-            val_callback=val_callback,
         )
 
     @abstractmethod

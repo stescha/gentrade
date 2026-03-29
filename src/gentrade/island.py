@@ -795,10 +795,9 @@ def _worker_target(
 # ---------------------------------------------------------------------------
 
 
-class IslandEaMuPlusLambda(Generic[IndividualT]):
+class IslandMigration(Generic[IndividualT]):
     def __init__(
         self,
-        toolbox: base.Toolbox,
         evaluator: BaseEvaluator[Any],
         n_jobs: int,
         mu: int,
@@ -823,7 +822,6 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         replace_selection_op: "SelectionOp[Any] | None" = None,
         select_best_op: "SelectionOp[Any] | None" = None,
     ) -> None:
-        self.toolbox = toolbox
         self.evaluator = evaluator
         self.n_jobs = n_jobs
         self.mu = mu
@@ -911,10 +909,16 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
 
     def run(
         self,
+        toolbox: base.Toolbox,
         train_data: list[pd.DataFrame],
         train_entry_labels: list[pd.Series] | None,
         train_exit_labels: list[pd.Series] | None,
-    ) -> tuple[list[IndividualT], tools.Logbook]:
+        *,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+        hof_factory: Callable[[], tools.HallOfFame] | None = None,
+    ) -> tuple[list[IndividualT], tools.Logbook, tools.HallOfFame | None]:
         depots = self._create_depots()
         descriptors = self._create_descriptors(depots)
         buckets = self._partition_descriptors(descriptors)
@@ -932,7 +936,7 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
                 target=_worker_target,
                 kwargs={
                     "assigned_descriptors": bucket,
-                    "toolbox": self.toolbox,
+                    "toolbox": toolbox,
                     "evaluator": self.evaluator,
                     "train_data": train_data,
                     "train_entry_labels": train_entry_labels,
@@ -972,5 +976,5 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
                 if p.is_alive():
                     p.terminate()
 
-        results_merged = self._merge_results(results)
-        return results_merged
+        pop, logbook = self._merge_results(results)
+        return pop, logbook, self.halloffame

@@ -16,7 +16,7 @@ from deap import tools
 from gentrade.algorithms import EaMuPlusLambda
 from gentrade.classification_metrics import F1Metric
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.island import IslandEaMuPlusLambda
+from gentrade.island import IslandMigration
 from gentrade.minimal_pset import create_pset_default_medium, zigzag_pivots
 from gentrade.optimizer import TreeOptimizer
 
@@ -143,7 +143,7 @@ class TestAlgorithmSelection:
         hof = tools.HallOfFame(1)
         stats = tools.Statistics(lambda ind: ind.fitness.values)
         algo = opt.create_algorithm(MagicMock(), stats, hof, None)
-        assert isinstance(algo, IslandEaMuPlusLambda)
+        assert isinstance(algo, IslandMigration)
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,7 @@ class TestIslandOptimizerFit:
             metrics=(F1Metric(),),
             mu=4,
             lambda_=8,
-            generations=1,
+            generations=2,
             seed=42,
             verbose=False,
         )

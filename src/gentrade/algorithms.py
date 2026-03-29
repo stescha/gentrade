@@ -1,17 +1,18 @@
 import copy
+import logging
 import random
 import time
-from typing import TYPE_CHECKING, Any, Callable, Generic
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Generic, cast
 
-if TYPE_CHECKING:
-    import pandas as pd
-
+import pandas as pd
 from deap import base, tools
 
-from gentrade.callbacks import Callback
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.eval_pop import create_pool, worker_evaluate
 from gentrade.types import IndividualT
+
+logger = logging.getLogger(__name__)
 
 
 def varOr(
@@ -180,96 +181,227 @@ def eaMuPlusLambdaGentrade(
     return population, logbook
 
 
-class EaMuPlusLambda(Generic[IndividualT]):
-    """Wrapper around :func:`eaMuPlusLambdaGentrade` implementing the ``Algorithm``
-    interface.
+class BaseAlgorithm(ABC, Generic[IndividualT]):
+    """Abstract base class for evolutionary algorithms.
 
-    Stores all algorithm configuration at construction time and exposes a
-    single :meth:`run` method that accepts a population and returns the
-    ``(population, logbook)`` pair produced by the underlying evolutionary
-    algorithm. The type parameter ``IndividualT`` preserves the individual
-    type through :meth:`run`.
+    Provides a `generational_loop` helper that drives the main evolution
+    loop, calling `pre_generation` and `post_generation` hooks around each
+    generation. Subclasses must implement `initialize` and `run_generation`.
+    """
+
+    @abstractmethod
+    def initialize(
+        self,
+        toolbox: base.Toolbox,
+    ) -> tuple[list[IndividualT], float]:
+        """Create initial population of size mu and evaluate it.
+
+        Returns the evaluated initial population (all fitness values valid).
+        Does not update the HoF — that is done by the caller after gen 0.
+        """
+        ...
+
+    @abstractmethod
+    def run_generation(
+        self,
+        population: list[IndividualT],
+        toolbox: base.Toolbox,
+        gen: int,
+        *,
+        halloffame: tools.HallOfFame | None = None,
+    ) -> tuple[list[IndividualT], dict[str, Any], int, float]:
+        """Execute a single generation.
+
+        Returns (new_population, stats_record, n_evals, duration).
+        """
+        ...
+
+    def pre_generation(self, gen: int, population: list[IndividualT]) -> None:
+        """Hook called before each generation. Override for custom logic."""
+
+    def post_generation(
+        self, gen: int, population: list[IndividualT], record: dict[str, Any]
+    ) -> None:
+        """Hook called after each generation. Override for custom logic."""
+
+    def generational_loop(
+        self,
+        population: list[IndividualT],
+        toolbox: base.Toolbox,
+        ngen: int,
+        logbook: tools.Logbook,
+        *,
+        halloffame: tools.HallOfFame | None = None,
+        verbose: bool = False,
+    ) -> list[IndividualT]:
+        """Drive the main evolution loop with hooks.
+
+        Calls `pre_generation`, `run_generation`, `post_generation` for
+        each generation from 1..ngen. Logs each generation's stats to `logbook`.
+        Returns the final population.
+        """
+        for gen in range(1, ngen + 1):
+            start = time.perf_counter()
+            self.pre_generation(gen, population)
+
+            population, record, n_evals, duration_eval = self.run_generation(
+                population,
+                toolbox,
+                gen,
+                halloffame=halloffame,
+            )
+            self.post_generation(gen, population, record)
+
+            logbook.record(gen=gen, nevals=n_evals, **record)
+            duration_gen = time.perf_counter() - start
+            if verbose:
+                logger.info(logbook.stream)
+                logger.info(
+                    f"Gen {gen} time (gen / eval):{duration_gen:.4f} s / {duration_eval:.4f} s"
+                    f" {duration_eval / n_evals:.5f} s/individual"
+                )
+        return population
+
+    @abstractmethod
+    def run(
+        self,
+        toolbox: base.Toolbox,
+        train_data: list[pd.DataFrame],
+        train_entry_labels: list[pd.Series] | None,
+        train_exit_labels: list[pd.Series] | None,
+        *,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+        hof_factory: Callable[[], tools.HallOfFame] | None = None,
+    ) -> tuple[list[IndividualT], tools.Logbook, tools.HallOfFame | None]:
+        """Execute the full evolutionary algorithm. Entry point."""
+        ...
+
+
+class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
+    """(μ + λ) evolutionary algorithm implementing BaseAlgorithm.
+
+    Stores algorithm hyperparameters at construction time. Does not own
+    evaluation resources (pool, evaluator, data). Those are provided via
+    the toolbox (toolbox.evaluate, toolbox.map) and run() arguments.
     """
 
     def __init__(
         self,
-        toolbox: base.Toolbox,
+        *,
         mu: int,
         lambda_: int,
         cxpb: float,
         mutpb: float,
         ngen: int,
+        evaluator: BaseEvaluator[Any],
+        val_evaluator: BaseEvaluator[Any] | None = None,
         stats: tools.Statistics | None = None,
-        halloffame: tools.HallOfFame | None = None,
-        verbose: bool = True,
         n_jobs: int = 1,
-        evaluator: BaseEvaluator[Any] | None = None,
-        train_data: list["pd.DataFrame"] | None = None,
-        train_entry_labels: list["pd.Series"] | None = None,
-        train_exit_labels: list["pd.Series"] | None = None,
-        weights: tuple[float, ...] | None = None,
-        seed: int | None = None,
-        callbacks: list[Callback] | None = None,
-        val_callback: Callable[[int, int, list[IndividualT], IndividualT | None], None]
-        | None = None,
+        verbose: bool = True,
     ) -> None:
-        """Store all parameters needed to run the evolutionary algorithm.
-
-        Args:
-            pool: Multiprocessing pool used for parallel evaluation.
-            toolbox: DEAP toolbox with registered operators.
-            mu: Number of individuals selected for the next generation.
-            lambda_: Number of offspring produced per generation.
-            cxpb: Crossover probability.
-            mutpb: Mutation probability.
-            ngen: Total number of generations.
-            stats: Optional DEAP statistics object.
-            halloffame: Optional hall of fame.
-            verbose: Whether to print per-generation statistics.
-            val_callback: Optional callback invoked after each generation.
-        """
-        self.toolbox = toolbox
         self.mu = mu
         self.lambda_ = lambda_
         self.cxpb = cxpb
         self.mutpb = mutpb
         self.ngen = ngen
-        self.stats = stats
-        self.halloffame = halloffame
-        self.verbose = verbose
-        self.n_jobs = n_jobs
         self.evaluator = evaluator
-        self.train_data = train_data
-        self.train_entry_labels = train_entry_labels
-        self.train_exit_labels = train_exit_labels
-        self.weights = weights
-        self.seed = seed
-        self.callbacks = callbacks
-        self.val_callback = val_callback
+        self.val_evaluator = val_evaluator
+        self.stats = stats
+        self.n_jobs = n_jobs
+        self.verbose = verbose
+        if mu > lambda_:
+            raise ValueError("lambda must be greater or equal to mu.")
+
+    def initialize(
+        self,
+        toolbox: base.Toolbox,
+    ) -> tuple[list[IndividualT], float]:
+        """Create initial population of size mu and evaluate it."""
+        population = toolbox.population(n=self.mu)
+
+        start = time.perf_counter()
+        fitnesses = toolbox.map(toolbox.evaluate, population)
+        duration = time.perf_counter() - start
+        for ind, fit in zip(population, fitnesses, strict=True):
+            ind.fitness.values = fit
+        return cast(list[IndividualT], population), duration
+
+    def run_generation(
+        self,
+        population: list[IndividualT],
+        toolbox: base.Toolbox,
+        gen: int,
+        *,
+        halloffame: tools.HallOfFame | None = None,
+    ) -> tuple[list[IndividualT], dict[str, Any], int, float]:
+        """Execute one generation of (μ + λ).
+
+        Steps:
+        1. Generate offspring via varOr.
+        2. Evaluate invalid offspring via toolbox.map(toolbox.evaluate, ...).
+        3. Select next generation (μ + λ) → μ.
+        4. Update halloffame if provided.
+        5. Compile stats record.
+        6. If val_data is provided: evaluate best individual on validation data
+           via direct call to self.val_evaluator.evaluate(...).
+        7. Return (population, record, n_evals).
+        """
+        offspring = varOr(population, toolbox, self.lambda_, self.cxpb, self.mutpb)
+
+        # Evaluate offspring with invalid fitness
+        invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        n_evals = len(invalid_ind)
+        start = time.perf_counter()
+        fitnesses = list(toolbox.map(toolbox.evaluate, invalid_ind))
+        duration = time.perf_counter() - start
+        for ind, fit in zip(invalid_ind, fitnesses, strict=True):
+            ind.fitness.values = fit
+
+        # Select next generation: best mu from (parents + offspring)
+        population[:] = toolbox.select(population + offspring, self.mu)
+        best_ind = toolbox.select_best(population, 1)[0]
+
+        # Update hall of fame if provided
+        if halloffame is not None:
+            halloffame.update(population)
+
+        # Compile stats record
+        record = self.stats.compile(population) if self.stats is not None else {}
+
+        # If evaluate best individual on validation set
+        if hasattr(toolbox, "evaluate_val"):
+            val_fitness = toolbox.evaluate_val(best_ind)
+            record["best_fitness_val"] = val_fitness
+
+        return population, record, n_evals, duration
 
     def run(
         self,
-        train_data: list["pd.DataFrame"],
-        train_entry_labels: list["pd.Series"] | None,
-        train_exit_labels: list["pd.Series"] | None,
-    ) -> tuple[list[IndividualT], tools.Logbook]:
-        """Execute the evolutionary algorithm on the given population.
+        toolbox: base.Toolbox,
+        train_data: list[pd.DataFrame],
+        train_entry_labels: list[pd.Series] | None,
+        train_exit_labels: list[pd.Series] | None,
+        *,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+        hof_factory: Callable[[], tools.HallOfFame] | None = None,
+    ) -> tuple[list[IndividualT], tools.Logbook, tools.HallOfFame | None]:
+        """Full standalone evolution loop.
 
-        Args:
-            train_data: List of training data DataFrames, one per asset.
-            train_entry_labels: List of Series with entry labels, or None if not used.
-            train_exit_labels: List of Series with exit labels, or None if not used.
-
-        Returns:
-            A tuple of (final_population, logbook).
+        1. Create HOF instance via factory (if provided); else None.
+        2. Create logbook and record header.
+        3. Call initialize() to create and evaluate initial population.
+        4. Record gen 0 stats in logbook.
+        5. Call generational_loop() for ngen generations, passing HOF.
+        6. Return (population, logbook).
         """
-        # create worker pool for this run using evaluator and training data
-        if self.evaluator is None:
-            raise RuntimeError("EaMuPlusLambda requires an evaluator to run")
 
-        toolbox = copy.copy(self.toolbox)
-        # toolbox.register(
-        # worker_toolbox.register("evaluate", worker_evaluate)
+        # create worker pool for this run using evaluator and training data
+
+        toolbox = copy.copy(toolbox)
 
         pool_obj = create_pool(
             self.n_jobs,
@@ -280,22 +412,45 @@ class EaMuPlusLambda(Generic[IndividualT]):
         )
         toolbox.register("map", pool_obj.map)
         toolbox.register("evaluate", worker_evaluate)
-        pop = toolbox.population(n=self.mu)
-        try:
-            return eaMuPlusLambdaGentrade(
-                pool_obj,
-                pop,
-                toolbox,
-                mu=self.mu,
-                lambda_=self.lambda_,
-                cxpb=self.cxpb,
-                mutpb=self.mutpb,
-                ngen=self.ngen,
-                stats=self.stats,
-                halloffame=self.halloffame,
-                verbose=self.verbose,
-                val_callback=self.val_callback,
+        if val_data:
+            if self.val_evaluator is None:
+                raise RuntimeError("Validation data provided but val_evaluator is None")
+            toolbox.register(
+                "evaluate_val",
+                self.val_evaluator.evaluate,
+                ohlcvs=val_data,
+                entry_labels=val_entry_labels,
+                exit_labels=val_exit_labels,
+                aggregate=True,
             )
-        finally:
-            pool_obj.close()
-            pool_obj.join()
+
+        hof = hof_factory() if hof_factory is not None else None
+
+        logbook = tools.Logbook()
+        logbook.header = ["gen", "nevals"] + (self.stats.fields if self.stats else [])
+
+        population, duration = self.initialize(toolbox)
+        n_evals = len(population)
+
+        if hof is not None:
+            hof.update(population)
+
+        record = self.stats.compile(population) if self.stats is not None else {}
+        logbook.record(gen=0, nevals=n_evals, **record)
+        if self.verbose:
+            logger.info(logbook.stream)
+            logger.info(
+                f"Gen 0 evaluation time: {duration:.4f} s"
+                f" {duration / n_evals:.5f} s/individual"
+            )
+
+        population = self.generational_loop(
+            population,
+            toolbox,
+            self.ngen,
+            logbook,
+            halloffame=hof,
+            verbose=self.verbose,
+        )
+
+        return population, logbook, hof

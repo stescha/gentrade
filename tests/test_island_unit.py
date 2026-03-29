@@ -16,7 +16,7 @@ import pytest
 from deap import base, tools
 
 from gentrade.island import (
-    IslandEaMuPlusLambda,
+    IslandMigration,
     MigrationTimeoutError,
     QueueDepot,
 )
@@ -225,13 +225,9 @@ class TestMigrateRandom:
 class TestIslandEaMuPlusLambdaConstructor:
     """Verify constructor stores params and validates."""
 
-    def _make_algo(
-        self, n_islands: int = 2, n_jobs: int = 2
-    ) -> "IslandEaMuPlusLambda[Any]":
-        toolbox = MagicMock(spec=base.Toolbox)
+    def _make_algo(self, n_islands: int = 2, n_jobs: int = 2) -> "IslandMigration[Any]":
         evaluator = MagicMock()
-        return IslandEaMuPlusLambda(
-            toolbox=toolbox,
+        return IslandMigration(
             evaluator=evaluator,
             n_islands=n_islands,
             n_jobs=n_jobs,
@@ -286,11 +282,9 @@ class TestIslandEaMuPlusLambdaConstructor:
 
     def test_custom_topology_is_stored(self) -> None:
         """Custom topology is stored as-is."""
-        toolbox = MagicMock(spec=base.Toolbox)
         evaluator = MagicMock()
         topo = MigrateRandom(island_count=2, n_selected=1, migration_count=2, seed=0)
-        algo: IslandEaMuPlusLambda[Any] = IslandEaMuPlusLambda(
-            toolbox=toolbox,
+        algo: IslandMigration[Any] = IslandMigration(
             evaluator=evaluator,
             n_islands=2,
             n_jobs=2,
@@ -322,11 +316,10 @@ class TestIslandEaMuPlusLambdaConstructor:
 class TestIslandSeedDerivation:
     """Verify per-island seed generation."""
 
-    def _make_algo(self, seed: int | None = 42) -> "IslandEaMuPlusLambda[Any]":
+    def _make_algo(self, seed: int | None = 42) -> "IslandMigration[Any]":
         toolbox = MagicMock(spec=base.Toolbox)
         evaluator = MagicMock()
-        return IslandEaMuPlusLambda(
-            toolbox=toolbox,
+        return IslandMigration(
             evaluator=evaluator,
             n_islands=4,
             n_jobs=4,
