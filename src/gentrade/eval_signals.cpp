@@ -137,6 +137,11 @@ std::tuple<py::array_t<int>, py::array_t<int>, py::array_t<double>, py::array_t<
 }
 
 
+// wrap as Python module. Module name must match this cpp file name without out the .cpp extension.
+// So asume the c++ file is called `my_module.cpp`, the module name used for PYBIND11_MODULE must be `my_module`. 
+// In this case the c++ file is called eval_signals.cpp, so the module name is eval_signals. 
+// The exported function is called `eval` and can be imported in python 
+// as `from gentrade.eval_signals import eval`.
 
 // wrap as Python module
 PYBIND11_MODULE(eval_signals,m)
