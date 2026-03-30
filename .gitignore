@@ -17,8 +17,8 @@ __pycache__/
 *$py.class
 
 # C extensions
-*.so
-!src/gentrade/eval_signals.cpython-311-x86_64-linux-gnu.so 
+# *.so
+# !src/gentrade/eval_signals.cpython-311-x86_64-linux-gnu.so 
 
 # Distribution / packaging
 .Python
