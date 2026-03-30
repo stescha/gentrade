@@ -3,13 +3,16 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Generic, cast
+from dataclasses import dataclass
+from multiprocessing import pool as mp_pool
+from typing import Any, Callable, Generator, Generic
 
 import pandas as pd
 from deap import base, tools
 
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.eval_pop import create_pool, worker_evaluate
+from gentrade.individual import TreeIndividualBase
 from gentrade.types import IndividualT
 
 logger = logging.getLogger(__name__)
@@ -181,6 +184,24 @@ def eaMuPlusLambdaGentrade(
     return population, logbook
 
 
+@dataclass
+class AlgorithmState:
+    generation: int
+    # gen_start_time: float
+    logbook: tools.Logbook
+    halloffame: tools.HallOfFame | None
+    best_individual: TreeIndividualBase | None = None
+    best_fitness_val: tuple[float, ...] | None = None
+    best_fit: tuple[float, ...] | None = None
+    n_evaluated: int | None = None
+    eval_time: float | None = None
+    generation_time: float | None = None
+    # mean_fit: tuple[float, ...] | None = None
+    # population_size: int | None = None
+    # n_emigrants: int | None = None
+    # n_immigrants: int | None = None
+
+
 class BaseAlgorithm(ABC, Generic[IndividualT]):
     """Abstract base class for evolutionary algorithms.
 
@@ -188,6 +209,11 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
     loop, calling `pre_generation` and `post_generation` hooks around each
     generation. Subclasses must implement `initialize` and `run_generation`.
     """
+
+    evaluator: BaseEvaluator[Any]
+    val_evaluator: BaseEvaluator[Any] | None
+    stats: tools.Statistics | None
+    ngen: int
 
     @abstractmethod
     def initialize(
@@ -202,65 +228,174 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
         ...
 
     @abstractmethod
+    def initialize_toolbox(
+        self,
+        toolbox: base.Toolbox,
+        pool: mp_pool.Pool,
+        train_data: list[pd.DataFrame],
+        train_entry_labels: list[pd.Series] | None,
+        train_exit_labels: list[pd.Series] | None,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+    ) -> base.Toolbox:
+        """Prepare the toolbox with evaluation resources (pool, evaluator, data)"""
+        ...
+
+    @abstractmethod
+    def create_logbook(self) -> tools.Logbook:
+        """Create and return a logbook with the appropriate header for this algorithm."""
+        ...
+
+    @abstractmethod
     def run_generation(
         self,
         population: list[IndividualT],
         toolbox: base.Toolbox,
         gen: int,
-        *,
-        halloffame: tools.HallOfFame | None = None,
-    ) -> tuple[list[IndividualT], dict[str, Any], int, float]:
+    ) -> tuple[list[IndividualT], int, float]:
         """Execute a single generation.
 
         Returns (new_population, stats_record, n_evals, duration).
         """
         ...
 
-    def pre_generation(self, gen: int, population: list[IndividualT]) -> None:
+    def pre_generation(
+        self, population: list[IndividualT], state: AlgorithmState
+    ) -> None:
         """Hook called before each generation. Override for custom logic."""
 
     def post_generation(
-        self, gen: int, population: list[IndividualT], record: dict[str, Any]
+        self, population: list[IndividualT], state: AlgorithmState
     ) -> None:
         """Hook called after each generation. Override for custom logic."""
+
+    def post_initialization(
+        self,
+        population: list[IndividualT],
+        state: AlgorithmState,
+    ) -> None:
+        """Hook called after initialization. Override for custom logic."""
+
+    def update_tracking(
+        self,
+        population: list[IndividualT],
+        state: AlgorithmState,
+    ) -> None:
+        if state.halloffame is not None:
+            state.halloffame.update(population)
+
+        record = self.stats.compile(population) if self.stats is not None else {}
+        state.logbook.record(gen=state.generation, nevals=state.n_evaluated, **record)
+
+    def evaluate_individuals(
+        self,
+        toolbox: base.Toolbox,
+        individuals: list[IndividualT],
+        all_: bool = False,
+    ) -> tuple[int, float]:
+        """Create initial population of size mu and evaluate it."""
+        if all_:
+            invalid_ind = individuals
+        else:
+            invalid_ind = [ind for ind in individuals if not ind.fitness.valid]
+        n_evals = len(invalid_ind)
+        start = time.perf_counter()
+        fitnesses = toolbox.map(toolbox.evaluate, invalid_ind)
+        duration = time.perf_counter() - start
+        for ind, fit in zip(invalid_ind, fitnesses, strict=True):
+            ind.fitness.values = fit
+
+        return n_evals, duration
 
     def generational_loop(
         self,
         population: list[IndividualT],
         toolbox: base.Toolbox,
-        ngen: int,
-        logbook: tools.Logbook,
         *,
+        logbook: tools.Logbook,
         halloffame: tools.HallOfFame | None = None,
-        verbose: bool = False,
-    ) -> list[IndividualT]:
+    ) -> tuple[list[IndividualT], AlgorithmState]:
         """Drive the main evolution loop with hooks.
 
         Calls `pre_generation`, `run_generation`, `post_generation` for
         each generation from 1..ngen. Logs each generation's stats to `logbook`.
         Returns the final population.
         """
-        for gen in range(1, ngen + 1):
+        for gen in range(1, self.ngen + 1):
             start = time.perf_counter()
-            self.pre_generation(gen, population)
+            state = AlgorithmState(
+                generation=gen,
+                logbook=logbook,
+                halloffame=halloffame,
+            )
 
-            population, record, n_evals, duration_eval = self.run_generation(
+            self.pre_generation(population, state)
+
+            population, n_evals, duration_eval = self.run_generation(
                 population,
                 toolbox,
                 gen,
+            )
+            best_ind = toolbox.select_best(population, 1)[0]
+            state.best_individual = best_ind
+            state.best_fit = best_ind.fitness.values
+            state.n_evaluated = n_evals
+            state.eval_time = duration_eval
+
+            if hasattr(toolbox, "evaluate_val"):
+                val_fitness = toolbox.evaluate_val(best_ind)
+                state.best_fitness_val = val_fitness
+
+            self.update_tracking(population, state)
+            state.generation_time = time.perf_counter() - start
+            self.post_generation(population, state)
+
+            # Update hall of fame if provided
+
+        return population, state
+
+    # Experimental. May be unused. Keep for now.
+    def next_gen(
+        self,
+        population: list[IndividualT],
+        toolbox: base.Toolbox,
+        *,
+        logbook: tools.Logbook,
+        halloffame: tools.HallOfFame | None = None,
+    ) -> Generator[tuple[list[IndividualT], AlgorithmState], None, None]:
+        """Drive the main evolution loop with hooks.
+
+        Calls `pre_generation`, `run_generation`, `post_generation` for
+        each generation from 1..ngen. Logs each generation's stats to `logbook`.
+        Returns the final population.
+        """
+        for gen in range(1, self.ngen + 1):
+            start = time.perf_counter()
+            state = AlgorithmState(
+                generation=gen,
+                logbook=logbook,
                 halloffame=halloffame,
             )
-            self.post_generation(gen, population, record)
 
-            logbook.record(gen=gen, nevals=n_evals, **record)
-            duration_gen = time.perf_counter() - start
-            if verbose:
-                logger.info(logbook.stream)
-                logger.info(
-                    f"Gen {gen} time (gen / eval):{duration_gen:.4f} s / {duration_eval:.4f} s"
-                    f" {duration_eval / n_evals:.5f} s/individual"
-                )
-        return population
+            self.pre_generation(population, state)
+
+            yield population, state
+
+            best_ind = toolbox.select_best(population, 1)[0]
+            state.best_individual = best_ind
+
+            if hasattr(toolbox, "evaluate_val"):
+                val_fitness = toolbox.evaluate_val(best_ind)
+                state.best_fitness_val = val_fitness
+
+            self.update_tracking(population, state)
+            state.generation_time = time.perf_counter() - start
+            self.post_generation(population, state)
+
+            # Update hall of fame if provided
+        return
+        return population, state
 
     @abstractmethod
     def run(
@@ -314,68 +449,114 @@ class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
         if mu > lambda_:
             raise ValueError("lambda must be greater or equal to mu.")
 
+    def initialize_toolbox(
+        self,
+        toolbox: base.Toolbox,
+        pool: mp_pool.Pool,
+        train_data: list[pd.DataFrame],
+        train_entry_labels: list[pd.Series] | None,
+        train_exit_labels: list[pd.Series] | None,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+    ) -> base.Toolbox:
+
+        toolbox = copy.copy(toolbox)
+
+        toolbox.register("map", pool.map)
+        toolbox.register("evaluate", worker_evaluate)
+        if val_data:
+            if self.val_evaluator is None:
+                raise RuntimeError("Validation data provided but val_evaluator is None")
+            toolbox.register(
+                "evaluate_val",
+                self.val_evaluator.evaluate,
+                ohlcvs=val_data,
+                entry_labels=val_entry_labels,
+                exit_labels=val_exit_labels,
+                aggregate=True,
+            )
+        return toolbox
+
     def initialize(
         self,
         toolbox: base.Toolbox,
     ) -> tuple[list[IndividualT], float]:
         """Create initial population of size mu and evaluate it."""
         population = toolbox.population(n=self.mu)
-
-        start = time.perf_counter()
-        fitnesses = toolbox.map(toolbox.evaluate, population)
-        duration = time.perf_counter() - start
-        for ind, fit in zip(population, fitnesses, strict=True):
-            ind.fitness.values = fit
-        return cast(list[IndividualT], population), duration
+        _, duration = self.evaluate_individuals(toolbox, population, all_=True)
+        return population, duration
 
     def run_generation(
         self,
         population: list[IndividualT],
         toolbox: base.Toolbox,
         gen: int,
-        *,
-        halloffame: tools.HallOfFame | None = None,
-    ) -> tuple[list[IndividualT], dict[str, Any], int, float]:
-        """Execute one generation of (μ + λ).
-
-        Steps:
-        1. Generate offspring via varOr.
-        2. Evaluate invalid offspring via toolbox.map(toolbox.evaluate, ...).
-        3. Select next generation (μ + λ) → μ.
-        4. Update halloffame if provided.
-        5. Compile stats record.
-        6. If val_data is provided: evaluate best individual on validation data
-           via direct call to self.val_evaluator.evaluate(...).
-        7. Return (population, record, n_evals).
-        """
+    ) -> tuple[list[IndividualT], int, float]:
+        """Execute one generation of (μ + λ)."""
         offspring = varOr(population, toolbox, self.lambda_, self.cxpb, self.mutpb)
 
         # Evaluate offspring with invalid fitness
-        invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-        n_evals = len(invalid_ind)
-        start = time.perf_counter()
-        fitnesses = list(toolbox.map(toolbox.evaluate, invalid_ind))
-        duration = time.perf_counter() - start
-        for ind, fit in zip(invalid_ind, fitnesses, strict=True):
-            ind.fitness.values = fit
-
+        # invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        # n_evals = len(invalid_ind)
+        # start = time.perf_counter()
+        # fitnesses = list(toolbox.map(toolbox.evaluate, invalid_ind))
+        # duration = time.perf_counter() - start
+        # for ind, fit in zip(invalid_ind, fitnesses, strict=True):
+        #     ind.fitness.values = fit
+        n_evals, duration = self.evaluate_individuals(toolbox, offspring)
         # Select next generation: best mu from (parents + offspring)
         population[:] = toolbox.select(population + offspring, self.mu)
-        best_ind = toolbox.select_best(population, 1)[0]
 
-        # Update hall of fame if provided
-        if halloffame is not None:
-            halloffame.update(population)
+        return population, n_evals, duration
 
+    def post_initialization(
+        self,
+        population: list[IndividualT],
+        state: AlgorithmState,
+    ) -> None:
+        if self.verbose:
+            eval_time_per_ind = "N/A"
+            if state.eval_time and state.n_evaluated:
+                eval_time_per_ind = (
+                    f"{state.eval_time / state.n_evaluated:.4f}  s/individual"
+                )
+            logger.info(state.logbook.stream)
+            logger.info(
+                f"Gen 0 evaluation time: {state.eval_time:.4f} s {eval_time_per_ind}"
+            )
+
+    def create_logbook(self) -> tools.Logbook:
+        logbook = tools.Logbook()
+        logbook.header = ["gen", "nevals"] + (self.stats.fields if self.stats else [])
+        return logbook
+
+    def post_generation(
+        self,
+        population: list[IndividualT],
+        state: AlgorithmState,
+    ) -> None:
+        logbook = state.logbook
         # Compile stats record
-        record = self.stats.compile(population) if self.stats is not None else {}
 
-        # If evaluate best individual on validation set
-        if hasattr(toolbox, "evaluate_val"):
-            val_fitness = toolbox.evaluate_val(best_ind)
-            record["best_fitness_val"] = val_fitness
+        if self.verbose:
+            eval_time_per_ind = "N/A"
+            if state.eval_time and state.n_evaluated:
+                eval_time_per_ind = f"{state.eval_time / state.n_evaluated:.6f}  s/ind"
+            time_strs = " / ".join(
+                [
+                    f"{t:.4f} s" if t is not None else "N/A"
+                    for t in [state.generation_time, state.eval_time]
+                ]
+            )
 
-        return population, record, n_evals, duration
+            logger.info(logbook.stream)
+            logger.info(
+                f"Gen {state.generation} time (gen / eval): {time_strs}, "
+                f"eval/individual: {eval_time_per_ind}"
+            )
+            logger.info("   Best fitness train: %s", state.best_fit)
+            logger.info("   Best fitness val  : %s", state.best_fitness_val)
 
     def run(
         self,
@@ -389,68 +570,343 @@ class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
         val_exit_labels: list[pd.Series] | None = None,
         hof_factory: Callable[[], tools.HallOfFame] | None = None,
     ) -> tuple[list[IndividualT], tools.Logbook, tools.HallOfFame | None]:
-        """Full standalone evolution loop.
 
-        1. Create HOF instance via factory (if provided); else None.
-        2. Create logbook and record header.
-        3. Call initialize() to create and evaluate initial population.
-        4. Record gen 0 stats in logbook.
-        5. Call generational_loop() for ngen generations, passing HOF.
-        6. Return (population, logbook).
-        """
-
-        # create worker pool for this run using evaluator and training data
-
-        toolbox = copy.copy(toolbox)
-
-        pool_obj = create_pool(
+        pool = create_pool(
             self.n_jobs,
             evaluator=self.evaluator,
             train_data=train_data,
             train_entry_labels=train_entry_labels,
             train_exit_labels=train_exit_labels,
         )
-        toolbox.register("map", pool_obj.map)
-        toolbox.register("evaluate", worker_evaluate)
-        if val_data:
-            if self.val_evaluator is None:
-                raise RuntimeError("Validation data provided but val_evaluator is None")
-            toolbox.register(
-                "evaluate_val",
-                self.val_evaluator.evaluate,
-                ohlcvs=val_data,
-                entry_labels=val_entry_labels,
-                exit_labels=val_exit_labels,
-                aggregate=True,
+        try:
+            toolbox = self.initialize_toolbox(
+                toolbox,
+                pool,
+                train_data,
+                train_entry_labels,
+                train_exit_labels,
+                val_data,
+                val_entry_labels,
+                val_exit_labels,
             )
 
-        hof = hof_factory() if hof_factory is not None else None
+            hof = hof_factory() if hof_factory is not None else None
 
-        logbook = tools.Logbook()
-        logbook.header = ["gen", "nevals"] + (self.stats.fields if self.stats else [])
+            logbook = self.create_logbook()
 
-        population, duration = self.initialize(toolbox)
-        n_evals = len(population)
-
-        if hof is not None:
-            hof.update(population)
-
-        record = self.stats.compile(population) if self.stats is not None else {}
-        logbook.record(gen=0, nevals=n_evals, **record)
-        if self.verbose:
-            logger.info(logbook.stream)
-            logger.info(
-                f"Gen 0 evaluation time: {duration:.4f} s"
-                f" {duration / n_evals:.5f} s/individual"
+            population, duration = self.initialize(toolbox)
+            state = AlgorithmState(
+                generation=0,
+                n_evaluated=len(population),
+                eval_time=duration,
+                # generation_time=None,
+                best_fitness_val=None,
+                logbook=logbook,
+                halloffame=hof,
             )
+            self.update_tracking(population, state)
+            self.post_initialization(population, state)
 
-        population = self.generational_loop(
-            population,
-            toolbox,
-            self.ngen,
-            logbook,
-            halloffame=hof,
-            verbose=self.verbose,
-        )
+            # for population_gen, state in self.next_gen(
+            #     population, toolbox, logbook=logbook, halloffame=hof
+            # ):
+            #     population_gen, n_evals, duration_eval = self.run_generation(
+            #         population_gen, toolbox, state.generation
+            #     )
+            #     state.n_evaluated = n_evals
+            #     state.eval_time = duration_eval
+            # return population_gen, logbook, hof
 
+            population, state = self.generational_loop(
+                population,
+                toolbox,
+                logbook=logbook,
+                halloffame=hof,
+            )
+        finally:
+            pool.close()
+            pool.join()
         return population, logbook, hof
+
+
+# Override, Callback, Itertor, code duplicatoin
+
+
+class EaMuPlusLambdaIslands(EaMuPlusLambda[IndividualT]):
+    """ """
+
+    def set_config(self, island_id, descriptor, select_best_op):
+        self.island_id = island_id
+        self.descriptor = descriptor
+        self.select_best_op = select_best_op
+
+    # def post_initialization(self, population, state):
+
+    #     if self.migration_rate > 0:
+    #         emigrants = self.select_best_op(population, self.migration_count)
+    #         self.descriptor.depot.push([self.toolbox.clone(e) for e in emigrants])
+    #     from gentrade.island import ResultMessage
+
+    #     ResultMessage(
+    #         island_id=island_id,
+    #         generation=0,
+    #         best_individual=None,
+    #         best_fitness_val=None,
+    #         best_fit=None,
+    #         mean_fit=None,
+    #         n_evaluated=len(population),
+    #         eval_time=0.0,
+    #         generation_time=0.0,
+    #         population_size=len(population),
+    #         n_emigrants=len(emigrants) if self.migration_rate > 0 else 0,
+    #         n_immigrants=0,
+    #     )
+    #     return super().post_initialization(population, state)
+
+    def pre_generation(
+        self, population: list[IndividualT], state: AlgorithmState
+    ) -> None:
+        return super().pre_generation(population, state)
+
+    def post_generation(
+        self, population: list[IndividualT], state: AlgorithmState
+    ) -> None:
+
+        return super().post_generation(population, state)
+
+
+# import multiprocessing as mp
+
+
+# class LogicalIsland:
+#     def __init__(
+#         self,
+#         descriptor: Any,
+#         toolbox: base.Toolbox,
+#         evaluator: BaseEvaluator[Any],
+#         mu: int,
+#         lambda_: int,
+#         cxpb: float,
+#         mutpb: float,
+#         ngen: int,
+#         migration_rate: int,
+#         migration_count: int,
+#         pull_timeout: float,
+#         pull_max_retries: int,
+#         stats: tools.Statistics | None,
+#         replace_selection_op: Any,
+#         select_best_op: Any,
+#         val_callback: "Callable[..., None] | None",
+#         verbose: bool,
+#         master_queue: mp.Queue[object] | None = None,
+#     ) -> None:
+#         self.descriptor = descriptor
+#         self.toolbox = toolbox
+#         self.evaluator = evaluator
+#         self.mu = mu
+#         self.lambda_ = lambda_
+#         self.cxpb = cxpb
+#         self.mutpb = mutpb
+#         self.ngen = ngen
+#         self.migration_rate = migration_rate
+#         self.migration_count = migration_count
+#         self.pull_timeout = pull_timeout
+#         self.pull_max_retries = pull_max_retries
+#         self.stats = stats
+#         self.replace_selection_op = replace_selection_op
+#         self.select_best_op = select_best_op
+#         self.val_callback = val_callback
+#         self.verbose = verbose
+#         self.master_queue = master_queue
+
+#     def run(
+#         self,
+#         train_data: list[pd.DataFrame],
+#         train_entry_labels: list[pd.Series] | None,
+#         train_exit_labels: list[pd.Series] | None,
+#         topology: Any,
+#         stop_event: Any,
+#     ) -> tuple[list[Any], tools.Logbook]:
+#         island_id = self.descriptor.island_id
+#         logbook = tools.Logbook()
+#         logbook.header = ["gen", "nevals"] + (self.stats.fields if self.stats else [])
+
+#         population: list[Any] = self.toolbox.population(n=self.mu)
+#         _evaluate_population(
+#             population,
+#             self.evaluator,
+#             train_data,
+#             train_entry_labels,
+#             train_exit_labels,
+#         )
+
+#         record = self.stats.compile(population) if self.stats is not None else {}
+#         logbook.record(gen=0, nevals=len(population), **record)
+#         if self.verbose:
+#             logger.info("[Island %d] Gen 0: %d evals", island_id, len(population))
+
+#         if self.migration_rate > 0:
+#             emigrants = self.select_best_op(population, self.migration_count)
+#             self.descriptor.depot.push([self.toolbox.clone(e) for e in emigrants])
+
+#         # publish gen0
+#         if self.master_queue is not None:
+#             try:
+#                 self.master_queue.put(
+#                     ResultMessage(
+#                         island_id=island_id,
+#                         generation=0,
+#                         best_individual=None,
+#                         best_fitness_val=None,
+#                         best_fit=None,
+#                         mean_fit=None,
+#                         n_evaluated=len(population),
+#                         eval_time=0.0,
+#                         generation_time=0.0,
+#                         population_size=len(population),
+#                         n_emigrants=len(emigrants) if self.migration_rate > 0 else 0,
+#                         n_immigrants=0,
+#                     )
+#                 )
+#             except Exception:
+#                 logger.exception("Failed to publish gen0 result")
+
+#         for gen in range(1, self.ngen + 1):
+#             if stop_event.is_set():
+#                 break
+
+#             gen_start = time.time()
+#             n_emigrants_this_gen = 0
+#             n_immigrants_this_gen = 0
+#             eval_time_acc = 0.0
+
+#             if self.migration_rate > 0 and gen % self.migration_rate == 0:
+#                 depots = self.descriptor.neighbor_depots
+#                 plan = topology.get_immigrants(island_id, depot_count=len(depots))
+#                 immigrants: list[Any] = []
+#                 expected_count = sum(pull_n for _, pull_n in plan)
+#                 for src_idx, pull_n in plan:
+#                     src_depot = depots[src_idx]
+#                     try:
+#                         immigrant = src_depot.pull(
+#                             pull_n,
+#                             timeout=self.pull_timeout,
+#                             max_retries=self.pull_max_retries,
+#                         )
+#                         immigrants.extend(immigrant)
+#                     except MigrationTimeoutError:
+#                         logger.warning(
+#                             "Island %d: pull from depot %d failed at gen %d. Continuing without immigrants.",
+#                             island_id,
+#                             src_idx,
+#                             gen,
+#                         )
+#                         continue
+
+#                 if len(immigrants) != expected_count:
+#                     logger.warning(
+#                         f"Expected {expected_count} immigrants, received {len(immigrants)} at gen {gen} for island {island_id}."
+#                     )
+
+#                 n_immigrants_this_gen = len(immigrants)
+#                 immigrants = [self.toolbox.clone(im) for im in immigrants]
+#                 for im in immigrants:
+#                     del im.fitness.values
+
+#                 start_eval_imm = time.time()
+#                 _evaluate_population(
+#                     immigrants,
+#                     self.evaluator,
+#                     train_data,
+#                     train_entry_labels,
+#                     train_exit_labels,
+#                 )
+#                 eval_time_acc += time.time() - start_eval_imm
+
+#                 worst = self.replace_selection_op(population, n_immigrants_this_gen)
+#                 for w, im in zip(worst, immigrants, strict=True):
+#                     idx = population.index(w)
+#                     population[idx] = im
+#                 logger.info(
+#                     "Island %d: Immigrated %d individuals at gen %d (expected %d).",
+#                     island_id,
+#                     n_immigrants_this_gen,
+#                     gen,
+#                     expected_count,
+#                 )
+
+#             if stop_event.is_set():
+#                 break
+
+#             offspring = varOr(
+#                 population, self.toolbox, self.lambda_, self.cxpb, self.mutpb
+#             )
+#             start_eval_off = time.time()
+#             nevals = _evaluate_population(
+#                 offspring,
+#                 self.evaluator,
+#                 train_data,
+#                 train_entry_labels,
+#                 train_exit_labels,
+#             )
+#             eval_time_acc += time.time() - start_eval_off
+
+#             population[:] = self.toolbox.select(population + offspring, self.mu)
+
+#             if self.migration_rate > 0 and gen % self.migration_rate == 0:
+#                 emigrants = self.select_best_op(population, self.migration_count)
+#                 self.descriptor.depot.push([self.toolbox.clone(e) for e in emigrants])
+#                 n_emigrants_this_gen = len(emigrants)
+
+#             record = self.stats.compile(population) if self.stats is not None else {}
+#             logbook.record(gen=gen, nevals=nevals, **record)
+#             if self.verbose:
+#                 logger.info("[Island %d] Gen %d: %d evals", island_id, gen, nevals)
+
+#             if self.val_callback is not None:
+#                 best_ind = self.select_best_op(population, k=1)[0]
+#                 self.val_callback(
+#                     gen, self.ngen, population, best_ind, island_id=island_id
+#                 )
+
+#             gen_time = time.time() - gen_start
+
+#             if self.master_queue is not None:
+#                 try:
+#                     best_fit = None
+#                     mean_fit = None
+#                     try:
+#                         best = self.select_best_op(population, k=1)[0]
+#                         best_fit = (
+#                             tuple(best.fitness.values) if best is not None else None
+#                         )
+#                     except Exception:
+#                         best_fit = None
+#                     try:
+#                         mean_fit = tuple(
+#                             np.mean([ind.fitness.values for ind in population], axis=0)
+#                         )
+#                     except Exception:
+#                         mean_fit = None
+
+#                     self.master_queue.put(
+#                         ResultMessage(
+#                             island_id=island_id,
+#                             generation=gen,
+#                             best_individual=best,
+#                             best_fitness_val=None,
+#                             best_fit=best_fit,
+#                             mean_fit=mean_fit,
+#                             n_evaluated=nevals,
+#                             eval_time=eval_time_acc,
+#                             generation_time=gen_time,
+#                             population_size=len(population),
+#                             n_emigrants=n_emigrants_this_gen,
+#                             n_immigrants=n_immigrants_this_gen,
+#                         )
+#                     )
+#                 except Exception:
+#                     logger.exception("Failed to publish ResultMessage for gen %d", gen)
+
+#         logger.debug("Island %d finished evolution loop.", island_id)
+#         return population, logbook

@@ -22,11 +22,12 @@ import numpy as np
 from deap import gp, tools
 
 from gentrade.backtest_metrics import MeanPnlCppMetric
+from gentrade.classification_metrics import F1Metric
 from gentrade.config import BacktestConfig
 from gentrade.individual import PairTreeIndividual
 from gentrade.minimal_pset import create_pset_default_large, zigzag_pivots
 from gentrade.optimizer import PairTreeOptimizer
-from gentrade.tradetools import load_binance_ohlcv, load_binance_ohlcvs, plot_signals
+from gentrade.tradetools import load_binance_ohlcv, load_binance_ohlcvs
 
 seed = random.randint(0, 1000000)
 # seed = 509328
@@ -36,8 +37,8 @@ np.random.seed(seed)
 
 now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 filename = Path(__file__).stem
-# handler = logging.FileHandler(f"logs/{filename}_{now}.log")
-handler = logging.StreamHandler()
+handler = logging.FileHandler(f"logs/{filename}_{now}.log")
+# handler = logging.StreamHandler()
 
 formatter = logging.Formatter("%(asctime)s [%(name)s] [%(levelname)s]:  %(message)s")
 
@@ -65,13 +66,13 @@ if __name__ == "__main__":
     opt = PairTreeOptimizer(
         pset=create_pset_default_large,
         metrics=(
-            # F1Metric(tree_aggregation="buy"),
+            F1Metric(tree_aggregation="buy"),
             # F1Metric(tree_aggregation="sell"),
-            MeanPnlCppMetric(min_trades=10, weight=1),
+            MeanPnlCppMetric(min_trades=30, weight=1),
         ),
         metrics_val=(
             # F1Metric(tree_aggregation="mean"),
-            # F1Metric(tree_aggregation="buy"),
+            F1Metric(tree_aggregation="buy"),
             # F1Metric(tree_aggregation="sell"),
             MeanPnlCppMetric(min_trades=0),
         ),
@@ -79,30 +80,32 @@ if __name__ == "__main__":
         mutation=gp.mutUniform,  # type: ignore
         crossover=gp.cxOnePointLeafBiased,
         crossover_params={"termpb": 0.1},
-        # selection=tools.selNSGA2,  # type: ignore
-        # select_best=tools.selNSGA2,  # type: ignore
-        selection=tools.selDoubleTournament,  # type: ignore
-        selection_params={
-            "fitness_size": 5,
-            "parsimony_size": 1.2,
-            "fitness_first": True,
-        },
-        select_best=tools.selBest,  # type: ignore
+        selection=tools.selNSGA2,  # type: ignore
+        select_best=tools.selNSGA2,  # type: ignore
+        # selection=tools.selDoubleTournament,  # type: ignore
+        # selection_params={
+        #     "fitness_size": 20,
+        #     "parsimony_size": 1.2,
+        #     "fitness_first": True,
+        # },
+        # select_best=tools.selBest,  # type: ignore
         # selection=tools.selAutomaticEpsilonLexicase,  # type: ignore
         # select_best=tools.selAutomaticEpsilonLexicase,  # type: ignore
         tree_gen="grow",
         tree_max_depth=8,
         tree_max_height=20,
         tree_min_depth=2,
-        mu=500,  # population size per island
-        lambda_=1000,  # offspring size per island
-        generations=50,
+        mu=300,  # population size per island
+        lambda_=300,  # offspring size per island
+        # mu=150,  # population size per island
+        # lambda_=300,  # offspring size per island
+        generations=30,
         cxpb=0.6,
         mutpb=0.3,
         # seed=None,
         verbose=True,
         # Island migration params (0 = disabled)
-        migration_rate=0,
+        migration_rate=5,
         migration_count=5,
         n_jobs=32,
         n_islands=32,
@@ -110,7 +113,8 @@ if __name__ == "__main__":
         pull_timeout=2.0,
         pull_max_retries=20,
         push_timeout=2.0,
-        replace_selection_op=tools.selWorst,  # type: ignore
+        # select_replace=tools.selWorst,  # type: ignore
+        select_replace=tools.selNSGA2,  # type: ignore
     )
 
     start, count = 200_000, 20_000
@@ -137,10 +141,10 @@ if __name__ == "__main__":
         f"Best entry: {str(best.buy_tree)}\nBest exit: {str(best.sell_tree)}\n"
         f"Fitness: {best.fitness.values}"
     )
-    plot_signals(
-        opt.pset_,
-        train_data=df_train["ETHUSDT"] if isinstance(df_train, dict) else df_train,
-        val_data=df_val,
-        entry_tree=best.buy_tree,
-        exit_tree=best.sell_tree,
-    )
+    # plot_signals(
+    #     opt.pset_,
+    #     train_data=df_train["ETHUSDT"] if isinstance(df_train, dict) else df_train,
+    #     val_data=df_val,
+    #     entry_tree=best.buy_tree,
+    #     exit_tree=best.sell_tree,
+    # )

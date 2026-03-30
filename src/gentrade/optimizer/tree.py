@@ -18,6 +18,7 @@ from gentrade.individual import (
     apply_operators,
 )
 from gentrade.optimizer.base import BaseOptimizer
+from gentrade.topologies import MigrationTopology, RingTopology
 from gentrade.types import (
     Algorithm,
     CrossoverOp,
@@ -181,7 +182,11 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         pull_timeout: float = 2.0,
         pull_max_retries: int = 3,
         push_timeout: float = 2.0,
-        replace_selection_op: SelectionOp[gp.PrimitiveTree] = tools.selWorst,  # type: ignore[assignment]
+        select_replace: SelectionOp[gp.PrimitiveTree] = tools.selWorst,  # type: ignore[assignment]
+        select_replace_params: OperatorKwargs | None = None,
+        select_emigrants: SelectionOp[gp.PrimitiveTree] | None = None,
+        select_emigrants_params: OperatorKwargs | None = None,
+        topology: MigrationTopology | None = None,
     ) -> None:
         super().__init__(
             metrics=metrics,
@@ -228,7 +233,14 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         self.pull_timeout = pull_timeout
         self.pull_max_retries = pull_max_retries
         self.push_timeout = push_timeout
-        self.replace_selection_op = replace_selection_op
+        self.select_replace = select_replace
+        self.select_replace_params = select_replace_params
+        self.select_emigrants = select_emigrants or selection
+        self.select_emigrants_params = select_emigrants_params
+        if select_emigrants is None:
+            self.select_emigrants_params = selection_params
+
+        self.topology = topology or RingTopology(n_islands, migration_count)
 
         self._validate_migration_params()
         self._validate_selection_objective_count(selection)
@@ -307,6 +319,18 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         Returns:
             Configured algorithm instance.
         """
+        algorithm = EaMuPlusLambda[Any](
+            mu=self.mu,
+            lambda_=self.lambda_,
+            cxpb=self.cxpb,
+            mutpb=self.mutpb,
+            ngen=self.generations,
+            evaluator=evaluator,
+            val_evaluator=val_evaluator,
+            stats=stats,
+            n_jobs=self.n_jobs,
+            verbose=self.verbose,
+        )
         if self.migration_rate > 0:
             # Deferred import: island.py imports from algorithms.py and
             # individual.py, which import from optimizer/ at test collection time.
@@ -322,44 +346,34 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
                 self.migration_count,
             )
 
-            weights = tuple(m.weight for m in self.metrics)
+            self.toolbox_.register(
+                "select_replace",
+                self.select_replace,
+                **(self.select_replace_params or {}),
+            )
+            self.toolbox_.register(
+                "select_emigrants",
+                self.select_emigrants,
+                **(self.select_emigrants_params or {}),
+            )
+
             return IslandMigration(
-                evaluator=evaluator,
+                algorithm=algorithm,
+                topology=self.topology,
                 n_islands=self.n_islands,
-                n_jobs=self.n_jobs,
-                mu=self.mu,
-                lambda_=self.lambda_,
-                ngen=self.generations,
-                cxpb=self.cxpb,
-                mutpb=self.mutpb,
                 migration_rate=self.migration_rate,
                 migration_count=self.migration_count,
                 depot_capacity=self.depot_capacity,
                 pull_timeout=self.pull_timeout,
                 pull_max_retries=self.pull_max_retries,
                 push_timeout=self.push_timeout,
-                replace_selection_op=self.replace_selection_op,
-                select_best_op=self.select_best,
-                weights=weights,
-                stats=stats,
-                halloffame=halloffame,
-                seed=self.seed,
+                n_jobs=self.n_jobs,
                 verbose=self.verbose,
+                seed=self.seed,
             )
 
         logger.debug("Using standard EaMuPlusLambda (no island migration)")
-        return EaMuPlusLambda[Any](
-            mu=self.mu,
-            lambda_=self.lambda_,
-            cxpb=self.cxpb,
-            mutpb=self.mutpb,
-            ngen=self.generations,
-            evaluator=evaluator,
-            val_evaluator=val_evaluator,
-            stats=stats,
-            n_jobs=self.n_jobs,
-            verbose=self.verbose,
-        )
+        return algorithm
 
     @abstractmethod
     def _make_individual(

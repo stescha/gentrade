@@ -105,7 +105,7 @@ if __name__ == "__main__":
         pull_timeout=2.0,
         pull_max_retries=10,
         push_timeout=2.0,
-        replace_selection_op=tools.selWorst,  # type: ignore
+        select_replace=tools.selWorst,  # type: ignore
     )
 
     start, count = 200_000, 20_000
