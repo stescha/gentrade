@@ -5,7 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from multiprocessing import pool as mp_pool
-from typing import Any, Callable, Generator, Generic
+from typing import Any, Callable, Generator, Generic, cast
 
 import pandas as pd
 from deap import base, tools
@@ -284,6 +284,39 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
         """
         ...
 
+    @abstractmethod
+    def prepare_emigrants(
+        self,
+        population: list[IndividualT],
+        toolbox: base.Toolbox,
+        n_emigrants: int,
+    ) -> list[object]:
+        """Select and package emigrants for migration to neighbor islands.
+
+        Returns:
+            A list of opaque objects (e.g., cloned individuals or
+            :class:`~gentrade.migration.MigrationPacket` instances) suitable
+            for pushing to a :class:`~gentrade.island.QueueDepot`.
+        """
+        ...
+
+    @abstractmethod
+    def accept_immigrants(
+        self,
+        population: list[IndividualT],
+        immigrants: list[object],
+        toolbox: base.Toolbox,
+    ) -> tuple[list[IndividualT], int, float]:
+        """Integrate immigrants into the local population.
+
+        Invalidates immigrant fitness, re-evaluates them with local context,
+        then replaces the worst population members.
+
+        Returns:
+            Tuple of (updated_population, n_evaluated, duration_seconds).
+        """
+        ...
+
     def pre_generation(
         self, population: list[IndividualT], state: AlgorithmState
     ) -> None:
@@ -559,6 +592,60 @@ class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
         population[:] = toolbox.select(population + offspring, self.mu)
 
         return population, n_evals, duration
+
+    def prepare_emigrants(
+        self,
+        population: list[IndividualT],
+        toolbox: base.Toolbox,
+        n_emigrants: int,
+    ) -> list[object]:
+        """Select and clone emigrants using ``toolbox.select_emigrants``.
+
+        Args:
+            population: Current local population.
+            toolbox: Configured toolbox with ``select_emigrants`` registered.
+            n_emigrants: Number of individuals to send.
+
+        Returns:
+            List of cloned individual objects ready for depot insertion.
+        """
+        emigrants = toolbox.select_emigrants(population, n_emigrants)
+        return [toolbox.clone(e) for e in emigrants]
+
+    def accept_immigrants(
+        self,
+        population: list[IndividualT],
+        immigrants: list[object],
+        toolbox: base.Toolbox,
+    ) -> tuple[list[IndividualT], int, float]:
+        """Clone, re-evaluate, and integrate immigrants into the population.
+
+        Clones each immigrant, invalidates its fitness, evaluates it with the
+        local evaluator, and replaces the worst population members.
+
+        Args:
+            population: Current local population to be updated in place.
+            immigrants: Raw objects pulled from depots (cloned individuals).
+            toolbox: Configured toolbox with ``evaluate``, ``map``,
+                ``clone``, and ``select_replace`` registered.
+
+        Returns:
+            Tuple of (updated_population, n_evaluated, duration_seconds).
+        """
+        typed_immigrants: list[IndividualT] = [
+            cast(IndividualT, toolbox.clone(im)) for im in immigrants
+        ]
+        for im in typed_immigrants:
+            del im.fitness.values
+
+        n_evaluated, duration = self.evaluate_individuals(toolbox, typed_immigrants)
+
+        worst = toolbox.select_replace(population, len(typed_immigrants))
+        for w, im in zip(worst, typed_immigrants, strict=True):
+            idx = population.index(w)
+            population[idx] = im
+
+        return population, n_evaluated, duration
 
     def post_initialization(
         self,
