@@ -4,19 +4,25 @@ Tests cover:
 - QueueDepot push/pull behaviour (auto-evict, timeout, retries)
 - RingTopology and MigrateRandom migration plans
 - IslandMigration constructor validation and helper methods
-- LogicalIsland immigrant merge logic
+- LogicalIsland constructor validation and immigrant merge logic
 """
 
 import multiprocessing as mp
+import multiprocessing.synchronize as mp_sync
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
+from deap import base, tools
 
 from gentrade.island import (
     IslandMigration,
+    LogicalIsland,
     MigrationTimeoutError,
     QueueDepot,
+    ResultMessage,
+    _IslandDescriptor,
 )
 from gentrade.topologies import MigrateRandom, RingTopology
 
@@ -350,3 +356,439 @@ class TestIslandSeedDerivation:
         s1 = algo._create_worker_seeds()
         s2 = algo._create_worker_seeds()
         assert s1 != s2
+
+
+# ---------------------------------------------------------------------------
+# LogicalIsland helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_individual() -> MagicMock:
+    """Create a mock individual with a valid fitness.values tuple."""
+    ind = MagicMock()
+    ind.fitness.values = (0.5,)
+    return ind
+
+
+def _make_mock_algorithm(ngen: int = 2) -> MagicMock:
+    """Create a mock BaseAlgorithm with sensible defaults.
+
+    Uses a fresh mock individual so all returns share the same type.
+    """
+    algo = MagicMock()
+    algo.ngen = ngen
+    algo.verbose = False
+    algo.evaluator = MagicMock()
+    algo.val_evaluator = None
+
+    mock_ind = _make_mock_individual()
+
+    # initialize returns (population, n_evaluated, duration)
+    algo.initialize.return_value = ([mock_ind, mock_ind], 2, 0.1)
+    # run_generation returns (population, n_evaluated, duration)
+    algo.run_generation.return_value = ([mock_ind, mock_ind], 2, 0.05)
+    # accept_immigrants returns (population, n_evaluated, duration)
+    algo.accept_immigrants.return_value = ([mock_ind, mock_ind], 1, 0.01)
+    algo.prepare_emigrants.return_value = [mock_ind]
+    algo.create_logbook.return_value = tools.Logbook()
+
+    return algo
+
+
+def _make_logical_island(
+    algorithm: MagicMock,
+    toolbox: base.Toolbox,
+    master_queue: MagicMock,
+    stop_event: mp_sync.Event,
+    island_id: int = 0,
+    migration_rate: int = 1,
+    migration_count: int = 1,
+    pull_timeout: float = 0.1,
+    pull_max_retries: int = 1,
+    n_depots: int = 2,
+) -> LogicalIsland:
+    """Create a LogicalIsland with minimal mocked dependencies.
+
+    Uses a ``MagicMock`` for *master_queue* to avoid multiprocessing pickling.
+    """
+    depots = [QueueDepot(maxlen=10) for _ in range(n_depots)]
+    descriptor = _IslandDescriptor(
+        island_id=island_id,
+        neighbor_depots=depots,
+    )
+    topology = RingTopology(island_count=n_depots, migration_count=migration_count)
+    return LogicalIsland(
+        descriptor=descriptor,
+        topology=topology,
+        stop_event=stop_event,
+        algorithm=algorithm,
+        toolbox=toolbox,
+        master_queue=master_queue,  # type: ignore[arg-type]
+        migration_rate=migration_rate,
+        migration_count=migration_count,
+        pull_timeout=pull_timeout,
+        pull_max_retries=pull_max_retries,
+    )
+
+
+# ---------------------------------------------------------------------------
+# LogicalIsland constructor validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLogicalIslandConstructorValidation:
+    """Verify LogicalIsland raises on invalid construction arguments."""
+
+    def _base_args(self) -> dict[str, Any]:
+        algo = _make_mock_algorithm()
+        toolbox = MagicMock(spec=base.Toolbox)
+        master_queue: MagicMock = MagicMock()  # avoid mp.Queue pickling in unit tests
+        stop_event: mp_sync.Event = mp.Event()
+        depots = [QueueDepot(maxlen=10), QueueDepot(maxlen=10)]
+        descriptor = _IslandDescriptor(
+            island_id=0, neighbor_depots=depots
+        )
+        return {
+            "descriptor": descriptor,
+            "topology": RingTopology(island_count=2, migration_count=1),
+            "stop_event": stop_event,
+            "algorithm": algo,
+            "toolbox": toolbox,
+            "master_queue": master_queue,
+            "migration_rate": 1,
+            "migration_count": 1,
+            "pull_timeout": 1.0,
+            "pull_max_retries": 0,
+        }
+
+    def test_valid_construction_succeeds(self) -> None:
+        """LogicalIsland can be constructed with valid arguments."""
+        args = self._base_args()
+        island = LogicalIsland(**args)
+        assert island.migration_rate == 1
+        assert island.migration_count == 1
+
+    def test_zero_migration_rate_raises(self) -> None:
+        """migration_rate=0 raises ValueError."""
+        args = self._base_args()
+        args["migration_rate"] = 0
+        with pytest.raises(ValueError, match="migration_rate must be > 0"):
+            LogicalIsland(**args)
+
+    def test_negative_migration_rate_raises(self) -> None:
+        """migration_rate < 0 raises ValueError."""
+        args = self._base_args()
+        args["migration_rate"] = -1
+        with pytest.raises(ValueError, match="migration_rate must be > 0"):
+            LogicalIsland(**args)
+
+    def test_zero_migration_count_raises(self) -> None:
+        """migration_count=0 raises ValueError."""
+        args = self._base_args()
+        args["migration_count"] = 0
+        with pytest.raises(ValueError, match="migration_count must be > 0"):
+            LogicalIsland(**args)
+
+    def test_zero_pull_timeout_raises(self) -> None:
+        """pull_timeout=0 raises ValueError."""
+        args = self._base_args()
+        args["pull_timeout"] = 0.0
+        with pytest.raises(ValueError, match="pull_timeout must be > 0"):
+            LogicalIsland(**args)
+
+    def test_negative_pull_max_retries_raises(self) -> None:
+        """pull_max_retries=-1 raises ValueError."""
+        args = self._base_args()
+        args["pull_max_retries"] = -1
+        with pytest.raises(ValueError, match="pull_max_retries must be >= 0"):
+            LogicalIsland(**args)
+
+    def test_none_evaluator_raises(self) -> None:
+        """Algorithm with evaluator=None raises ValueError."""
+        args = self._base_args()
+        args["algorithm"].evaluator = None
+        with pytest.raises(ValueError, match="evaluator must be provided"):
+            LogicalIsland(**args)
+
+    def test_stores_ngen_from_algorithm(self) -> None:
+        """ngen is taken from algorithm.ngen."""
+        args = self._base_args()
+        args["algorithm"].ngen = 7
+        island = LogicalIsland(**args)
+        assert island.ngen == 7
+
+
+# ---------------------------------------------------------------------------
+# LogicalIsland immigrant merge logic
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLogicalIslandImmigrantMerge:
+    """Verify LogicalIsland pulls immigrants and delegates to algorithm hooks."""
+
+    def _make_toolbox(self, mock_ind: Any) -> base.Toolbox:
+        """Create a minimal toolbox with select_best returning mock_ind."""
+        tb = base.Toolbox()
+        tb.register("select_best", lambda pop, k: [mock_ind] * k)
+        return tb
+
+    def test_accept_immigrants_called_on_migration_generation(self) -> None:
+        """accept_immigrants is called exactly once per migration generation."""
+        mock_ind = _make_mock_individual()
+        algo = _make_mock_algorithm(ngen=2)
+        algo.initialize.return_value = ([mock_ind, mock_ind], 2, 0.1)
+        algo.run_generation.return_value = ([mock_ind, mock_ind], 2, 0.05)
+        algo.accept_immigrants.return_value = ([mock_ind, mock_ind], 1, 0.01)
+
+        toolbox = self._make_toolbox(mock_ind)
+
+        master_queue: MagicMock = MagicMock()
+        stop_event: mp_sync.Event = mp.Event()
+
+        # Put one individual in the neighbor depot so pull succeeds.
+        depots = [QueueDepot(maxlen=10), QueueDepot(maxlen=10)]
+        depots[0].push([mock_ind])  # island 1 pulls from island 0 (ring topology)
+
+        descriptor = _IslandDescriptor(island_id=1, neighbor_depots=depots)
+        topology = RingTopology(island_count=2, migration_count=1)
+
+        island = LogicalIsland(
+            descriptor=descriptor,
+            topology=topology,
+            stop_event=stop_event,
+            algorithm=algo,
+            toolbox=toolbox,
+            master_queue=master_queue,  # type: ignore[arg-type]
+            migration_rate=1,  # migrate every generation
+            migration_count=1,
+            pull_timeout=0.2,
+            pull_max_retries=2,
+        )
+
+        island.run(
+            toolbox=toolbox,
+            train_data=[pd.DataFrame({"a": [1, 2]})],
+            train_entry_labels=None,
+            train_exit_labels=None,
+        )
+
+        # accept_immigrants must have been called for each migration generation
+        assert algo.accept_immigrants.call_count == algo.ngen
+
+    def test_accept_immigrants_not_called_between_migration_gens(self) -> None:
+        """accept_immigrants is not called on non-migration generations."""
+        mock_ind = _make_mock_individual()
+        algo = _make_mock_algorithm(ngen=4)
+        algo.initialize.return_value = ([mock_ind], 1, 0.1)
+        algo.run_generation.return_value = ([mock_ind], 1, 0.05)
+        algo.accept_immigrants.return_value = ([mock_ind], 1, 0.01)
+
+        toolbox = self._make_toolbox(mock_ind)
+        master_queue: MagicMock = MagicMock()
+        stop_event: mp_sync.Event = mp.Event()
+
+        # Pre-fill depot so both migration events succeed.
+        depots = [QueueDepot(maxlen=10), QueueDepot(maxlen=10)]
+        depots[0].push([mock_ind, mock_ind])
+
+        descriptor = _IslandDescriptor(island_id=1, neighbor_depots=depots)
+        topology = RingTopology(island_count=2, migration_count=1)
+
+        island = LogicalIsland(
+            descriptor=descriptor,
+            topology=topology,
+            stop_event=stop_event,
+            algorithm=algo,
+            toolbox=toolbox,
+            master_queue=master_queue,  # type: ignore[arg-type]
+            migration_rate=2,  # migrate every 2nd generation (gen 2 and gen 4)
+            migration_count=1,
+            pull_timeout=0.2,
+            pull_max_retries=2,
+        )
+
+        island.run(
+            toolbox=toolbox,
+            train_data=[pd.DataFrame({"a": [1, 2]})],
+            train_entry_labels=None,
+            train_exit_labels=None,
+        )
+
+        # With ngen=4 and migration_rate=2: gen 2 and gen 4 trigger migration.
+        assert algo.accept_immigrants.call_count == 2
+
+    def test_stop_event_halts_evolution(self) -> None:
+        """Setting stop_event before run starts skips all generations."""
+        mock_ind = _make_mock_individual()
+        algo = _make_mock_algorithm(ngen=5)
+        algo.initialize.return_value = ([mock_ind], 1, 0.1)
+        algo.run_generation.return_value = ([mock_ind], 1, 0.05)
+
+        toolbox = self._make_toolbox(mock_ind)
+        master_queue: MagicMock = MagicMock()
+        stop_event: mp_sync.Event = mp.Event()
+        stop_event.set()  # signal stop before run
+
+        island = _make_logical_island(
+            algorithm=algo,
+            toolbox=toolbox,
+            master_queue=master_queue,
+            stop_event=stop_event,
+        )
+
+        island.run(
+            toolbox=toolbox,
+            train_data=[pd.DataFrame({"a": [1, 2]})],
+            train_entry_labels=None,
+            train_exit_labels=None,
+        )
+
+        # No generation should have been run.
+        algo.run_generation.assert_not_called()
+
+    def test_initial_emigrants_pushed_to_depot(self) -> None:
+        """Emigrants are pushed to the island's own depot after initialization."""
+        mock_ind = _make_mock_individual()
+        algo = _make_mock_algorithm(ngen=0)  # 0 generations: only initialization
+        algo.initialize.return_value = ([mock_ind], 1, 0.1)
+        # Return two emigrants so we can verify count in the depot.
+        algo.prepare_emigrants.return_value = ["emigrant_a", "emigrant_b"]
+
+        toolbox = self._make_toolbox(mock_ind)
+        master_queue: MagicMock = MagicMock()
+        stop_event: mp_sync.Event = mp.Event()
+
+        depots = [QueueDepot(maxlen=10), QueueDepot(maxlen=10)]
+        descriptor = _IslandDescriptor(island_id=0, neighbor_depots=depots)
+        topology = RingTopology(island_count=2, migration_count=1)
+
+        island = LogicalIsland(
+            descriptor=descriptor,
+            topology=topology,
+            stop_event=stop_event,
+            algorithm=algo,
+            toolbox=toolbox,
+            master_queue=master_queue,  # type: ignore[arg-type]
+            migration_rate=1,
+            migration_count=1,
+            pull_timeout=0.1,
+            pull_max_retries=1,
+        )
+
+        island.run(
+            toolbox=toolbox,
+            train_data=[pd.DataFrame({"a": [1, 2]})],
+            train_entry_labels=None,
+            train_exit_labels=None,
+        )
+
+        # prepare_emigrants should have been called once (after init)
+        algo.prepare_emigrants.assert_called_once()
+        # The depot should contain the 2 emigrants pushed after init.
+        result = depots[0].pull(2, timeout=0.5, max_retries=3)
+        assert result == ["emigrant_a", "emigrant_b"]
+
+    def test_result_messages_published_for_each_generation(self) -> None:
+        """One ResultMessage is published per generation plus one for gen 0."""
+        mock_ind = _make_mock_individual()
+        ngen = 3
+        algo = _make_mock_algorithm(ngen=ngen)
+        algo.initialize.return_value = ([mock_ind], 1, 0.1)
+        algo.run_generation.return_value = ([mock_ind], 1, 0.05)
+
+        toolbox = self._make_toolbox(mock_ind)
+        master_queue: MagicMock = MagicMock()
+        stop_event: mp_sync.Event = mp.Event()
+
+        island = _make_logical_island(
+            algorithm=algo,
+            toolbox=toolbox,
+            master_queue=master_queue,
+            stop_event=stop_event,
+            migration_rate=100,  # no migrations during the run
+        )
+
+        island.run(
+            toolbox=toolbox,
+            train_data=[pd.DataFrame({"a": [1, 2]})],
+            train_entry_labels=None,
+            train_exit_labels=None,
+        )
+
+        # Inspect all put() calls on the mock queue.
+        put_args = [c.args[0] for c in master_queue.put.call_args_list]
+        result_messages = [m for m in put_args if isinstance(m, ResultMessage)]
+        # gen 0 + 3 generations
+        assert len(result_messages) == ngen + 1
+        assert result_messages[0].generation == 0
+        assert [m.generation for m in result_messages] == list(range(ngen + 1))
+
+    def test_verbose_flag_suppressed_during_run(self) -> None:
+        """algorithm.verbose is set to False during run and restored afterwards."""
+        mock_ind = _make_mock_individual()
+        algo = _make_mock_algorithm(ngen=1)
+        algo.verbose = True
+        algo.initialize.return_value = ([mock_ind], 1, 0.1)
+        algo.run_generation.return_value = ([mock_ind], 1, 0.05)
+
+        toolbox = self._make_toolbox(mock_ind)
+        master_queue: MagicMock = MagicMock()
+        stop_event: mp_sync.Event = mp.Event()
+
+        island = _make_logical_island(
+            algorithm=algo,
+            toolbox=toolbox,
+            master_queue=master_queue,
+            stop_event=stop_event,
+            migration_rate=100,
+        )
+
+        island.run(
+            toolbox=toolbox,
+            train_data=[pd.DataFrame({"a": [1, 2]})],
+            train_entry_labels=None,
+            train_exit_labels=None,
+        )
+
+        # verbose must be restored to original value after run
+        assert algo.verbose is True
+
+    def test_missing_immigrants_handled_gracefully(self) -> None:
+        """MigrationTimeoutError on pull is caught; evolution continues."""
+        mock_ind = _make_mock_individual()
+        algo = _make_mock_algorithm(ngen=1)
+        algo.initialize.return_value = ([mock_ind], 1, 0.1)
+        algo.run_generation.return_value = ([mock_ind], 1, 0.05)
+        algo.accept_immigrants.return_value = ([mock_ind], 0, 0.0)
+
+        toolbox = self._make_toolbox(mock_ind)
+        master_queue: MagicMock = MagicMock()
+        stop_event: mp_sync.Event = mp.Event()
+
+        # Empty depot → pull will timeout/raise MigrationTimeoutError
+        island = _make_logical_island(
+            algorithm=algo,
+            toolbox=toolbox,
+            master_queue=master_queue,
+            stop_event=stop_event,
+            migration_rate=1,
+            pull_timeout=0.05,
+            pull_max_retries=1,
+        )
+
+        # Should not raise even though pull fails
+        island.run(
+            toolbox=toolbox,
+            train_data=[pd.DataFrame({"a": [1, 2]})],
+            train_entry_labels=None,
+            train_exit_labels=None,
+        )
+
+        # run_generation was still called despite failed pull
+        assert algo.run_generation.call_count == 1
+        # accept_immigrants is called once (at gen 1) with empty immigrants list
+        assert algo.accept_immigrants.call_count == 1
+        _, immigrants_arg, _ = algo.accept_immigrants.call_args.args
+        assert immigrants_arg == []

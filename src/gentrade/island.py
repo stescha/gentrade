@@ -151,15 +151,12 @@ class QueueDepot:
 @dataclass
 class _IslandDescriptor:
     island_id: int
-    depot: QueueDepot
     neighbor_depots: list[QueueDepot]
 
-
-# TODO:
-# - Either remove depots from _IslandDescriptor or simplify _IslandDescriptor: The island's depot is always neightbour_depots[island_id],
-# so we can remove the separate depot field and just use neighbor_depots[island_id] everywhere.
-# - add depot property.
-# Rename neighbor_depots to depots for clarity.
+    @property
+    def depot(self) -> QueueDepot:
+        """Return the island's own egress depot."""
+        return self.neighbor_depots[self.island_id]
 
 # ---------------------------------------------------------------------------
 # IPC message dataclasses and handler protocols
@@ -862,7 +859,7 @@ class IslandMigration(Generic[IndividualT]):
         descriptors: list[_IslandDescriptor] = []
         for i in range(self.n_islands):
             descriptors.append(
-                _IslandDescriptor(island_id=i, depot=depots[i], neighbor_depots=depots)
+                _IslandDescriptor(island_id=i, neighbor_depots=depots)
             )
         return descriptors
 
@@ -951,7 +948,6 @@ class IslandMigration(Generic[IndividualT]):
                     "stop_event": stop_event,
                     "toolbox": toolbox,
                     "topology": self.topology,
-                    # "hof_factory": hof_factory,
                     "train_data": train_data,
                     "train_entry_labels": train_entry_labels,
                     "train_exit_labels": train_exit_labels,

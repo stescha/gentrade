@@ -466,7 +466,6 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
 
             # Update hall of fame if provided
         return
-        return population, state
 
     @abstractmethod
     def run(
