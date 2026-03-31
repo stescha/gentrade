@@ -572,10 +572,10 @@ class LogicalIsland:
 
         logbook = self.algorithm.create_logbook()
 
-        population, duration = self.algorithm.initialize(toolbox)
+        population, n_evaluated_init, duration = self.algorithm.initialize(toolbox)
         state = AlgorithmState(
             generation=0,
-            n_evaluated=len(population),
+            n_evaluated=n_evaluated_init,
             eval_time=duration,
             best_fitness_val=None,
             logbook=logbook,
@@ -624,7 +624,6 @@ class LogicalIsland:
             self.algorithm.pre_generation(population, state)
             n_emigrants_this_gen = 0
             n_immigrants_this_gen = 0
-            eval_time_acc = 0.0
             if gen % self.migration_rate == 0:
                 depots = self.descriptor.neighbor_depots
                 plan = self.topology.get_immigrants(island_id)
@@ -657,10 +656,9 @@ class LogicalIsland:
                     )
 
                 n_immigrants_this_gen = len(immigrants)
-                population, n_imm_evaluated, duration_imm = (
-                    self.algorithm.accept_immigrants(population, immigrants, toolbox)
+                population, _, _ = self.algorithm.accept_immigrants(
+                    population, immigrants, toolbox
                 )
-                eval_time_acc += duration_imm
                 logger.info(
                     "Island %d: Immigrated %d individuals at gen %d (expected %d).",
                     island_id,
