@@ -44,6 +44,10 @@ def _create_tree_toolbox(
     selection_params: OperatorKwargs | None,
     select_best: SelectionOp[gp.PrimitiveTree],
     select_best_params: OperatorKwargs | None,
+    select_replace: SelectionOp[gp.PrimitiveTree],
+    select_replace_params: OperatorKwargs | None,
+    select_emigrants: SelectionOp[gp.PrimitiveTree],
+    select_emigrants_params: OperatorKwargs | None,
     tree_min_depth: int,
     tree_max_depth: int,
     tree_max_height: int,
@@ -99,14 +103,23 @@ def _create_tree_toolbox(
 
     toolbox.register("compile", gp.compile, pset=pset)
 
-    # selTournament requires tournsize; supply default=3 if not provided.
-    effective_sel_params = dict(selection_params or {})
-    sel_name = getattr(selection, "__name__", "")
-    if sel_name == "selTournament" and "tournsize" not in effective_sel_params:
-        effective_sel_params["tournsize"] = 3
-
-    toolbox.register("select", selection, **effective_sel_params)
+    toolbox.register("select", selection, **(selection_params or {}))
     toolbox.register("select_best", select_best, **(select_best_params or {}))
+
+    # Register replace/emigrant selection operators so the toolbox exposes
+    # the same API expected by the island runtime. Provide the same
+    # tournsize default for tournament-based operators if not supplied.
+    toolbox.register(
+        "select_replace",
+        select_replace,
+        **(select_replace_params or {}),
+    )
+
+    toolbox.register(
+        "select_emigrants",
+        select_emigrants,
+        **(select_emigrants_params or {}),
+    )
 
     mut_params = (mutation_params or {}).copy()
     mutation_name = getattr(mutation, "__name__", "")
@@ -233,12 +246,22 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         self.pull_timeout = pull_timeout
         self.pull_max_retries = pull_max_retries
         self.push_timeout = push_timeout
+
+        # if self.selection == tools.selTournament and selection_params is None:  # type: ignore[comparison-overlap]
+        #     self.selection_params = {"tournsize": 3}
+
+        # Set default value.
+        emig_name = getattr(selection, "__name__", "")
+        if emig_name == "selTournament" and selection_params is None:
+            self.selection_params = {"tournsize": 3}
         self.select_replace = select_replace
         self.select_replace_params = select_replace_params
-        self.select_emigrants = select_emigrants or selection
-        self.select_emigrants_params = select_emigrants_params
         if select_emigrants is None:
-            self.select_emigrants_params = selection_params
+            self.select_emigrants = self.selection
+            self.select_emigrants_params = self.selection_params
+        else:
+            self.select_emigrants = select_emigrants
+            self.select_emigrants_params = select_emigrants_params
 
         self.topology = topology or RingTopology(n_islands, migration_count)
 
@@ -259,6 +282,10 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
             selection_params=self.selection_params,
             select_best=self.select_best,
             select_best_params=self.select_best_params,
+            select_replace=self.select_replace,
+            select_replace_params=self.select_replace_params,
+            select_emigrants=self.select_emigrants,
+            select_emigrants_params=self.select_emigrants_params,
             tree_min_depth=self.tree_min_depth,
             tree_max_depth=self.tree_max_depth,
             tree_max_height=self.tree_max_height,
@@ -346,17 +373,9 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
                 self.migration_count,
             )
 
-            self.toolbox_.register(
-                "select_replace",
-                self.select_replace,
-                **(self.select_replace_params or {}),
-            )
-            self.toolbox_.register(
-                "select_emigrants",
-                self.select_emigrants,
-                **(self.select_emigrants_params or {}),
-            )
-
+            # Selection operators are registered when the toolbox is built
+            # in `_build_toolbox`. No-op here to avoid duplicate
+            # registrations and keep responsibilities centralized.
             return IslandMigration(
                 algorithm=algorithm,
                 topology=self.topology,

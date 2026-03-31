@@ -120,7 +120,7 @@ class TestAlgorithmSelection:
         opt.toolbox_ = opt._build_toolbox(opt.pset_)
         hof = tools.HallOfFame(1)
         stats = tools.Statistics(lambda ind: ind.fitness.values)
-        algo = opt.create_algorithm(MagicMock(), stats, hof, None)
+        algo = opt.create_algorithm(MagicMock(), None, stats, hof)
         assert isinstance(algo, EaMuPlusLambda)
 
     def test_nonzero_migration_rate_returns_island_algorithm(self) -> None:
@@ -142,7 +142,7 @@ class TestAlgorithmSelection:
         opt.toolbox_ = opt._build_toolbox(opt.pset_)
         hof = tools.HallOfFame(1)
         stats = tools.Statistics(lambda ind: ind.fitness.values)
-        algo = opt.create_algorithm(MagicMock(), stats, hof, None)
+        algo = opt.create_algorithm(MagicMock(), None, stats, hof)
         assert isinstance(algo, IslandMigration)
 
 

@@ -27,7 +27,7 @@ from gentrade.config import BacktestConfig
 from gentrade.individual import PairTreeIndividual
 from gentrade.minimal_pset import create_pset_default_large, zigzag_pivots
 from gentrade.optimizer import PairTreeOptimizer
-from gentrade.tradetools import load_binance_ohlcv, load_binance_ohlcvs
+from gentrade.tradetools import load_binance_ohlcv, load_binance_ohlcvs, plot_signals
 
 seed = random.randint(0, 1000000)
 # seed = 509328
@@ -66,15 +66,15 @@ if __name__ == "__main__":
     opt = PairTreeOptimizer(
         pset=create_pset_default_large,
         metrics=(
+            MeanPnlCppMetric(min_trades=30, weight=1),
             F1Metric(tree_aggregation="buy"),
             # F1Metric(tree_aggregation="sell"),
-            MeanPnlCppMetric(min_trades=30, weight=1),
         ),
         metrics_val=(
             # F1Metric(tree_aggregation="mean"),
-            F1Metric(tree_aggregation="buy"),
             # F1Metric(tree_aggregation="sell"),
             MeanPnlCppMetric(min_trades=0),
+            F1Metric(tree_aggregation="buy"),
         ),
         backtest=BacktestConfig(fees=0.001),
         mutation=gp.mutUniform,  # type: ignore
@@ -92,36 +92,44 @@ if __name__ == "__main__":
         # selection=tools.selAutomaticEpsilonLexicase,  # type: ignore
         # select_best=tools.selAutomaticEpsilonLexicase,  # type: ignore
         tree_gen="grow",
-        tree_max_depth=8,
-        tree_max_height=20,
+        tree_max_depth=10,
+        tree_max_height=10,
         tree_min_depth=2,
         mu=300,  # population size per island
         lambda_=300,  # offspring size per island
         # mu=150,  # population size per island
         # lambda_=300,  # offspring size per island
-        generations=30,
+        generations=65,
         cxpb=0.6,
         mutpb=0.3,
         # seed=None,
         verbose=True,
         # Island migration params (0 = disabled)
-        migration_rate=5,
+        migration_rate=10,
         migration_count=5,
         n_jobs=32,
         n_islands=32,
-        depot_capacity=50,
+        depot_capacity=100,
         pull_timeout=2.0,
         pull_max_retries=20,
         push_timeout=2.0,
-        # select_replace=tools.selWorst,  # type: ignore
-        select_replace=tools.selNSGA2,  # type: ignore
+        select_replace=tools.selWorst,  # type: ignore
+        select_emigrants=tools.selNSGA2,  # type: ignore
     )
 
     start, count = 200_000, 20_000
-    # pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC", "MCOETH", "NEOBTC"]
-    pairs = ["ETHUSDT"]
+    pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC", "MCOETH", "NEOBTC"]
+    pairs = ["BTCUSDT", "ETHUSDT", "ETHBTC"]
+    target = "ETHBTC"
+    # target = "ETHUSDT"
+    # target = "BTCUSDT"
+
+    # target = "NEOBTC"
+    # target = "MCOETH"
+
+    pairs = [target]
     df_train = load_binance_ohlcvs(pairs, start=start, count=count)
-    df_val = load_binance_ohlcv("ETHUSDT", start=start + count, count=int(count * 0.5))
+    df_val = load_binance_ohlcv(target, start=start + count, count=int(count * 0.5))
     labels_train = zigzag_pivots(df_train, 0.03, -1)
     labels_val = zigzag_pivots(df_val, 0.03, -1)
     exit_labels_train = zigzag_pivots(df_train, 0.03, 1)
@@ -141,10 +149,10 @@ if __name__ == "__main__":
         f"Best entry: {str(best.buy_tree)}\nBest exit: {str(best.sell_tree)}\n"
         f"Fitness: {best.fitness.values}"
     )
-    # plot_signals(
-    #     opt.pset_,
-    #     train_data=df_train["ETHUSDT"] if isinstance(df_train, dict) else df_train,
-    #     val_data=df_val,
-    #     entry_tree=best.buy_tree,
-    #     exit_tree=best.sell_tree,
-    # )
+    plot_signals(
+        opt.pset_,
+        train_data=df_train[target] if isinstance(df_train, dict) else df_train,
+        val_data=df_val,
+        entry_tree=best.buy_tree,
+        exit_tree=best.sell_tree,
+    )

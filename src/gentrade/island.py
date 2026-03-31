@@ -203,7 +203,7 @@ class ResultMessage:
     population_size: int
     n_emigrants: int = 0
     n_immigrants: int = 0
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=time.perf_counter)
 
 
 @dataclass(frozen=True)
@@ -213,7 +213,7 @@ class ErrorMessage:
     island_id: int
     error_type: str
     traceback: str
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=time.perf_counter)
 
 
 @dataclass(frozen=True)
@@ -254,7 +254,7 @@ class ErrorHandler(Protocol):
 class LoggingResultHandler:
     def on_island_generation_complete(self, result: ResultMessage) -> None:
         logger.info(
-            "[Island %d] Gen %d: %d evals, eval_time=%.2fs, gen_time=%.2fs, imm=%d, emi=%d. Best fit: %s / %s",
+            "[Island %d] Gen %d: %d evals, eval_time=%.6fs, gen_time=%.3fs, imm=%d, emi=%d. Best fit: %s / %s",
             result.island_id,
             result.generation,
             result.n_evaluated,
@@ -279,7 +279,7 @@ class LoggingResultHandler:
         max_best = max(best_fits) if best_fits else float("nan")
         logger.info(
             "GEN COMPLETE! %d complete: %d islands, total_evals=%d, mean_best_fit0=%.4f, "
-            "max_best_fit0=%.4f, max_gen_time=%.2fs",
+            "max_best_fit0=%.4f, max_gen_time=%.3fs",
             gen,
             n_islands,
             total_evals,
@@ -353,7 +353,18 @@ class ResultMonitor:
             try:
                 msg = self._master_queue.get(timeout=timeout)
             except _queue_mod.Empty:
-                continue
+                if all(not p.is_alive() for p in processes):
+                    # All workers dead — try one final drain before giving up.
+                    try:
+                        msg = self._master_queue.get_nowait()
+                    except _queue_mod.Empty:
+                        missing = set(range(self._n_islands)) - self._completed_islands
+                        raise RuntimeError(
+                            f"All worker processes exited but islands "
+                            f"{missing} never sent completion messages."
+                        ) from None
+                else:
+                    continue
 
             if isinstance(msg, ResultMessage):
                 if msg.island_id in self._completed_islands:
@@ -837,8 +848,6 @@ class LogicalIsland:
             )
 
             self.algorithm.pre_generation(population, state)
-
-            gen_start = time.time()
             n_emigrants_this_gen = 0
             n_immigrants_this_gen = 0
             eval_time_acc = 0.0
@@ -909,7 +918,7 @@ class LogicalIsland:
                 self.descriptor.depot.push(emigrants)
                 n_emigrants_this_gen = len(emigrants)
 
-            gen_time = time.time() - gen_start
+            gen_time = time.perf_counter() - gen_start
             state.generation_time = gen_time
             self.master_queue.put(
                 ResultMessage(
@@ -1177,5 +1186,5 @@ class IslandMigration(Generic[IndividualT]):
                 if p.is_alive():
                     p.terminate()
 
-        pop, logbook, hof = self._merge_results(results)
+        pop, logbook, hof = self._merge_results(results, hof_factory=hof_factory)
         return pop, logbook, hof

@@ -183,6 +183,39 @@ class TestResultMonitorStateConsistency:
         calls = list(mock_handler.on_generation_complete.call_args_list)
         assert calls[0][0][0] == 0
 
+    def test_staggered_generations_fires_correctly(self) -> None:
+        """Verify on_generation_complete fires for common gens when islands progress at different rates.
+
+        Island 0 races ahead to gen 2 while island 1 only reaches gen 1.
+        Generation-complete should fire for gens 0 and 1 (both reported)
+        but NOT for gen 2 (only island 0 reported it).
+        """
+        monitor = ResultMonitor(n_islands=2)
+        mock_handler = MagicMock()
+        monitor.register_result_handler(mock_handler)
+
+        mq = monitor.master_queue
+        # Island 0 races ahead
+        mq.put(_make_result_msg(island_id=0, generation=0))
+        mq.put(_make_result_msg(island_id=0, generation=1))
+        mq.put(_make_result_msg(island_id=0, generation=2))
+        # Island 1 catches up partially
+        mq.put(_make_result_msg(island_id=1, generation=0))
+        mq.put(_make_result_msg(island_id=1, generation=1))
+        # Both complete
+        mq.put(_make_completed_msg(island_id=0))
+        mq.put(_make_completed_msg(island_id=1))
+
+        proc = MagicMock()
+        proc.is_alive.return_value = False
+
+        monitor.wait(processes=[proc, proc])
+
+        # gen 0 and gen 1 should fire; gen 2 should NOT
+        calls = mock_handler.on_generation_complete.call_args_list
+        fired_gens = {c[0][0] for c in calls}
+        assert fired_gens == {0, 1}
+
     def test_multiple_generations_per_island_tracked(self) -> None:
         """Verify multiple generations from same island are all tracked."""
         monitor = ResultMonitor(n_islands=1)
@@ -274,6 +307,30 @@ class TestResultMonitorErrors:
 
         with pytest.raises(RuntimeError):
             monitor.wait(processes=[proc])
+
+    def test_dead_processes_without_completion_raises(self) -> None:
+        """Verify monitor raises when all processes die without sending completions."""
+        monitor = ResultMonitor(n_islands=2)
+
+        proc = MagicMock()
+        proc.is_alive.return_value = False
+
+        with pytest.raises(RuntimeError, match="never sent completion"):
+            monitor.wait(processes=[proc, proc], timeout=0.01)
+
+    def test_dead_processes_partial_completion_raises(self) -> None:
+        """Verify monitor raises when processes die with only some islands completed."""
+        monitor = ResultMonitor(n_islands=2)
+        mq = monitor.master_queue
+        # Only island 0 completes; island 1 never sends anything
+        mq.put(_make_result_msg(island_id=0, generation=0))
+        mq.put(_make_completed_msg(island_id=0))
+
+        proc = MagicMock()
+        proc.is_alive.return_value = False
+
+        with pytest.raises(RuntimeError, match="never sent completion"):
+            monitor.wait(processes=[proc, proc], timeout=0.01)
 
     def test_duplicate_completion_raises(self) -> None:
         monitor = ResultMonitor(n_islands=1)

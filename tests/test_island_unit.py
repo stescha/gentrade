@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
-from deap import base, tools
 
 from gentrade.island import (
     IslandMigration,
@@ -241,13 +240,13 @@ class TestIslandMigrationConstructor:
         )
 
     def test_stores_basic_params(self) -> None:
-        """Constructor stores mu, lambda_, ngen, cxpb, mutpb."""
+        """Constructor stores migration and island parameters."""
         algo = self._make_algo()
-        assert algo.mu == 10
-        assert algo.lambda_ == 20
-        assert algo.ngen == 5
-        assert algo.cxpb == 0.5
-        assert algo.mutpb == 0.2
+        assert algo.migration_rate == 2
+        assert algo.migration_count == 3
+        assert algo.depot_capacity == 50
+        assert algo.pull_timeout == 2.0
+        assert algo.pull_max_retries == 3
 
     def test_stores_island_params(self) -> None:
         """Constructor stores island-specific parameters."""
@@ -268,34 +267,38 @@ class TestIslandMigrationConstructor:
         algo = self._make_algo()
         assert algo.demes_ is None
 
-    def test_default_topology_is_ring(self) -> None:
-        """Default topology is RingTopology."""
-        algo = self._make_algo()
-        assert isinstance(algo.topology, RingTopology)
+    def test_topology_is_stored(self) -> None:
+        """Topology passed at construction is stored as-is (no default exists)."""
+        mock_topo = MagicMock()
+        algo: IslandMigration[Any] = IslandMigration(
+            algorithm=MagicMock(),
+            topology=mock_topo,
+            n_islands=2,
+            migration_rate=2,
+            migration_count=3,
+            depot_capacity=50,
+            pull_timeout=2.0,
+            pull_max_retries=3,
+            push_timeout=2.0,
+            n_jobs=2,
+            seed=42,
+        )
+        assert algo.topology is mock_topo
 
     def test_custom_topology_is_stored(self) -> None:
         """Custom topology is stored as-is."""
-        evaluator = MagicMock()
         topo = MigrateRandom(island_count=2, n_selected=1, migration_count=2, seed=0)
         algo: IslandMigration[Any] = IslandMigration(
-            evaluator=evaluator,
+            algorithm=MagicMock(),
+            topology=topo,
             n_islands=2,
             n_jobs=2,
-            mu=5,
-            lambda_=10,
-            ngen=3,
-            cxpb=0.5,
-            mutpb=0.2,
             migration_rate=1,
             migration_count=2,
             depot_capacity=20,
             pull_timeout=1.0,
             pull_max_retries=2,
             push_timeout=1.0,
-            replace_selection_op=tools.selWorst,  # type: ignore[arg-type]
-            select_best_op=tools.selBest,  # type: ignore[arg-type]
-            weights=(1.0,),
-            topology=topo,
         )
         assert algo.topology is topo
 
@@ -310,26 +313,17 @@ class TestIslandSeedDerivation:
     """Verify per-island seed generation."""
 
     def _make_algo(self, seed: int | None = 42) -> "IslandMigration[Any]":
-        toolbox = MagicMock(spec=base.Toolbox)
-        evaluator = MagicMock()
         return IslandMigration(
-            evaluator=evaluator,
+            algorithm=MagicMock(),
+            topology=MagicMock(),
             n_islands=4,
             n_jobs=4,
-            mu=5,
-            lambda_=5,
-            ngen=1,
-            cxpb=0.5,
-            mutpb=0.2,
             migration_rate=1,
             migration_count=2,
             depot_capacity=20,
             pull_timeout=1.0,
             pull_max_retries=2,
             push_timeout=1.0,
-            replace_selection_op=tools.selWorst,  # type: ignore[arg-type]
-            select_best_op=tools.selBest,  # type: ignore[arg-type]
-            weights=(1.0,),
             seed=seed,
         )
 
