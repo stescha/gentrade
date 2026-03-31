@@ -155,7 +155,7 @@ class _IslandDescriptor:
 
     @property
     def depot(self) -> QueueDepot:
-        """Return the island's own egress depot."""
+        """Return the depot where this island pushes emigrants for others to pull."""
         return self.neighbor_depots[self.island_id]
 
 # ---------------------------------------------------------------------------

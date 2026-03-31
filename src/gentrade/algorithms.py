@@ -464,7 +464,6 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
             state.generation_time = time.perf_counter() - start
             self.post_generation(population, state)
 
-            # Update hall of fame if provided
         return
 
     @abstractmethod
