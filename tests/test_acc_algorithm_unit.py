@@ -225,15 +225,16 @@ class TestAssembledPopulation:
         assert pair_pop[0].fitness.valid
         assert pair_pop[0].fitness.values == (0.9,)
 
-    def test_assemble_pair_static_method(
+    def test_assemble_pair(
         self,
         pset: gp.PrimitiveSetTyped,
         weights: tuple[float, ...],
+        acc_ea: AccEa,
     ) -> None:
-        """_assemble_pair produces a valid PairTreeIndividual."""
+        """_assemble_pair produces a valid PairTreeIndividual with the right trees."""
         entry = _make_tree_individual(weights, pset)
         exit_ = _make_tree_individual(weights, pset)
-        pair = AccEa._assemble_pair(entry, exit_, weights)
+        pair = acc_ea._assemble_pair(entry, exit_)
         assert isinstance(pair, PairTreeIndividual)
         assert len(pair) == 2
         assert pair[0] is entry[0]
