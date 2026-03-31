@@ -4,5 +4,6 @@
 ---
 ## DevTask Overview
 <!-- Concise description of the development task -->
-- **Label**: introduce-generic-algorithm-approach
-- **Description**: The IslandMigration class is refactored to receive an algorithm (subtype of BaseAlgorithm) instance to allow for more flexible usage of future algorithms. Therefore the `IslandMigration` as well as the `EaMusPlusLambda` class as well as all related utils are refactored or introduced.
+- **Label**: implement-acc
+- **Description**: Implement AccOptimizer and AccEa for cooperative coevolutionary algorithm (ACC) in the `gentrade` project. This includes designing the optimizer and algorithm classes, implementing the cooperative coevolution logic, and integrating with the existing optimizer architecture.
+- 
