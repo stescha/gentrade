@@ -157,7 +157,7 @@ class TestRingTopology:
     def test_ring_pulls_from_predecessor(self) -> None:
         """Island i pulls from (i-1) % n."""
         topo = RingTopology(island_count=4, migration_count=3)
-        plan = topo.get_immigrants(island_id=0, depot_count=4)
+        plan = topo.get_immigrants(island_id=0)
         assert plan == [(3, 3)]
 
     def test_ring_wraps_correctly(self) -> None:
@@ -165,14 +165,14 @@ class TestRingTopology:
         n = 4
         topo = RingTopology(island_count=n, migration_count=2)
         for i in range(n):
-            plan = topo.get_immigrants(island_id=i, depot_count=n)
+            plan = topo.get_immigrants(island_id=i)
             expected_src = (i - 1) % n
             assert plan == [(expected_src, 2)]
 
     def test_ring_migration_count(self) -> None:
         """migration_count is reflected in the plan."""
         topo = RingTopology(island_count=3, migration_count=7)
-        plan = topo.get_immigrants(island_id=1, depot_count=3)
+        plan = topo.get_immigrants(island_id=1)
         assert plan[0][1] == 7
 
 
@@ -189,21 +189,21 @@ class TestMigrateRandom:
         """Source island IDs in the plan never equal the requesting island."""
         topo = MigrateRandom(island_count=5, n_selected=2, migration_count=4, seed=42)
         for iid in range(5):
-            plan = topo.get_immigrants(island_id=iid, depot_count=5)
+            plan = topo.get_immigrants(island_id=iid)
             for src, _ in plan:
                 assert src != iid
 
     def test_plan_total_count(self) -> None:
         """Sum of counts in plan equals migration_count."""
         topo = MigrateRandom(island_count=6, n_selected=3, migration_count=9, seed=0)
-        plan = topo.get_immigrants(island_id=2, depot_count=6)
+        plan = topo.get_immigrants(island_id=2)
         assert sum(c for _, c in plan) == 9
 
     def test_n_selected_clamped(self) -> None:
         """n_selected is clamped to [1, n_islands-1]."""
         # Overly large n_selected
         topo = MigrateRandom(island_count=3, n_selected=100, migration_count=5, seed=1)
-        plan = topo.get_immigrants(island_id=0, depot_count=3)
+        plan = topo.get_immigrants(island_id=0)
         # Should never exceed n_islands - 1 = 2 sources
         assert len(plan) <= 2
 
@@ -211,8 +211,8 @@ class TestMigrateRandom:
         """Two identical seeded instances produce the same plan."""
         t1 = MigrateRandom(island_count=4, n_selected=2, migration_count=4, seed=7)
         t2 = MigrateRandom(island_count=4, n_selected=2, migration_count=4, seed=7)
-        plan1 = t1.get_immigrants(island_id=1, depot_count=4)
-        plan2 = t2.get_immigrants(island_id=1, depot_count=4)
+        plan1 = t1.get_immigrants(island_id=1)
+        plan2 = t2.get_immigrants(island_id=1)
         assert plan1 == plan2
 
 
@@ -222,29 +222,22 @@ class TestMigrateRandom:
 
 
 @pytest.mark.unit
-class TestIslandEaMuPlusLambdaConstructor:
+class TestIslandMigrationConstructor:
     """Verify constructor stores params and validates."""
 
     def _make_algo(self, n_islands: int = 2, n_jobs: int = 2) -> "IslandMigration[Any]":
-        evaluator = MagicMock()
         return IslandMigration(
-            evaluator=evaluator,
+            algorithm=MagicMock(),
+            topology=MagicMock(),
             n_islands=n_islands,
-            n_jobs=n_jobs,
-            mu=10,
-            lambda_=20,
-            ngen=5,
-            cxpb=0.5,
-            mutpb=0.2,
             migration_rate=2,
             migration_count=3,
             depot_capacity=50,
             pull_timeout=2.0,
             pull_max_retries=3,
             push_timeout=2.0,
-            replace_selection_op=tools.selWorst,  # type: ignore[arg-type]
-            select_best_op=tools.selBest,  # type: ignore[arg-type]
-            weights=(1.0,),
+            n_jobs=n_jobs,
+            seed=42,
         )
 
     def test_stores_basic_params(self) -> None:

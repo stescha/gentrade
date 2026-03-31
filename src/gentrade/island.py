@@ -326,7 +326,7 @@ class ResultMonitor:
         self._result_handlers: list[ResultHandler] = []
         self._error_handlers: list[ErrorHandler] = []
         self._first_error: ErrorMessage | None = None
-        self._latest_gen_by_island: dict[int, ResultMessage] = {}
+        self._gens_by_island: dict[int, dict[int, ResultMessage]] = {}
         self._generation_complete_fired: set[int] = set()
 
     @property
@@ -368,14 +368,13 @@ class ResultMonitor:
                         res_handler.on_island_generation_complete(msg)
                     except Exception:
                         logger.exception("Result handler raised")
-                self._latest_gen_by_island[msg.island_id] = msg
+                self._gens_by_island.setdefault(msg.island_id, {})[msg.generation] = msg
                 gen = msg.generation
                 if gen not in self._generation_complete_fired:
-                    gen_results = {
-                        iid: m
-                        for iid, m in self._latest_gen_by_island.items()
-                        if m.generation == gen
-                    }
+                    gen_results: dict[int, ResultMessage] = {}
+                    for iid, gen_map in self._gens_by_island.items():
+                        if gen in gen_map:
+                            gen_results[iid] = gen_map[gen]
                     if len(gen_results) == self._n_islands:
                         for gen_handler in list(self._result_handlers):
                             try:
@@ -715,6 +714,7 @@ class LogicalIsland:
         pull_max_retries: int,
         verbose: bool = True,
     ) -> None:
+
         self.descriptor = descriptor
         self.topology = topology
         self.stop_event = stop_event
@@ -732,6 +732,19 @@ class LogicalIsland:
         self.evaluator = algorithm.evaluator
         self.val_evaluator = algorithm.val_evaluator
         self.ngen = algorithm.ngen
+        self._validate_args()
+
+    def _validate_args(self) -> None:
+        if self.migration_rate <= 0:
+            raise ValueError("migration_rate must be > 0")
+        if self.migration_count <= 0:
+            raise ValueError("migration_count must be > 0")
+        if self.pull_timeout <= 0:
+            raise ValueError("pull_timeout must be > 0")
+        if self.pull_max_retries < 0:
+            raise ValueError("pull_max_retries must be >= 0")
+        if self.evaluator is None:
+            raise ValueError("evaluator must be provided")
 
     def run(
         self,
@@ -745,11 +758,12 @@ class LogicalIsland:
         val_exit_labels: list[pd.Series] | None = None,
         hof_factory: Callable[[], tools.HallOfFame] | None = None,
     ) -> tuple[list[Any], tools.Logbook, tools.HallOfFame | None]:
+        # Prevent algorithm form streaming output like lookbook.
         algorithm_verbose = self.algorithm.verbose
         self.algorithm.verbose = False
+
         # Initialize toolbox without worker pool
         toolbox = copy.copy(toolbox)
-
         toolbox.register("map", map)
         toolbox.register(
             "evaluate",
@@ -828,7 +842,6 @@ class LogicalIsland:
             n_emigrants_this_gen = 0
             n_immigrants_this_gen = 0
             eval_time_acc = 0.0
-
             if gen % self.migration_rate == 0:
                 depots = self.descriptor.neighbor_depots
                 plan = self.topology.get_immigrants(island_id)
@@ -987,11 +1000,9 @@ def _worker_target(
                 hof_factory=hof_factory,
             )
             master_queue.put(IslandCompletedMessage(descriptor.island_id, pop, logbook))
-        except Exception:
+        except Exception as e:
             tb = traceback.format_exc()
-            master_queue.put(
-                ErrorMessage(descriptor.island_id, type(Exception()).__name__, tb)
-            )
+            master_queue.put(ErrorMessage(descriptor.island_id, type(e).__name__, tb))
             stop_event.set()
             return
 

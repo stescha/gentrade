@@ -213,6 +213,7 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
     evaluator: BaseEvaluator[Any]
     val_evaluator: BaseEvaluator[Any] | None
     stats: tools.Statistics | None
+    verbose: bool
     ngen: int
 
     @abstractmethod
