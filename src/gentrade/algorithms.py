@@ -241,7 +241,7 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
     def initialize(
         self,
         toolbox: base.Toolbox,
-    ) -> tuple[list[IndividualT], float]:
+    ) -> tuple[list[IndividualT], int, float]:
         """Create initial population of size mu and evaluate it.
 
         Returns the evaluated initial population (all fitness values valid).
@@ -564,11 +564,11 @@ class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
     def initialize(
         self,
         toolbox: base.Toolbox,
-    ) -> tuple[list[IndividualT], float]:
+    ) -> tuple[list[IndividualT], int, float]:
         """Create initial population of size mu and evaluate it."""
         population = toolbox.population(n=self.mu)
-        _, duration = self.evaluate_individuals(toolbox, population, all_=True)
-        return population, duration
+        n_evals, duration = self.evaluate_individuals(toolbox, population, all_=True)
+        return population, n_evals, duration
 
     def run_generation(
         self,
@@ -737,10 +737,10 @@ class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
 
             logbook = self.create_logbook()
 
-            population, duration = self.initialize(toolbox)
+            population, n_evaluated_init, duration = self.initialize(toolbox)
             state = AlgorithmState(
                 generation=0,
-                n_evaluated=len(population),
+                n_evaluated=n_evaluated_init,
                 eval_time=duration,
                 # generation_time=None,
                 best_fitness_val=None,

@@ -266,7 +266,7 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
     def initialize(
         self,
         toolbox: base.Toolbox,
-    ) -> tuple[list[PairTreeIndividual], float]:
+    ) -> tuple[list[PairTreeIndividual], int, float]:
         """Create and evaluate initial entry/exit component populations.
 
         Initialises both component populations of size ``mu``, evaluates the
@@ -279,7 +279,7 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
                 ``select_best``, and ``clone`` registered.
 
         Returns:
-            Tuple of (assembled pair population, elapsed seconds).
+            Tuple of (assembled pair population, n_evaluated, elapsed seconds).
         """
         self._entry_pop = [
             self._make_component_individual(toolbox) for _ in range(self.mu)
@@ -292,16 +292,18 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
 
         # Evaluate entry population using the first exit as seed collaborator.
         init_exit_collab = self._exit_pop[0]
-        self._eval_component_phase("entry", self._entry_pop, init_exit_collab, toolbox)
+        n1, _ = self._eval_component_phase(
+            "entry", self._entry_pop, init_exit_collab, toolbox
+        )
 
         # Evaluate exit population using best entry collaborator.
         best_entry = toolbox.select_best(self._entry_pop, 1)[0]
-        self._eval_component_phase("exit", self._exit_pop, best_entry, toolbox)
+        n2, _ = self._eval_component_phase("exit", self._exit_pop, best_entry, toolbox)
 
         duration = time.perf_counter() - start
 
         pair_pop = self._assemble_population(self._entry_pop, self._exit_pop)
-        return pair_pop, duration
+        return pair_pop, n1 + n2, duration
 
     def create_logbook(self) -> tools.Logbook:
         """Create and return a logbook with standard columns.
@@ -345,9 +347,13 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
             component_pop = self._exit_pop
             collaborator = toolbox.select_best(self._entry_pop, 1)[0]
 
+        # Invalidate parent fitness: collaborator may have changed since last phase.
+        for ind in component_pop:
+            del ind.fitness.values
+
         offspring = varOr(component_pop, toolbox, self.lambda_, self.cxpb, self.mutpb)
         n_evals, duration = self._eval_component_phase(
-            phase, offspring, collaborator, toolbox
+            phase, component_pop + offspring, collaborator, toolbox
         )
 
         new_component: list[TreeIndividual] = toolbox.select(
@@ -356,10 +362,20 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
 
         if phase == "entry":
             self._entry_pop = new_component
+            pair_pop: list[PairTreeIndividual] = [
+                self._assemble_pair(e, collaborator) for e in self._entry_pop
+            ]
         else:
             self._exit_pop = new_component
+            pair_pop = [
+                self._assemble_pair(collaborator, x) for x in self._exit_pop
+            ]
 
-        pair_pop = self._assemble_population(self._entry_pop, self._exit_pop)
+        component = self._entry_pop if phase == "entry" else self._exit_pop
+        for pair, c in zip(pair_pop, component, strict=False):
+            if c.fitness.valid:
+                pair.fitness.values = c.fitness.values
+
         return pair_pop, n_evals, duration
 
     # ------------------------------------------------------------------
@@ -619,10 +635,10 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
 
             logbook = self.create_logbook()
 
-            population, duration = self.initialize(toolbox)
+            population, n_evaluated_init, duration = self.initialize(toolbox)
             state = AlgorithmState(
                 generation=0,
-                n_evaluated=len(population),
+                n_evaluated=n_evaluated_init,
                 eval_time=duration,
                 best_fitness_val=None,
                 logbook=logbook,
