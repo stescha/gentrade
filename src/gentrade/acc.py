@@ -110,47 +110,33 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
     # Component individual helpers
     # ------------------------------------------------------------------
 
-    def _make_entry_individual(self, toolbox: base.Toolbox) -> TreeIndividual:
-        """Create a single-tree entry (buy) individual.
+    def _make_component_individual(self, toolbox: base.Toolbox) -> TreeIndividual:
+        """Create a single-tree component individual.
 
         Args:
             toolbox: Toolbox with ``expr`` registered.
 
         Returns:
-            A :class:`TreeIndividual` with one buy tree.
+            A :class:`TreeIndividual` with one tree.
         """
         nodes = toolbox.expr()
         return TreeIndividual([gp.PrimitiveTree(nodes)], self._weights)
 
-    def _make_exit_individual(self, toolbox: base.Toolbox) -> TreeIndividual:
-        """Create a single-tree exit (sell) individual.
-
-        Args:
-            toolbox: Toolbox with ``expr`` registered.
-
-        Returns:
-            A :class:`TreeIndividual` with one sell tree.
-        """
-        nodes = toolbox.expr()
-        return TreeIndividual([gp.PrimitiveTree(nodes)], self._weights)
-
-    @staticmethod
     def _assemble_pair(
+        self,
         entry: TreeIndividual,
         exit_: TreeIndividual,
-        weights: tuple[float, ...],
     ) -> PairTreeIndividual:
         """Assemble a :class:`PairTreeIndividual` from two component individuals.
 
         Args:
             entry: Buy-side component individual.
             exit_: Sell-side component individual.
-            weights: Fitness objective weights.
 
         Returns:
             A :class:`PairTreeIndividual` with two trees.
         """
-        return PairTreeIndividual([entry[0], exit_[0]], weights)
+        return PairTreeIndividual([entry[0], exit_[0]], self._weights)
 
     def _assemble_population(
         self,
@@ -172,7 +158,7 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
         n = min(len(entry_pop), len(exit_pop))
         pairs: list[PairTreeIndividual] = []
         for e, x in zip(entry_pop[:n], exit_pop[:n], strict=False):
-            pair = self._assemble_pair(e, x, self._weights)
+            pair = self._assemble_pair(e, x)
             if e.fitness.valid:
                 pair.fitness.values = e.fitness.values
             pairs.append(pair)
@@ -296,10 +282,10 @@ class AccEa(BaseAlgorithm[PairTreeIndividual]):
             Tuple of (assembled pair population, elapsed seconds).
         """
         self._entry_pop = [
-            self._make_entry_individual(toolbox) for _ in range(self.mu)
+            self._make_component_individual(toolbox) for _ in range(self.mu)
         ]
         self._exit_pop = [
-            self._make_exit_individual(toolbox) for _ in range(self.mu)
+            self._make_component_individual(toolbox) for _ in range(self.mu)
         ]
 
         start = time.perf_counter()
