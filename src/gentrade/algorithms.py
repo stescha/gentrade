@@ -186,6 +186,21 @@ def eaMuPlusLambdaGentrade(
 
 @dataclass
 class AlgorithmState:
+    """State object holding iteration and metric data passed between hooks
+    during the generational evolutionary loop.
+
+    Attributes:
+        generation: Current generation index (0 for baseline initialization).
+        logbook: Used to store and print aggregated progression metrics per gen.
+        halloffame: Tracks the all-time best overall individuals.
+        best_individual: Top performer dynamically found inside the current gen.
+        best_fitness_val: Associated validation fitness.
+        best_fit: Fitness metrics vector for `best_individual` on training runs.
+        n_evaluated: Distinct individuals mapped / computed this generation.
+        eval_time: Number of seconds elapsed inside the parallel evaluator.
+        generation_time: Total elapsed duration, factoring in variations / stats.
+    """
+
     generation: int
     # gen_start_time: float
     logbook: tools.Logbook
@@ -204,6 +219,12 @@ class AlgorithmState:
 
 class BaseAlgorithm(ABC, Generic[IndividualT]):
     """Abstract base class for evolutionary algorithms.
+
+    Algorithms can be executed standalone via the `run()` method, which typically
+    utilizes multiprocessing to parallelize evaluation across the population.
+    Alternatively, they can be managed by an orchestrator like `IslandMigration`,
+    where each island runs its own standard copy of the algorithm sequentially
+    while parallelization happens at the island level.
 
     Provides a `generational_loop` helper that drives the main evolution
     loop, calling `pre_generation` and `post_generation` hooks around each
@@ -245,7 +266,7 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
 
     @abstractmethod
     def create_logbook(self) -> tools.Logbook:
-        """Create and return a logbook with the appropriate header for this algorithm."""
+        """Create and return a logbook with proper columns initialized."""
         ...
 
     @abstractmethod
@@ -257,7 +278,9 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
     ) -> tuple[list[IndividualT], int, float]:
         """Execute a single generation.
 
-        Returns (new_population, stats_record, n_evals, duration).
+        Returns:
+            Tuple indicating the updated population, number of individuals measured,
+            and total seconds to evaluate.
         """
         ...
 
@@ -283,6 +306,12 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
         population: list[IndividualT],
         state: AlgorithmState,
     ) -> None:
+        """Update core monitoring artifacts with intermediate results.
+
+        Delegates to the configured `stats` operator to measure the incoming
+        population and writes generation details into the `logbook`. Likewise,
+        updates the `halloffame` structure.
+        """
         if state.halloffame is not None:
             state.halloffame.update(population)
 
@@ -295,7 +324,15 @@ class BaseAlgorithm(ABC, Generic[IndividualT]):
         individuals: list[IndividualT],
         all_: bool = False,
     ) -> tuple[int, float]:
-        """Create initial population of size mu and evaluate it."""
+        """Evaluate a specific list of individuals.
+
+        By default, delegates to ``toolbox.map`` only for those elements whose
+        fitness is marked invalid. If ``all_`` is True, evaluates every item in
+        the list systematically.
+
+        Returns:
+            Tuple containing the number of evaluations processed and elapsed seconds.
+        """
         if all_:
             invalid_ind = individuals
         else:
@@ -421,6 +458,18 @@ class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
     Stores algorithm hyperparameters at construction time. Does not own
     evaluation resources (pool, evaluator, data). Those are provided via
     the toolbox (toolbox.evaluate, toolbox.map) and run() arguments.
+
+    Args:
+        mu: Number of parents selected to survive per generation.
+        lambda_: Size of the offspring generated per phase. Must be >= mu.
+        cxpb: Probability to execute crossover over two cloned parents.
+        mutpb: Probability to execute a mutation operator over a copied parent.
+        ngen: Exact quantity of generations limiting the run.
+        evaluator: Logic mapping primitive trees to fitness results.
+        val_evaluator: Optional parallel logic testing strategies on unseen data.
+        stats: Aggregator collecting properties to stream per-generation.
+        n_jobs: Process pool concurrency scaling evaluations.
+        verbose: Toggle standard output streaming.
     """
 
     def __init__(
@@ -571,6 +620,12 @@ class EaMuPlusLambda(BaseAlgorithm[IndividualT]):
         val_exit_labels: list[pd.Series] | None = None,
         hof_factory: Callable[[], tools.HallOfFame] | None = None,
     ) -> tuple[list[IndividualT], tools.Logbook, tools.HallOfFame | None]:
+        """Orchestrate the (μ + λ) evaluations running serially across generations.
+
+        Handles pool initialization, configures `toolbox` dynamically using
+        runtime arguments, establishes baseline individuals, loops measuring fitness,
+        updates internal statistical captures and ends process pools returning outputs.
+        """
 
         pool = create_pool(
             self.n_jobs,

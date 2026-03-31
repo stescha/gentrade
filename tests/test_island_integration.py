@@ -1,4 +1,4 @@
-"""Integration tests for IslandEaMuPlusLambda and optimizer island mode.
+"""Integration tests for IslandMigration and optimizer island mode.
 
 Tests verify that:
 - TreeOptimizer uses island mode when migration_rate > 0
@@ -124,7 +124,7 @@ class TestAlgorithmSelection:
         assert isinstance(algo, EaMuPlusLambda)
 
     def test_nonzero_migration_rate_returns_island_algorithm(self) -> None:
-        """migration_rate > 0 returns IslandEaMuPlusLambda."""
+        """migration_rate > 0 returns IslandMigration."""
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
             metrics=(F1Metric(),),

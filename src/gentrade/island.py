@@ -469,8 +469,11 @@ class ResultMonitor:
 class LogicalIsland:
     """Per-island evolution loop with migration hooks.
 
-    Delegates core evolution to algorithm.run_generation() and surrounds
-    each generation with migration pull (pre) and push (post) logic.
+    Runs within a worker process, managing local generational execution using
+    its configured :class:`BaseAlgorithm`. It pulls immigrants from its assigned
+    neighbors before running an evaluation generation, and pushes emigrants to
+    its own depot afterward, respecting the bounds dictated by the
+    ``migration_rate``.
     """
 
     def __init__(
@@ -532,6 +535,12 @@ class LogicalIsland:
         val_exit_labels: list[pd.Series] | None = None,
         hof_factory: Callable[[], tools.HallOfFame] | None = None,
     ) -> tuple[list[Any], tools.Logbook, tools.HallOfFame | None]:
+        """Execute the per-island local evolution.
+
+        Configures toolbox hooks sequentially and delegates generational
+        processing to its underlying instance. Publishes completion back
+        through standard DEAP-centric outputs.
+        """
         # Prevent algorithm form streaming output like lookbook.
         algorithm_verbose = self.algorithm.verbose
         self.algorithm.verbose = False
@@ -630,7 +639,8 @@ class LogicalIsland:
                         immigrants.extend(immigrant)
                     except MigrationTimeoutError:
                         logger.warning(
-                            "Island %d: pull from depot %d failed at gen %d. Continuing without immigrants.",
+                            "Island %d: pull from depot %d failed at gen %d."
+                            " Continuing without immigrants.",
                             island_id,
                             src_idx,
                             gen,
@@ -639,7 +649,9 @@ class LogicalIsland:
 
                 if len(immigrants) != expected_count:
                     logger.warning(
-                        f"Expected {expected_count} immigrants, received {len(immigrants)} at gen {gen} for island {island_id}."
+                        f"Expected {expected_count} immigrants, "
+                        f"received {len(immigrants)} at gen {gen} "
+                        f"for island {island_id}."
                     )
 
                 n_immigrants_this_gen = len(immigrants)
@@ -785,6 +797,33 @@ def _worker_target(
 
 
 class IslandMigration(Generic[IndividualT]):
+    """Orchestrator for island-model distributed evolution.
+
+    This coordinator uses multiprocessing to distribute instances of a provided
+    :class:`BaseAlgorithm` across multiple independent islands, interconnecting
+    them through bounded queues (depots) guided by a specified migration
+    topology.
+
+    Args:
+        algorithm: An instance of an evolutionary algorithm (e.g.,
+            :class:`~gentrade.algorithms.EaMuPlusLambda`) to run on each island.
+        topology: Migration network defining neighbor relationships between
+            islands.
+        n_islands: Total number of islands to create.
+        migration_rate: Number of generations between migrations. For ex., ``5``
+            means migration runs every 5 generations.
+        migration_count: Exact number of individuals requested from each
+            neighbor during a pull phase.
+        depot_capacity: Max individuals stored in an island's egress queue.
+        pull_timeout: Attempt to pull migrants up to this many seconds.
+        pull_max_retries: Times to re-attempt pulling.
+        push_timeout: Currently unused.
+        n_jobs: Concurrency capacity limit.
+        verbose: Print per-generation statistics.
+        seed: Random seed used to initiate reproducible trajectories for
+            worker sub-processes.
+    """
+
     def __init__(
         self,
         algorithm: BaseAlgorithm[Any],
@@ -888,6 +927,12 @@ class IslandMigration(Generic[IndividualT]):
         val_exit_labels: list[pd.Series] | None = None,
         hof_factory: Callable[[], tools.HallOfFame] | None = None,
     ) -> tuple[list[IndividualT], tools.Logbook, tools.HallOfFame | None]:
+        """Start parallel orchestration dispatching evaluation processes.
+
+        Spawns sub-processes for each set of islands and waits to join them
+        synchronously. Re-raises exceptions caught continuously and integrates
+        logbooks together.
+        """
         self._validate_toolbox(toolbox)
         depots = self._create_depots()
         descriptors = self._create_descriptors(depots)

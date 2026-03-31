@@ -352,13 +352,14 @@ class BaseOptimizer(ABC):
         """Return algorithm instance to execute the evolutionary loop.
 
         Subclasses must return a configured :class:`Algorithm` instance that
-        accepts a population list and returns ``(population, logbook)``.
+        accepts the toolbox and training data and returns
+        ``(population, logbook, halloffame)``.
 
         Args:
             evaluator: Evaluator used for fitness computation.
+            val_evaluator: Optional evaluator used for validation fitness computation.
             stats: DEAP statistics object for logging per-generation metrics.
             halloffame: Hall of fame tracking best individuals.
-            val_callback: Optional callback invoked after each generation.
 
         Returns:
             A configured :class:`Algorithm` instance ready to call ``run()``.

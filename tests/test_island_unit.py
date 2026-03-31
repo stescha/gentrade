@@ -3,8 +3,7 @@
 Tests cover:
 - QueueDepot push/pull behaviour (auto-evict, timeout, retries)
 - RingTopology and MigrateRandom migration plans
-- IslandEaMuPlusLambda constructor validation and helper methods
-- _drain_inbox compatibility helper (kept for test parity)
+- IslandMigration constructor validation and helper methods
 - LogicalIsland immigrant merge logic
 """
 
@@ -216,7 +215,7 @@ class TestMigrateRandom:
 
 
 # ---------------------------------------------------------------------------
-# IslandEaMuPlusLambda constructor
+# IslandMigration constructor
 # ---------------------------------------------------------------------------
 
 

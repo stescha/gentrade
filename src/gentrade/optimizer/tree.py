@@ -333,13 +333,13 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
     ) -> Algorithm[Any]:
         """Create the evolutionary algorithm, choosing island or standard mode.
 
-        When ``migration_rate > 0`` an :class:`~gentrade.island.IslandEaMuPlusLambda`
+        When ``migration_rate > 0`` an :class:`~gentrade.island.IslandMigration`
         is returned; otherwise the standard :class:`~gentrade.algorithms.EaMuPlusLambda`
-        is used with the provided worker pool.
+        is used.
 
         Args:
-            worker_pool: Multiprocessing pool for parallel evaluation (used
-                in standard mode only).
+            evaluator: Evaluator used for fitness computation.
+            val_evaluator: Optional evaluator used for validation fitness computation.
             stats: DEAP statistics object.
             halloffame: Hall of fame to update after evolution.
 
