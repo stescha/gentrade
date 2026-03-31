@@ -586,8 +586,10 @@ class LogicalIsland:
         self.algorithm.post_initialization(population, state)
 
         # Emigration
-        emigrants = toolbox.select_emigrants(population, self.migration_count)
-        self.depot.push([self.toolbox.clone(e) for e in emigrants])
+        emigrants = self.algorithm.prepare_emigrants(
+            population, toolbox, self.migration_count
+        )
+        self.depot.push(emigrants)
 
         island_id = self.descriptor.island_id
 
@@ -655,16 +657,10 @@ class LogicalIsland:
                     )
 
                 n_immigrants_this_gen = len(immigrants)
-                immigrants = [self.toolbox.clone(im) for im in immigrants]
-                for im in immigrants:
-                    del im.fitness.values
-
-                _, duration = self.algorithm.evaluate_individuals(toolbox, immigrants)
-                eval_time_acc += duration
-                worst = toolbox.select_replace(population, n_immigrants_this_gen)
-                for w, im in zip(worst, immigrants, strict=True):
-                    idx = population.index(w)
-                    population[idx] = im
+                population, n_imm_evaluated, duration_imm = (
+                    self.algorithm.accept_immigrants(population, immigrants, toolbox)
+                )
+                eval_time_acc += duration_imm
                 logger.info(
                     "Island %d: Immigrated %d individuals at gen %d (expected %d).",
                     island_id,
@@ -688,8 +684,9 @@ class LogicalIsland:
             self.algorithm.update_tracking(population, state)
 
             if gen % self.migration_rate == 0:
-                emigrants = toolbox.select_emigrants(population, self.migration_count)
-                emigrants = [self.toolbox.clone(e) for e in emigrants]
+                emigrants = self.algorithm.prepare_emigrants(
+                    population, toolbox, self.migration_count
+                )
                 self.descriptor.depot.push(emigrants)
                 n_emigrants_this_gen = len(emigrants)
 
