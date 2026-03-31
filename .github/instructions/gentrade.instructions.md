@@ -21,8 +21,8 @@ The project uses an object-oriented optimizer system. The core logic is encapsul
 - **Optimizers** (`BaseOptimizer`, `TreeOptimizer`, `PairTreeOptimizer`): Core orchestrators for GP optimization. They implement primitive-set construction, toolbox wiring, and evaluator creation. They produce instances of `TreeIndividual` or `PairTreeIndividual`.
 - **Algorithms** (`BaseAlgorithm`, `EaMuPlusLambda`): Expose the inner evolutionary loops. Any `BaseAlgorithm` subtype can be run **standalone** (where `multiprocessing` parallelizes strategy evaluation across the population).
 - **Island Migration** (`IslandMigration`): An orchestrator capable of wrapping any `BaseAlgorithm` subtype to run an "island migration" topology. It uses `multiprocessing` to parallelize the process at the *island level*. Each island executes an independent evolutionary run (evaluating sequentially or semi-sequentially) and exchanges individuals with neighbors via bounded push/pull depots.
-- **Evaluators**: Concrete evaluator classes (`TreeEvaluator`, `PairEvaluator`) perform compilation, simulation, and metric aggregation. Evaluators detect whether labels or backtest configs are required based on metric types.
-- **Callbacks**: Lifecycle hooks (`on_fit_start`, `on_generation_end`, `on_fit_end`) for custom logic. `ValidationCallback` is used for periodic evaluation on unseen data.
+ - **Evaluators**: Concrete evaluator classes (`TreeEvaluator`, `PairEvaluator`) perform compilation, simulation, and metric aggregation. Evaluators detect whether labels or backtest configs are required based on metric types.
+ - **Callbacks**: Lifecycle hooks (`on_fit_start`, `on_fit_end`) for custom logic.
 
 ## Core Concept: GP Trees as Trading Strategies
 
@@ -42,7 +42,7 @@ The project uses an object-oriented optimizer system. The core logic is encapsul
 - **Performance**: Use vectorized computation only. Primitives and metrics must operate on full `pd.Series` / `np.ndarray`.
 - **Metrics**: Metrics consume simulator outputs (`BtResult` for C++, `vbt.Portfolio` for VectorBT) or true labels to produce a fitness tuple.
 - **Multi-objective**: Providing multiple metrics triggers multi-objective optimization (e.g., NSGA-II).
-- **Validation**: Providing `X_val` and `y_val` to `fit()` triggers periodic validation via `ValidationCallback`.
+ - **Validation**: Providing `X_val` and `y_val` to `fit()` triggers periodic validation via an optional validation evaluator (configured from `metrics_val` / `val_evaluator`).
 
 ## Genetic Operators & Constraints
 

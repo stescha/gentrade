@@ -23,7 +23,7 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.callbacks import Callback, ValidationCallback
+from gentrade.callbacks import Callback
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.individual import (
     PairTreeIndividual,
@@ -414,8 +414,7 @@ class BaseOptimizer(ABC):
                 classification metrics are present and trade_side='sell', or
                 when backtest metrics are present and trade_side='buy'.
                 Must mirror X in structure.
-            X_val: Validation OHLCV data. When provided, a ValidationCallback
-                is added automatically.
+            X_val: Validation OHLCV data. When provided triggers validation.
             entry_label_val: Validation entry labels. Required when X_val is
                 provided with classification metrics and trade_side='buy'.
             exit_label_val: Validation exit labels. Required when X_val is
@@ -517,18 +516,7 @@ class BaseOptimizer(ABC):
         ensure_creator_fitness_class(weights)
 
         # 8. Build active callbacks
-        _active_callbacks: list[Callback] = list(self.callbacks or [])
-
-        if val_data_list and val_evaluator is not None:
-            val_callback = ValidationCallback(
-                val_data=val_data_list,
-                val_entry_labels=val_entry_list,
-                val_exit_labels=val_exit_list,
-                val_evaluator=val_evaluator,
-                val_names=val_names,
-                interval=self.validation_interval,
-            )
-            _active_callbacks.append(val_callback)
+        _active_callbacks: list[Callback] = self.callbacks or []
 
         # 9. Call on_fit_start for all callbacks
         for cb in _active_callbacks:
@@ -547,20 +535,7 @@ class BaseOptimizer(ABC):
             stats.register("min", np.min)
             stats.register("max", np.max)
 
-        # 11. Build generation callback closure
-        def _gen_callback(
-            gen: int,
-            ngen: int,
-            population: list[Any],
-            best_ind: Any | None = None,
-            island_id: int | None = None,
-        ) -> None:
-            for cb in _active_callbacks:
-                cb.on_generation_end(
-                    gen, ngen, population, best_ind, island_id=island_id
-                )
-
-        # 12. Run evolution
+        # 11. Run evolution
         if self.verbose:
             logger.info("=== GP Evolution Run ===")
             logger.info(f"Seed: {self.seed}")
@@ -589,7 +564,7 @@ class BaseOptimizer(ABC):
         )
         duration = time.perf_counter() - start
 
-        # 13. Store fitted attributes
+        # 12. Store fitted attributes
         self.duration_ = duration
         self.population_ = pop
         self.logbook_ = logbook
@@ -605,7 +580,7 @@ class BaseOptimizer(ABC):
         else:
             self.demes_ = [pop]
 
-        # 14. Call on_fit_end for all callbacks
+        # 13. Call on_fit_end for all callbacks
         for cb in _active_callbacks:
             cb.on_fit_end(self)
 
