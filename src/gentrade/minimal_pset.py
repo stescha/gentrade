@@ -9,7 +9,7 @@ import operator
 import pandas as pd
 import talib
 from deap import gp
-from zigzag import peak_valley_pivots  # type: ignore
+from zigzag import peak_valley_pivots, peak_valley_pivots_detailed  # type: ignore
 
 from gentrade.pset.pset_types import (
     Acceleration,
@@ -74,6 +74,89 @@ def zigzag_pivots(
     elif isinstance(data, dict):
         return {
             key: _calc_zigzag_pivots(df[column], threshold, label)
+            for key, df in data.items()
+        }
+
+
+def _calc_zigzag_pivots_detailed(
+    price: pd.Series,
+    up_thresh: float,
+    down_thresh: float,
+    limit_to_finalized_segments: bool,
+    use_eager_switching_for_non_final: bool,
+    label: int,
+) -> pd.Series:
+    """Compute a zigzag boolean mask using the detailed Cython implementation."""
+    pivots = peak_valley_pivots_detailed(
+        price.values,
+        up_thresh,
+        down_thresh,
+        limit_to_finalized_segments,
+        use_eager_switching_for_non_final,
+    )
+    return pd.Series(pivots == label, index=price.index)
+
+
+def zigzag_pivots_detailed(
+    data: pd.Series | pd.DataFrame | dict[str, pd.DataFrame],
+    up_thresh: float,
+    down_thresh: float,
+    limit_to_finalized_segments: bool,
+    use_eager_switching_for_non_final: bool,
+    label: int,
+    column: str = "close",
+) -> pd.Series | dict[str, pd.Series]:
+    """Compute zigzag pivots using the detailed algorithm and return a boolean mask.
+
+    Unlike `zigzag_pivots`, this function exposes separate up/down thresholds
+    and two additional behavioural flags for non-finalized segments.
+
+    Uses look-ahead — intentionally a 'cheat' primitive for smoke testing.
+
+    Args:
+        data: Input price data as a Series, DataFrame, or dict of DataFrames.
+        up_thresh: Relative threshold for upward moves (positive float).
+        down_thresh: Relative threshold for downward moves (negative float).
+        limit_to_finalized_segments: When True, only confirmed pivot segments
+            are labelled; in-progress segments are left as 0.
+        use_eager_switching_for_non_final: When True, eagerly switches the
+            current direction label before a segment is finalized.
+        label: Pivot value to select (1 for peaks, -1 for valleys).
+        column: Column name used when *data* is a DataFrame or dict of
+            DataFrames. Defaults to ``"close"``.
+
+    Returns:
+        Boolean mask (True where the pivot equals *label*) as a `pd.Series`,
+        or a dict of such series when *data* is a dict.
+    """
+    if isinstance(data, pd.Series):
+        return _calc_zigzag_pivots_detailed(
+            data,
+            up_thresh,
+            down_thresh,
+            limit_to_finalized_segments,
+            use_eager_switching_for_non_final,
+            label,
+        )
+    elif isinstance(data, pd.DataFrame):
+        return _calc_zigzag_pivots_detailed(
+            data[column],
+            up_thresh,
+            down_thresh,
+            limit_to_finalized_segments,
+            use_eager_switching_for_non_final,
+            label,
+        )
+    elif isinstance(data, dict):
+        return {
+            key: _calc_zigzag_pivots_detailed(
+                df[column],
+                up_thresh,
+                down_thresh,
+                limit_to_finalized_segments,
+                use_eager_switching_for_non_final,
+                label,
+            )
             for key, df in data.items()
         }
 
