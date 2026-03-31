@@ -15,7 +15,6 @@ from gentrade.individual import PairTreeIndividual
 from gentrade.minimal_pset import create_pset_zigzag_minimal
 from gentrade.optimizer.acc import AccOptimizer
 
-
 # ---------------------------------------------------------------------------
 # E2e smoke tests
 # ---------------------------------------------------------------------------
