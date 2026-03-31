@@ -137,37 +137,9 @@ eval_sltp(py::array_t<double, py::array::c_style | py::array::forcecast> open_ar
     values[t] = balance + position * close[t];
     positions[t] = position;
 
-    // Entry path: execute buys on the next bar's open to avoid look-ahead.
-    if (position == 0 && buys[t] == 1) {
-      if (t + order_delay >= n) {
-        continue;
-      }
-
-      buy_price = open[t + order_delay];
-      position = 1;
-      balance -= buy_price * (1.0 + buy_fee);
-      buy_time = t + order_delay;
-
-      if (tp_enabled) {
-        tp_price = buy_price * (1.0 + tp_stop_value);
-      }
-
-      if (sl_enabled) {
-        sl_price = buy_price * (1.0 - sl_stop_value);
-        highest_high = buy_price;
-      }
-      stop_activation_time = buy_time + 1;
-      exit_signal_pending = false;
-      exit_execution_time = -1;
-      continue;
-    }
+    const bool entry_signal = buys[t] == 1;
 
     if (position > 0) {
-      // Stops only become eligible after the entry candle fully closes.
-      if (t < stop_activation_time) {
-        continue;
-      }
-
       // Queue manual exits so they fill on the next bar unless a stop fires sooner.
       if (sells[t] == 1 && !exit_signal_pending) {
         int execution_time = t + order_delay;
@@ -175,6 +147,11 @@ eval_sltp(py::array_t<double, py::array::c_style | py::array::forcecast> open_ar
           exit_signal_pending = true;
           exit_execution_time = execution_time;
         }
+      }
+
+      // Stops only become eligible after the entry candle fully closes.
+      if (t < stop_activation_time) {
+        continue;
       }
 
       double trailing_high = highest_high;
@@ -239,6 +216,31 @@ eval_sltp(py::array_t<double, py::array::c_style | py::array::forcecast> open_ar
       if (position == 0) {
         stop_activation_time = 0;
       }
+    }
+
+    // Entry path: execute buys on the next bar's open to avoid look-ahead.
+    if (position == 0 && entry_signal) {
+      if (t + order_delay >= n) {
+        continue;
+      }
+
+      buy_price = open[t + order_delay];
+      position = 1;
+      balance -= buy_price * (1.0 + buy_fee);
+      buy_time = t + order_delay;
+
+      if (tp_enabled) {
+        tp_price = buy_price * (1.0 + tp_stop_value);
+      }
+
+      if (sl_enabled) {
+        sl_price = buy_price * (1.0 - sl_stop_value);
+        highest_high = buy_price;
+      }
+      stop_activation_time = buy_time + 1;
+      exit_signal_pending = false;
+      exit_execution_time = -1;
+      continue;
     }
   }
 
