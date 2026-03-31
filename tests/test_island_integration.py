@@ -1,4 +1,4 @@
-"""Integration tests for IslandEaMuPlusLambda and optimizer island mode.
+"""Integration tests for IslandMigration and optimizer island mode.
 
 Tests verify that:
 - TreeOptimizer uses island mode when migration_rate > 0
@@ -16,7 +16,7 @@ from deap import tools
 from gentrade.algorithms import EaMuPlusLambda
 from gentrade.classification_metrics import F1Metric
 from gentrade.data import generate_synthetic_ohlcv
-from gentrade.island import IslandEaMuPlusLambda
+from gentrade.island import IslandMigration
 from gentrade.minimal_pset import create_pset_default_medium, zigzag_pivots
 from gentrade.optimizer import TreeOptimizer
 
@@ -120,11 +120,11 @@ class TestAlgorithmSelection:
         opt.toolbox_ = opt._build_toolbox(opt.pset_)
         hof = tools.HallOfFame(1)
         stats = tools.Statistics(lambda ind: ind.fitness.values)
-        algo = opt.create_algorithm(MagicMock(), stats, hof, None)
+        algo = opt.create_algorithm(MagicMock(), None, stats, hof)
         assert isinstance(algo, EaMuPlusLambda)
 
     def test_nonzero_migration_rate_returns_island_algorithm(self) -> None:
-        """migration_rate > 0 returns IslandEaMuPlusLambda."""
+        """migration_rate > 0 returns IslandMigration."""
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
             metrics=(F1Metric(),),
@@ -142,8 +142,8 @@ class TestAlgorithmSelection:
         opt.toolbox_ = opt._build_toolbox(opt.pset_)
         hof = tools.HallOfFame(1)
         stats = tools.Statistics(lambda ind: ind.fitness.values)
-        algo = opt.create_algorithm(MagicMock(), stats, hof, None)
-        assert isinstance(algo, IslandEaMuPlusLambda)
+        algo = opt.create_algorithm(MagicMock(), None, stats, hof)
+        assert isinstance(algo, IslandMigration)
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,7 @@ class TestIslandOptimizerFit:
             metrics=(F1Metric(),),
             mu=4,
             lambda_=8,
-            generations=1,
+            generations=2,
             seed=42,
             verbose=False,
         )

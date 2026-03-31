@@ -18,12 +18,11 @@ class MigrationTopology(Protocol):
     (list of ``(depot_index, count)`` pairs) for a given island.
     """
 
-    def get_immigrants(self, island_id: int, depot_count: int) -> list[tuple[int, int]]:
+    def get_immigrants(self, island_id: int) -> list[tuple[int, int]]:
         """Return a migration plan for the given island.
 
         Args:
             island_id: The ID of the island requesting immigrants.
-            depot_count: Total number of depots (one per island).
 
         Returns:
             A list of ``(depot_index, count)`` pairs describing how many
@@ -49,7 +48,7 @@ class RingTopology:
         self.island_count = island_count
         self.migration_count = migration_count
 
-    def get_immigrants(self, island_id: int, depot_count: int) -> list[tuple[int, int]]:
+    def get_immigrants(self, island_id: int) -> list[tuple[int, int]]:
         """Return single-source migration plan (predecessor island).
 
         Args:
@@ -92,12 +91,11 @@ class MigrateRandom:
         self.migration_count = migration_count
         self.rng = np.random.default_rng(seed)
 
-    def get_immigrants(self, island_id: int, depot_count: int) -> list[tuple[int, int]]:
+    def get_immigrants(self, island_id: int) -> list[tuple[int, int]]:
         """Return multi-source migration plan with even allocation.
 
         Args:
             island_id: The requesting island's ID.
-            depot_count: Total number of depots.
 
         Returns:
             A list of ``(depot_index, count)`` pairs where count is as

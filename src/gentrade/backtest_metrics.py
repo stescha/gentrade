@@ -130,7 +130,7 @@ class MeanPnlCppMetric(CppBacktestMetricBase):
         if len(bt_result.trade_returns) < self.min_trades:
             return 0.0
         return (
-            float(np.mean(bt_result.trade_returns))
+            float(np.median(bt_result.trade_returns))
             if len(bt_result.trade_returns) > 0
             else 0.0
         )

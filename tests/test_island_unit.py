@@ -3,8 +3,7 @@
 Tests cover:
 - QueueDepot push/pull behaviour (auto-evict, timeout, retries)
 - RingTopology and MigrateRandom migration plans
-- IslandEaMuPlusLambda constructor validation and helper methods
-- _drain_inbox compatibility helper (kept for test parity)
+- IslandMigration constructor validation and helper methods
 - LogicalIsland immigrant merge logic
 """
 
@@ -13,10 +12,9 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
-from deap import base, tools
 
 from gentrade.island import (
-    IslandEaMuPlusLambda,
+    IslandMigration,
     MigrationTimeoutError,
     QueueDepot,
 )
@@ -157,7 +155,7 @@ class TestRingTopology:
     def test_ring_pulls_from_predecessor(self) -> None:
         """Island i pulls from (i-1) % n."""
         topo = RingTopology(island_count=4, migration_count=3)
-        plan = topo.get_immigrants(island_id=0, depot_count=4)
+        plan = topo.get_immigrants(island_id=0)
         assert plan == [(3, 3)]
 
     def test_ring_wraps_correctly(self) -> None:
@@ -165,14 +163,14 @@ class TestRingTopology:
         n = 4
         topo = RingTopology(island_count=n, migration_count=2)
         for i in range(n):
-            plan = topo.get_immigrants(island_id=i, depot_count=n)
+            plan = topo.get_immigrants(island_id=i)
             expected_src = (i - 1) % n
             assert plan == [(expected_src, 2)]
 
     def test_ring_migration_count(self) -> None:
         """migration_count is reflected in the plan."""
         topo = RingTopology(island_count=3, migration_count=7)
-        plan = topo.get_immigrants(island_id=1, depot_count=3)
+        plan = topo.get_immigrants(island_id=1)
         assert plan[0][1] == 7
 
 
@@ -189,21 +187,21 @@ class TestMigrateRandom:
         """Source island IDs in the plan never equal the requesting island."""
         topo = MigrateRandom(island_count=5, n_selected=2, migration_count=4, seed=42)
         for iid in range(5):
-            plan = topo.get_immigrants(island_id=iid, depot_count=5)
+            plan = topo.get_immigrants(island_id=iid)
             for src, _ in plan:
                 assert src != iid
 
     def test_plan_total_count(self) -> None:
         """Sum of counts in plan equals migration_count."""
         topo = MigrateRandom(island_count=6, n_selected=3, migration_count=9, seed=0)
-        plan = topo.get_immigrants(island_id=2, depot_count=6)
+        plan = topo.get_immigrants(island_id=2)
         assert sum(c for _, c in plan) == 9
 
     def test_n_selected_clamped(self) -> None:
         """n_selected is clamped to [1, n_islands-1]."""
         # Overly large n_selected
         topo = MigrateRandom(island_count=3, n_selected=100, migration_count=5, seed=1)
-        plan = topo.get_immigrants(island_id=0, depot_count=3)
+        plan = topo.get_immigrants(island_id=0)
         # Should never exceed n_islands - 1 = 2 sources
         assert len(plan) <= 2
 
@@ -211,54 +209,43 @@ class TestMigrateRandom:
         """Two identical seeded instances produce the same plan."""
         t1 = MigrateRandom(island_count=4, n_selected=2, migration_count=4, seed=7)
         t2 = MigrateRandom(island_count=4, n_selected=2, migration_count=4, seed=7)
-        plan1 = t1.get_immigrants(island_id=1, depot_count=4)
-        plan2 = t2.get_immigrants(island_id=1, depot_count=4)
+        plan1 = t1.get_immigrants(island_id=1)
+        plan2 = t2.get_immigrants(island_id=1)
         assert plan1 == plan2
 
 
 # ---------------------------------------------------------------------------
-# IslandEaMuPlusLambda constructor
+# IslandMigration constructor
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-class TestIslandEaMuPlusLambdaConstructor:
+class TestIslandMigrationConstructor:
     """Verify constructor stores params and validates."""
 
-    def _make_algo(
-        self, n_islands: int = 2, n_jobs: int = 2
-    ) -> "IslandEaMuPlusLambda[Any]":
-        toolbox = MagicMock(spec=base.Toolbox)
-        evaluator = MagicMock()
-        return IslandEaMuPlusLambda(
-            toolbox=toolbox,
-            evaluator=evaluator,
+    def _make_algo(self, n_islands: int = 2, n_jobs: int = 2) -> "IslandMigration[Any]":
+        return IslandMigration(
+            algorithm=MagicMock(),
+            topology=MagicMock(),
             n_islands=n_islands,
-            n_jobs=n_jobs,
-            mu=10,
-            lambda_=20,
-            ngen=5,
-            cxpb=0.5,
-            mutpb=0.2,
             migration_rate=2,
             migration_count=3,
             depot_capacity=50,
             pull_timeout=2.0,
             pull_max_retries=3,
             push_timeout=2.0,
-            replace_selection_op=tools.selWorst,  # type: ignore[arg-type]
-            select_best_op=tools.selBest,  # type: ignore[arg-type]
-            weights=(1.0,),
+            n_jobs=n_jobs,
+            seed=42,
         )
 
     def test_stores_basic_params(self) -> None:
-        """Constructor stores mu, lambda_, ngen, cxpb, mutpb."""
+        """Constructor stores migration and island parameters."""
         algo = self._make_algo()
-        assert algo.mu == 10
-        assert algo.lambda_ == 20
-        assert algo.ngen == 5
-        assert algo.cxpb == 0.5
-        assert algo.mutpb == 0.2
+        assert algo.migration_rate == 2
+        assert algo.migration_count == 3
+        assert algo.depot_capacity == 50
+        assert algo.pull_timeout == 2.0
+        assert algo.pull_max_retries == 3
 
     def test_stores_island_params(self) -> None:
         """Constructor stores island-specific parameters."""
@@ -279,36 +266,38 @@ class TestIslandEaMuPlusLambdaConstructor:
         algo = self._make_algo()
         assert algo.demes_ is None
 
-    def test_default_topology_is_ring(self) -> None:
-        """Default topology is RingTopology."""
-        algo = self._make_algo()
-        assert isinstance(algo.topology, RingTopology)
+    def test_topology_is_stored(self) -> None:
+        """Topology passed at construction is stored as-is (no default exists)."""
+        mock_topo = MagicMock()
+        algo: IslandMigration[Any] = IslandMigration(
+            algorithm=MagicMock(),
+            topology=mock_topo,
+            n_islands=2,
+            migration_rate=2,
+            migration_count=3,
+            depot_capacity=50,
+            pull_timeout=2.0,
+            pull_max_retries=3,
+            push_timeout=2.0,
+            n_jobs=2,
+            seed=42,
+        )
+        assert algo.topology is mock_topo
 
     def test_custom_topology_is_stored(self) -> None:
         """Custom topology is stored as-is."""
-        toolbox = MagicMock(spec=base.Toolbox)
-        evaluator = MagicMock()
         topo = MigrateRandom(island_count=2, n_selected=1, migration_count=2, seed=0)
-        algo: IslandEaMuPlusLambda[Any] = IslandEaMuPlusLambda(
-            toolbox=toolbox,
-            evaluator=evaluator,
+        algo: IslandMigration[Any] = IslandMigration(
+            algorithm=MagicMock(),
+            topology=topo,
             n_islands=2,
             n_jobs=2,
-            mu=5,
-            lambda_=10,
-            ngen=3,
-            cxpb=0.5,
-            mutpb=0.2,
             migration_rate=1,
             migration_count=2,
             depot_capacity=20,
             pull_timeout=1.0,
             pull_max_retries=2,
             push_timeout=1.0,
-            replace_selection_op=tools.selWorst,  # type: ignore[arg-type]
-            select_best_op=tools.selBest,  # type: ignore[arg-type]
-            weights=(1.0,),
-            topology=topo,
         )
         assert algo.topology is topo
 
@@ -322,28 +311,18 @@ class TestIslandEaMuPlusLambdaConstructor:
 class TestIslandSeedDerivation:
     """Verify per-island seed generation."""
 
-    def _make_algo(self, seed: int | None = 42) -> "IslandEaMuPlusLambda[Any]":
-        toolbox = MagicMock(spec=base.Toolbox)
-        evaluator = MagicMock()
-        return IslandEaMuPlusLambda(
-            toolbox=toolbox,
-            evaluator=evaluator,
+    def _make_algo(self, seed: int | None = 42) -> "IslandMigration[Any]":
+        return IslandMigration(
+            algorithm=MagicMock(),
+            topology=MagicMock(),
             n_islands=4,
             n_jobs=4,
-            mu=5,
-            lambda_=5,
-            ngen=1,
-            cxpb=0.5,
-            mutpb=0.2,
             migration_rate=1,
             migration_count=2,
             depot_capacity=20,
             pull_timeout=1.0,
             pull_max_retries=2,
             push_timeout=1.0,
-            replace_selection_op=tools.selWorst,  # type: ignore[arg-type]
-            select_best_op=tools.selBest,  # type: ignore[arg-type]
-            weights=(1.0,),
             seed=seed,
         )
 

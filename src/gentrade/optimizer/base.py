@@ -8,6 +8,7 @@ construction, toolbox wiring, and evaluator creation for either
 """
 
 import logging
+import operator
 import random
 import time
 from abc import ABC, abstractmethod
@@ -22,7 +23,7 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.callbacks import Callback, ValidationCallback
+from gentrade.callbacks import Callback
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.individual import (
     PairTreeIndividual,
@@ -193,6 +194,24 @@ def _normalize_data_and_labels(
     raise TypeError(f"Unsupported type for {dataset_name}_data: {type(data)}")
 
 
+def create_hof_factory(
+    multi_object: bool,
+    hof_size: int | None = None,
+    similar: Callable[[Any, Any], bool] = operator.eq,
+) -> Callable[[], tools.HallOfFame]:
+    def factory() -> tools.HallOfFame:
+        if multi_object:
+            return tools.ParetoFront(similar=similar)
+        else:
+            if hof_size is None:
+                raise ValueError(
+                    "hof_size must be provided for single-objective optimization."
+                )
+            return tools.HallOfFame(hof_size, similar=similar)
+
+    return factory
+
+
 class BaseOptimizer(ABC):
     """Abstract base for genetic programming optimizers.
 
@@ -326,20 +345,21 @@ class BaseOptimizer(ABC):
     def create_algorithm(
         self,
         evaluator: BaseEvaluator[Any],
+        val_evaluator: BaseEvaluator[Any] | None,
         stats: tools.Statistics,
         halloffame: tools.HallOfFame,
-        val_callback: Callable[..., None] | None,
     ) -> "Algorithm[Any]":
         """Return algorithm instance to execute the evolutionary loop.
 
         Subclasses must return a configured :class:`Algorithm` instance that
-        accepts a population list and returns ``(population, logbook)``.
+        accepts the toolbox and training data and returns
+        ``(population, logbook, halloffame)``.
 
         Args:
             evaluator: Evaluator used for fitness computation.
+            val_evaluator: Optional evaluator used for validation fitness computation.
             stats: DEAP statistics object for logging per-generation metrics.
             halloffame: Hall of fame tracking best individuals.
-            val_callback: Optional callback invoked after each generation.
 
         Returns:
             A configured :class:`Algorithm` instance ready to call ``run()``.
@@ -394,8 +414,7 @@ class BaseOptimizer(ABC):
                 classification metrics are present and trade_side='sell', or
                 when backtest metrics are present and trade_side='buy'.
                 Must mirror X in structure.
-            X_val: Validation OHLCV data. When provided, a ValidationCallback
-                is added automatically.
+            X_val: Validation OHLCV data. When provided triggers validation.
             entry_label_val: Validation entry labels. Required when X_val is
                 provided with classification metrics and trade_side='buy'.
             exit_label_val: Validation exit labels. Required when X_val is
@@ -414,9 +433,6 @@ class BaseOptimizer(ABC):
         self.duration_ = -1
         self.population_ = []
         self.logbook_ = tools.Logbook()
-        self.hall_of_fame_ = tools.HallOfFame(self.hof_size)
-        if is_multiobjective:
-            self.hall_of_fame_ = tools.ParetoFront()
         self.best_individual_ = None
 
         # 1. Normalize and validate datasets (single call for data+labels)
@@ -500,18 +516,7 @@ class BaseOptimizer(ABC):
         ensure_creator_fitness_class(weights)
 
         # 8. Build active callbacks
-        _active_callbacks: list[Callback] = list(self.callbacks or [])
-
-        if val_data_list and val_evaluator is not None:
-            val_callback = ValidationCallback(
-                val_data=val_data_list,
-                val_entry_labels=val_entry_list,
-                val_exit_labels=val_exit_list,
-                val_evaluator=val_evaluator,
-                val_names=val_names,
-                interval=self.validation_interval,
-            )
-            _active_callbacks.append(val_callback)
+        _active_callbacks: list[Callback] = self.callbacks or []
 
         # 9. Call on_fit_start for all callbacks
         for cb in _active_callbacks:
@@ -530,20 +535,7 @@ class BaseOptimizer(ABC):
             stats.register("min", np.min)
             stats.register("max", np.max)
 
-        # 11. Build generation callback closure
-        def _gen_callback(
-            gen: int,
-            ngen: int,
-            population: list[Any],
-            best_ind: Any | None = None,
-            island_id: int | None = None,
-        ) -> None:
-            for cb in _active_callbacks:
-                cb.on_generation_end(
-                    gen, ngen, population, best_ind, island_id=island_id
-                )
-
-        # 12. Run evolution
+        # 11. Run evolution
         if self.verbose:
             logger.info("=== GP Evolution Run ===")
             logger.info(f"Seed: {self.seed}")
@@ -552,22 +544,35 @@ class BaseOptimizer(ABC):
                 f"Evolution: mu={self.mu}, λ={self.lambda_}, "
                 f"gen={self.generations}, cxpb={self.cxpb}, mutpb={self.mutpb}"
             )
-
+        hof_factory = create_hof_factory(is_multiobjective, self.hof_size)
         algorithm = self.create_algorithm(
-            evaluator, stats, self.hall_of_fame_, _gen_callback
+            evaluator,
+            val_evaluator,
+            stats,
+            hof_factory(),
         )
         start = time.perf_counter()
-        pop, logbook = algorithm.run(train_data_list, train_entry_list, train_exit_list)
+        pop, logbook, hof = algorithm.run(
+            self.toolbox_,
+            train_data_list,
+            train_entry_list,
+            train_exit_list,
+            val_data=val_data_list,
+            val_entry_labels=val_entry_list,
+            val_exit_labels=val_exit_list,
+            hof_factory=hof_factory,
+        )
         duration = time.perf_counter() - start
 
-        # 13. Store fitted attributes
+        # 12. Store fitted attributes
         self.duration_ = duration
         self.population_ = pop
         self.logbook_ = logbook
-        # self.hall_of_fame_ = hof
-        self.best_individual_ = self.hall_of_fame_[0] if self.hall_of_fame_ else None
+        hof = hof if hof else create_hof_factory(is_multiobjective, self.hof_size)()
+        self.hall_of_fame_ = hof
         # TODO: Clarify best selection in case of multi-objective
         # self.best_individual_ = self.toolbox_.select_best(pop, 1)[0] if pop else None
+        self.best_individual_ = hof[0] if len(hof) > 0 else None
 
         # Store per-island populations; demes_ is optional on Algorithm implementations
         if hasattr(algorithm, "demes_"):
@@ -575,7 +580,7 @@ class BaseOptimizer(ABC):
         else:
             self.demes_ = [pop]
 
-        # 14. Call on_fit_end for all callbacks
+        # 13. Call on_fit_end for all callbacks
         for cb in _active_callbacks:
             cb.on_fit_end(self)
 

@@ -3,6 +3,7 @@
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     Literal,
     Protocol,
@@ -12,7 +13,7 @@ from typing import (
 )
 
 import pandas as pd
-from deap import tools
+from deap import base, tools
 
 from gentrade.individual import TreeIndividualBase
 
@@ -53,10 +54,16 @@ class Algorithm(Protocol[IndividualT]):
 
     def run(
         self,
-        train_data: list["pd.DataFrame"],
-        train_entry_labels: list["pd.Series"] | None,
-        train_exit_labels: list["pd.Series"] | None,
-    ) -> tuple[list[IndividualT], tools.Logbook]: ...
+        toolbox: base.Toolbox,
+        train_data: list[pd.DataFrame],
+        train_entry_labels: list[pd.Series] | None,
+        train_exit_labels: list[pd.Series] | None,
+        *,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+        hof_factory: Callable[[], tools.HallOfFame] | None = None,
+    ) -> tuple[list[IndividualT], tools.Logbook, tools.HallOfFame | None]: ...
 
 
 class SelectionOp(Protocol[T_co]):

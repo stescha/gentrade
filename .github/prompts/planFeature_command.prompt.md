@@ -91,6 +91,8 @@ On the **first reply** in a session the planner should include the open question
 
 ---
 
+4. **Solution Proposals (conditional)** — For each open question presented in the first reply or in response to `show open`, include a proposed solution section immediately after the question. For each open question, present 1–3 potential solutions labeled (a), (b), (c), etc., with a one-line description and any relevant trade-offs. Add a short recommendation which solution is the most promising, but ask the user to choose or propose their own. 
+
 ## Commands
 
 The user controls the conversation with these commands. Recognize both exact phrases and natural-language equivalents.

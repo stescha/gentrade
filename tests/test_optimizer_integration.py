@@ -174,33 +174,6 @@ class TestTreeOptimizerFitCppBacktest:
 class TestTreeOptimizerValidation:
     """Integration tests for validation data support."""
 
-    def test_val_data_triggers_validation_callback(
-        self, synthetic_df: pd.DataFrame
-    ) -> None:
-        """When X_val is passed, a ValidationCallback is in _active_callbacks."""
-        labels = _get_zigzag_labels(synthetic_df)
-        # Split data
-        train_df = synthetic_df.iloc[:800]
-        val_df = synthetic_df.iloc[800:]
-        train_labels = labels.iloc[:800]
-        val_labels = labels.iloc[800:]
-
-        opt = TreeOptimizer(
-            pset=create_pset_default_medium,
-            metrics=(F1Metric(),),
-            metrics_val=(F1Metric(),),
-            mu=10,
-            lambda_=20,
-            generations=2,
-            seed=42,
-            verbose=False,
-        )
-        # We can't directly inspect _active_callbacks, but fit should complete
-        opt.fit(
-            train_df, entry_label=train_labels, X_val=val_df, entry_label_val=val_labels
-        )
-        assert len(opt.population_) == 10
-
     def test_train_metrics_as_fallback_val(self, synthetic_df: pd.DataFrame) -> None:
         """When metrics_val is None and X_val provided, train metrics are used."""
         labels = _get_zigzag_labels(synthetic_df)
