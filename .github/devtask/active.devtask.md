@@ -4,17 +4,5 @@
 ---
 ## DevTask Overview
 <!-- Concise description of the development task -->
-- **Label**: empty-devtask
-- **Description**: ...
-
-<!-- Optional scope with optional keys  -->
-## Scope
-- **Files**: ...
-- **Focus**: ...
-
-<!-- Optional Notes providing additional context or considerations -->
-## Notes
-- ...
-- ...
-
-
+- **Label**: introduce-generic-algorithm-approach
+- **Description**: The IslandMigration class is refactored to receive an algorithm (subtype of BaseAlgorithm) instance to allow for more flexible usage of future algorithms. Therefore the `IslandMigration` as well as the `EaMusPlusLambda` class as well as all related utils are refactored or introduced.
