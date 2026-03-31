@@ -164,7 +164,6 @@ eval_sltp(py::array_t<double, py::array::c_style | py::array::forcecast> open_ar
       bool signal_ready = exit_signal_pending && t >= exit_execution_time;
       int execution_index = -1;
       double execution_price = 0.0;
-      bool exit_via_stop = sl_hit || tp_hit;
       bool processed_exit = false;
 
       // Stops fire intra-bar: if open gaps beyond the target, use the stop level,
@@ -184,7 +183,6 @@ eval_sltp(py::array_t<double, py::array::c_style | py::array::forcecast> open_ar
       } else if (signal_ready) {
         execution_index = t;
         execution_price = open[t];
-        exit_via_stop = false;
         processed_exit = true;
         exit_signal_pending = false;
         exit_execution_time = -1;
@@ -209,13 +207,10 @@ eval_sltp(py::array_t<double, py::array::c_style | py::array::forcecast> open_ar
       buy_times.push_back(buy_time);
       trade_returns.push_back(pnl);
 
-      if (exit_via_stop) {
-        values[t] = balance;
-        positions[t] = position;
-      }
-      if (position == 0) {
-        stop_activation_time = 0;
-      }
+      // Always reflect the closed position in the equity curve for this bar.
+      values[t] = balance;
+      positions[t] = position;
+      stop_activation_time = 0;
     }
 
     // Entry path: execute buys on the next bar's open to avoid look-ahead.
@@ -259,8 +254,6 @@ eval_sltp(py::array_t<double, py::array::c_style | py::array::forcecast> open_ar
     buy_times.push_back(buy_time);
     sell_times.push_back(t);
     values[t] = balance;
-  } else if (n > 1) {
-    values[n - 1] = values[n - 2];
   }
 
   return std::make_tuple(cpp2py_int(buy_times, buy_times.size()),

@@ -18,12 +18,13 @@ from vectorbt.portfolio.enums import StopEntryPrice
 from gentrade.data import generate_synthetic_ohlcv
 
 
-def _build_test_ohlcv(n_rows: int, seed: int) -> pd.DataFrame:
+def _build_test_ohlcv(n_rows: int, seed: int | None) -> pd.DataFrame:
     """Generate realistic OHLCV test data.
 
     Args:
         n_rows: Number of minutes to simulate.
         seed: Random seed propagated into :func:`generate_synthetic_ohlcv`.
+            Pass ``None`` for a non-deterministic run.
 
     Returns:
         pd.DataFrame: OHLCV data with organic variance (no flattening hacks).
@@ -31,11 +32,13 @@ def _build_test_ohlcv(n_rows: int, seed: int) -> pd.DataFrame:
     return generate_synthetic_ohlcv(n_rows, seed=seed)
 
 
-def _build_signals(index: pd.Index, seed: int) -> tuple[pd.Series, pd.Series]:
+def _build_signals(index: pd.Index, seed: int | None) -> tuple[pd.Series, pd.Series]:
     """Create deterministic buy/sell signals that stay aligned with OHLCV data.
 
     Args:
         index: Datetime index that will be shared with the OHLCV frame.
+        seed: Random seed for reproducibility. Pass ``None`` for a
+            non-deterministic run.
 
     Returns:
         tuple[pd.Series, pd.Series]: Entry and exit boolean Series.
@@ -136,8 +139,6 @@ def evaluate_vectorbt_reference(
 
     Returns:
         dict[str, np.ndarray]: Vectorbt outputs aligned with the C++ contract.
-    Returns:
-        None
     """
     if entry_fee != exit_fee:
         raise NotImplementedError("VectorBT backtest cannot mix entry and exit fees.")
@@ -218,8 +219,6 @@ def _assert_equal_arrays(
         lhs: C++ output array.
         rhs: vectorbt output array.
         atol: Absolute tolerance for floating point comparisons.
-    Returns:
-        None
     """
     if lhs.shape != rhs.shape:
         raise AssertionError(f"{name} shape mismatch: {lhs.shape} != {rhs.shape}")
@@ -329,13 +328,9 @@ def run_scenario(
 
 
 def main() -> None:
-    """Iterate through all SL/TP combinations for both signal regimes.
-
-    Returns:
-        None
-    """
-    ohlcv = _build_test_ohlcv(n_rows=450, seed=None)
-    entries, exits = _build_signals(ohlcv.index, seed=None)
+    """Iterate through all SL/TP combinations for both signal regimes."""
+    ohlcv = _build_test_ohlcv(n_rows=450, seed=42)
+    entries, exits = _build_signals(ohlcv.index, seed=42)
     fee = 0.001
 
     combos: list[tuple[str, float | None, float | None, bool | None]] = [
