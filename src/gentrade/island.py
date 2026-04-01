@@ -57,7 +57,7 @@ import pandas as pd
 from deap import base, tools
 from deap import tools as _tools
 
-from gentrade.algorithms import varOr
+from gentrade.algorithms import BaseAlgorithm, EaMuPlusLambda, varOr
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.individual import TreeIndividualBase, ensure_creator_fitness_class
 from gentrade.topologies import MigrationTopology, RingTopology
