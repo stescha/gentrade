@@ -24,7 +24,7 @@ class TreeErrorBase(Exception):
         self,
         message: str,
         *,
-        tree: gp.PrimitiveTree | None,
+        tree: gp.PrimitiveTree | None = None,
         signals: pd.Series | None = None,
         err: Exception | None = None,
     ) -> None:

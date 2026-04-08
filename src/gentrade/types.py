@@ -3,6 +3,7 @@
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     Literal,
     Protocol,
@@ -12,17 +13,18 @@ from typing import (
 )
 
 import pandas as pd
-from deap import tools
+from deap import base, gp, tools
 
 from gentrade.individual import TreeIndividualBase
 
-T_co = TypeVar("T_co", covariant=True)
-# IndividualT = TypeVar("IndividualT")
 if TYPE_CHECKING:
+    from gentrade.algo_res import AlgorithmResult
     from gentrade.backtest_metrics import BacktestMetricBase
     from gentrade.classification_metrics import ClassificationMetricBase
 
     Metric = Union[ClassificationMetricBase, BacktestMetricBase]
+
+
 else:
     # Avoid circular imports at runtime; classification_metrics need to import
     # TreeAggregation, which is defined here.
@@ -34,12 +36,46 @@ TreeAggregation = Literal["buy", "sell", "mean", "min", "max"]
 
 # Type variable for individual types, bounded by TreeIndividualBase
 IndividualT = TypeVar("IndividualT", bound=TreeIndividualBase)
+PopulationT = TypeVar(
+    "PopulationT",
+    # bound=Sequence[TreeIndividualBase] | Sequence[Sequence[TreeIndividualBase]],
+)
+# PopulationRetT = TypeVar("PopulationRetT", covariant=True)
+
+# PopulationT = TypeVar(
+#     "PopulationT",
+#     bound=Sequence[TreeIndividualBase] | Sequence[Sequence[PairTreeIndividual]],
+# )
+
+# TODO:
+T_co = TypeVar("T_co", covariant=True)
 
 OperatorKwargs = Dict[str, Any]
 
 
 DataInput = pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame] | None
 LabelInput = pd.Series | dict[str, pd.Series] | list[pd.Series] | None
+
+# IndividualRetT = TypeVar("IndividualRetT", covariant=True, bound=TreeIndividualBase)
+
+PairTreeComponent = gp.PrimitiveTree
+
+
+# class AlgorithmResult(Protocol[IndividualRetT]):
+#     @cached_property
+#     def population(self) -> Sequence[IndividualRetT]: ...
+
+#     @cached_property
+#     def logbook(self) -> tools.Logbook: ...
+
+#     @cached_property
+#     def halloffame(self) -> tools.HallOfFame | None: ...
+
+#     @cached_property
+#     def best_individual(self) -> IndividualRetT | None:
+#         if self.halloffame and len(self.halloffame) > 0:
+#             return cast(IndividualRetT, self.halloffame[0])
+#         return None
 
 
 class Algorithm(Protocol[IndividualT]):
@@ -53,10 +89,17 @@ class Algorithm(Protocol[IndividualT]):
 
     def run(
         self,
-        train_data: list["pd.DataFrame"],
-        train_entry_labels: list["pd.Series"] | None,
-        train_exit_labels: list["pd.Series"] | None,
-    ) -> tuple[list[IndividualT], tools.Logbook]: ...
+        toolbox: base.Toolbox,
+        train_data: list[pd.DataFrame],
+        train_entry_labels: list[pd.Series] | None,
+        train_exit_labels: list[pd.Series] | None,
+        *,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+        hof_factory: Callable[[], tools.HallOfFame] | None = None,
+        verbose: bool = True,
+    ) -> "AlgorithmResult[IndividualT]": ...
 
 
 class SelectionOp(Protocol[T_co]):

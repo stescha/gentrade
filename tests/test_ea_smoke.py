@@ -4,10 +4,13 @@ Verifies that BaseOptimizer.create_algorithm() wires correctly and that
 fit() sets population_ and logbook_ as expected.
 """
 
+from unittest.mock import MagicMock
+
 import pandas as pd
 import pytest
 from deap import tools
 
+from gentrade.algorithms import EaMuPlusLambda
 from gentrade.classification_metrics import F1Metric
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.minimal_pset import create_pset_default_medium, zigzag_pivots
@@ -34,10 +37,6 @@ class TestEaSmokeCreateAlgorithm:
         self, synthetic_df: pd.DataFrame
     ) -> None:
         """create_algorithm() returns an object with a callable run attribute."""
-        from unittest.mock import MagicMock
-
-        from gentrade.algorithms import EaMuPlusLambda
-
         labels = _zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
@@ -51,13 +50,11 @@ class TestEaSmokeCreateAlgorithm:
         opt.fit(X=synthetic_df, entry_label=labels)
 
         stats = tools.Statistics(lambda ind: ind.fitness.values)
-        hof = tools.HallOfFame(1)
 
         algo = opt.create_algorithm(
             evaluator=MagicMock(),
+            val_evaluator=MagicMock(),
             stats=stats,
-            halloffame=hof,
-            val_callback=None,
         )
 
         assert isinstance(algo, EaMuPlusLambda)
@@ -86,19 +83,17 @@ class TestEaSmokeCreateAlgorithm:
         opt.fit(X=synthetic_df, entry_label=labels)
 
         stats = tools.Statistics(lambda ind: ind.fitness.values)
-        hof = tools.HallOfFame(1)
 
         algo = opt.create_algorithm(
             evaluator=MagicMock(),
+            val_evaluator=MagicMock(),
             stats=stats,
-            halloffame=hof,
-            val_callback=None,
         )
 
         assert isinstance(algo, EaMuPlusLambda)
         assert algo.mu == 6
         assert algo.lambda_ == 12
-        assert algo.ngen == 3
+        assert algo.n_gen == 3
         assert algo.cxpb == pytest.approx(0.4)
         assert algo.mutpb == pytest.approx(0.3)
 

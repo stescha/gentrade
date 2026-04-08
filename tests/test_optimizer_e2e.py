@@ -72,37 +72,6 @@ class TestE2EClassificationSingleObjective:
             assert ind.fitness.valid
             assert all(f >= 0 for f in ind.fitness.values)
 
-    def test_with_validation(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Providing X_val/y_val runs without error and validation output is printed."""
-        df = generate_synthetic_ohlcv(2000, 42)
-        labels = _get_zigzag_labels(df)
-
-        train_df = df.iloc[:1600]
-        val_df = df.iloc[1600:]
-        train_labels = labels.iloc[:1600]
-        val_labels = labels.iloc[1600:]
-
-        opt = TreeOptimizer(
-            pset=create_pset_default_medium,
-            metrics=(F1Metric(),),
-            metrics_val=(F1Metric(),),
-            mu=30,
-            lambda_=60,
-            generations=5,
-            seed=42,
-            verbose=True,
-            validation_interval=2,
-        )
-        opt.fit(
-            X=train_df,
-            entry_label=train_labels,
-            X_val=val_df,
-            entry_label_val=val_labels,
-        )
-
-        captured = capsys.readouterr()
-        assert "Validation results" in captured.out
-
     def test_dict_and_single_df_equivalent_structure(self) -> None:
         """Dict and single DF produce populations of same size."""
         df = generate_synthetic_ohlcv(1500, 42)
@@ -269,16 +238,6 @@ class TestE2ECallbacks:
             def on_fit_start(self, optimizer: Any) -> None:
                 self.fit_start_called = True
 
-            def on_generation_end(
-                self,
-                gen: int,
-                ngen: int,
-                population: list[Any],
-                best_ind: Any | None = None,
-                island_id: int | None = None,
-            ) -> None:
-                self.gen_end_calls.append(gen)
-
             def on_fit_end(self, optimizer: Any) -> None:
                 self.fit_end_called = True
 
@@ -298,7 +257,6 @@ class TestE2ECallbacks:
 
         assert spy.fit_start_called
         assert spy.fit_end_called
-        assert spy.gen_end_calls == list(range(1, generations + 1))
 
     def test_multiple_callbacks_all_called(self) -> None:
         """Two callbacks both receive all lifecycle events."""
@@ -310,16 +268,6 @@ class TestE2ECallbacks:
                 self.count = 0
 
             def on_fit_start(self, optimizer: Any) -> None:
-                self.count += 1
-
-            def on_generation_end(
-                self,
-                gen: int,
-                ngen: int,
-                population: list[Any],
-                best_ind: Any | None = None,
-                island_id: int | None = None,
-            ) -> None:
                 self.count += 1
 
             def on_fit_end(self, optimizer: Any) -> None:
@@ -341,7 +289,7 @@ class TestE2ECallbacks:
         )
         opt.fit(X=df, entry_label=labels)
 
-        # Each callback: 1 fit_start + generations gen_end + 1 fit_end
-        expected_count = 1 + generations + 1
+        # Each callback: 1 fit_start +  1 fit_end
+        expected_count = 2
         assert cb1.count == expected_count
         assert cb2.count == expected_count

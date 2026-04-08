@@ -42,6 +42,8 @@ implementation details.
 
 from __future__ import annotations
 
+import copy
+import itertools
 import logging
 import multiprocessing as mp
 import multiprocessing.synchronize as mp_sync
@@ -50,18 +52,31 @@ import random
 import time
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Protocol, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
 
 import numpy as np
 import pandas as pd
 from deap import base, tools
-from deap import tools as _tools
 
-from gentrade.algorithms import varOr
-from gentrade.eval_ind import BaseEvaluator
+from gentrade.algo_res import AlgorithmResult
+from gentrade.algorithms import (
+    AlgorithmLifecycleHandler,
+    AlgorithmState,
+    BaseAlgorithm,
+    NullAlgorithmLifecycleHandler,
+    StopEvolution,
+)
 from gentrade.individual import TreeIndividualBase, ensure_creator_fitness_class
-from gentrade.topologies import MigrationTopology, RingTopology
-from gentrade.types import IndividualT, SelectionOp
+from gentrade.migration import MigrationPacket
+from gentrade.topologies import MigrationTopology
+from gentrade.types import IndividualT, PopulationT
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +110,16 @@ class QueueDepot:
         maxlen: Maximum number of individuals held at any time.
     """
 
-    def __init__(self, maxlen: int = 50) -> None:
-        self._queue: mp.Queue[Any] = mp.Queue(maxsize=maxlen)
+    def __init__(
+        self, maxlen: int = 50, stop_event: mp_sync.Event | None = None
+    ) -> None:
+        self._queue: mp.Queue[MigrationPacket] = mp.Queue(maxsize=maxlen)
         self.maxlen = maxlen
+        self._stop_event = stop_event
 
-    def push(self, emigrants: list[Any]) -> None:
+    def push(
+        self, emigrants: Sequence[MigrationPacket], push_timeout: float = 0.01
+    ) -> None:
         """Add emigrants to the depot.
 
         When the depot is full, the oldest item is evicted to make room.
@@ -107,10 +127,19 @@ class QueueDepot:
         Args:
             emigrants: Individuals to add to the depot.
         """
+        if any(not isinstance(it, MigrationPacket) for it in emigrants):
+            types_str = ", ".join(str(type(it)) for it in emigrants)
+            raise ValueError(
+                f"Only MigrationPacket instances can be pushed to the depot, but "
+                f"received items of types: {types_str}"
+            )
+
         for ind in emigrants:
             while True:
+                if self._stop_event is not None and self._stop_event.is_set():
+                    raise StopEvolution
                 try:
-                    self._queue.put_nowait(ind)
+                    self._queue.put(ind, timeout=push_timeout)
                     break
                 except _queue_mod.Full:
                     try:
@@ -123,18 +152,28 @@ class QueueDepot:
         count: int,
         timeout: float = 1.0,
         max_retries: int = 3,
-    ) -> list[Any]:
+    ) -> Sequence[MigrationPacket]:
         """Pull up exactly *count* individuals from the depot.
 
         Retries up to *max_retries* times sleeping *timeout* seconds between
         rounds. If after all retries the total number of collected individuals is
         still less than *count*, a :class:`MigrationTimeoutError` is raised.
         """
-        immigrants: list[Any] = []
+        immigrants: list[MigrationPacket] = []
+
         for _ in range(max_retries):
             while len(immigrants) < count:
+                if self._stop_event is not None and self._stop_event.is_set():
+                    raise StopEvolution
                 try:
-                    immigrants.append(self._queue.get(timeout=timeout))
+                    packet = self._queue.get(timeout=timeout)
+                    if not isinstance(packet, MigrationPacket):
+                        raise ValueError(
+                            f"Expected MigrationPacket instances from depot, "
+                            f"but received items of types: "
+                            f"{packet}"
+                        )
+                    immigrants.append(packet)
                 except _queue_mod.Empty:
                     break
             if len(immigrants) >= count:
@@ -192,14 +231,14 @@ class ResultMessage:
     best_individual: TreeIndividualBase | None
     best_fitness_val: tuple[float, ...] | None
     best_fit: tuple[float, ...] | None
-    mean_fit: tuple[float, ...] | None
+    tree_height_mean: float
     n_evaluated: int
     eval_time: float
     generation_time: float
     population_size: int
     n_emigrants: int = 0
     n_immigrants: int = 0
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=time.perf_counter)
 
 
 @dataclass(frozen=True)
@@ -209,16 +248,18 @@ class ErrorMessage:
     island_id: int
     error_type: str
     traceback: str
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=time.perf_counter)
 
 
 @dataclass(frozen=True)
-class IslandCompletedMessage:
+class IslandCompletedMessage(Generic[IndividualT]):
     """Sent by a worker when an island finishes all generations successfully."""
 
     island_id: int
-    final_population: list[Any]
-    final_logbook: tools.Logbook
+    result: AlgorithmResult[IndividualT]
+    # final_population: PopulationT
+    # final_logbook: tools.Logbook
+    # final_hof: tools.HallOfFame | None
 
 
 @runtime_checkable
@@ -247,39 +288,25 @@ class ErrorHandler(Protocol):
 class LoggingResultHandler:
     def on_island_generation_complete(self, result: ResultMessage) -> None:
         logger.info(
-            "[Island %d] Gen %d: %d evals, best_fit=%s / %s, eval_time=%.2fs, gen_time=%.2fs, imm=%d, emi=%d",
+            "[Island %d] Gen %d: %d evals, eval_time=%.6fs, gen_time=%.3fs, "
+            " tree_height_mean=%.2f, pop_size=%d, imm=%d, emi=%d.\nBest fit: %s / %s",
             result.island_id,
             result.generation,
             result.n_evaluated,
-            result.best_fit,
-            result.best_fitness_val,
             result.eval_time,
             result.generation_time,
+            result.tree_height_mean,
+            result.population_size,
             result.n_immigrants,
             result.n_emigrants,
+            result.best_fit,
+            result.best_fitness_val,
         )
 
     def on_generation_complete(
         self, gen: int, gen_results: dict[int, ResultMessage]
     ) -> None:
-        n_islands = len(gen_results)
-        total_evals = sum(r.n_evaluated for r in gen_results.values())
-        max_gen_time = max(r.generation_time for r in gen_results.values())
-        best_fits = [
-            r.best_fit[0] for r in gen_results.values() if r.best_fit is not None
-        ]
-        mean_best = sum(best_fits) / len(best_fits) if best_fits else float("nan")
-        max_best = max(best_fits) if best_fits else float("nan")
-        logger.info(
-            "Gen %d complete: %d islands, total_evals=%d, mean_best_fit0=%.4f, "
-            "max_best_fit0=%.4f, max_gen_time=%.2fs",
-            gen,
-            n_islands,
-            total_evals,
-            mean_best,
-            max_best,
-            max_gen_time,
-        )
+        return
 
     def on_evolution_complete(
         self, all_results: dict[int, list[ResultMessage]]
@@ -290,6 +317,43 @@ class LoggingResultHandler:
             len(all_results),
             total_gens,
         )
+
+
+class OnGenerationEndHandler:
+    def __init__(self, toolbox: base.Toolbox) -> None:
+        self._toolbox = toolbox
+
+    def on_island_generation_complete(self, result: ResultMessage) -> None:
+        return
+
+    def on_generation_complete(
+        self, gen: int, gen_results: dict[int, ResultMessage]
+    ) -> None:
+        best_inds = [gen_results[i].best_individual for i in sorted(gen_results)]
+        best_individual = self._toolbox.select_best(best_inds, k=1)[0]
+
+        total_evals = sum(r.n_evaluated for r in gen_results.values())
+        max_gen_time = max(r.generation_time for r in gen_results.values())
+        mean_gen_time = np.mean([r.generation_time for r in gen_results.values()])
+        fitness_val = None
+        if hasattr(self._toolbox, "evaluate_val"):
+            fitness_val = self._toolbox.evaluate_val(best_individual)
+
+        logger.info(
+            "===== GEN COMPLETE! gen: %d, total_evals=%d, max_gen_time=%.3fs, "
+            "mean_gen_time=%.3fs. Best:\n===== %s\n===== %s",
+            gen,
+            total_evals,
+            max_gen_time,
+            mean_gen_time,
+            best_individual.fitness.values if best_individual else None,
+            fitness_val,
+        )
+
+    def on_evolution_complete(
+        self, all_results: dict[int, list[ResultMessage]]
+    ) -> None:
+        return
 
 
 class FailFastErrorHandler:
@@ -307,7 +371,7 @@ class FailFastErrorHandler:
 # ---------------------------------------------------------------------------
 
 
-class ResultMonitor:
+class ResultMonitor(Generic[IndividualT]):
     """Centralized result and error monitor for island evolution."""
 
     def __init__(self, n_islands: int) -> None:
@@ -315,11 +379,11 @@ class ResultMonitor:
         self._master_queue: mp.Queue[object] = mp.Queue()
         self._results_by_island: dict[int, list[ResultMessage]] = {}
         self._completed_islands: set[int] = set()
-        self._final_by_island: dict[int, tuple[list[Any], tools.Logbook]] = {}
+        self._final_by_island: dict[int, AlgorithmResult[IndividualT]] = {}
         self._result_handlers: list[ResultHandler] = []
         self._error_handlers: list[ErrorHandler] = []
         self._first_error: ErrorMessage | None = None
-        self._latest_gen_by_island: dict[int, ResultMessage] = {}
+        self._gens_by_island: dict[int, dict[int, ResultMessage]] = {}
         self._generation_complete_fired: set[int] = set()
 
     @property
@@ -332,11 +396,18 @@ class ResultMonitor:
     def register_error_handler(self, handler: ErrorHandler) -> None:
         self._error_handlers.append(handler)
 
-    def wait(self, processes: list[mp.Process], timeout: float = 0.5) -> None:
+    def wait(
+        self,
+        processes: list[mp.Process],
+        timeout: float = 0.5,
+        terminate_timeout: float = 5.0,
+    ) -> None:
+        """Wait for island workers to complete while monitoring results and errors."""
+
         def _terminate_all() -> None:
             for p in processes:
                 try:
-                    p.join(timeout=5.0)
+                    p.join(timeout=terminate_timeout)
                 except Exception:
                     pass
                 if p.is_alive():
@@ -346,7 +417,27 @@ class ResultMonitor:
             try:
                 msg = self._master_queue.get(timeout=timeout)
             except _queue_mod.Empty:
-                continue
+                if all(not p.is_alive() for p in processes):
+                    # All workers dead — keep draining briefly to avoid false
+                    # failures from late queue delivery.
+                    grace_deadline = time.perf_counter() + max(0.1, timeout * 2)
+                    while True:
+                        remaining = grace_deadline - time.perf_counter()
+                        if remaining <= 0:
+                            missing = (
+                                set(range(self._n_islands)) - self._completed_islands
+                            )
+                            raise RuntimeError(
+                                f"All worker processes exited but islands "
+                                f"{missing} never sent completion messages."
+                            ) from None
+                        try:
+                            msg = self._master_queue.get(timeout=min(0.01, remaining))
+                            break
+                        except _queue_mod.Empty:
+                            continue
+                else:
+                    continue
 
             if isinstance(msg, ResultMessage):
                 if msg.island_id in self._completed_islands:
@@ -355,26 +446,26 @@ class ResultMonitor:
                         f"ResultMessage received for island {msg.island_id} "
                         "after it was already marked complete"
                     )
+                gen_map = self._gens_by_island.setdefault(msg.island_id, {})
+                if msg.generation in gen_map:
+                    _terminate_all()
+                    raise RuntimeError(
+                        f"Duplicate ResultMessage received for island {msg.island_id} "
+                        f"generation {msg.generation}"
+                    )
                 self._results_by_island.setdefault(msg.island_id, []).append(msg)
                 for res_handler in list(self._result_handlers):
-                    try:
-                        res_handler.on_island_generation_complete(msg)
-                    except Exception:
-                        logger.exception("Result handler raised")
-                self._latest_gen_by_island[msg.island_id] = msg
+                    res_handler.on_island_generation_complete(msg)
+                gen_map[msg.generation] = msg
                 gen = msg.generation
                 if gen not in self._generation_complete_fired:
-                    gen_results = {
-                        iid: m
-                        for iid, m in self._latest_gen_by_island.items()
-                        if m.generation == gen
-                    }
+                    gen_results: dict[int, ResultMessage] = {}
+                    for iid, gen_map in self._gens_by_island.items():
+                        if gen in gen_map:
+                            gen_results[iid] = gen_map[gen]
                     if len(gen_results) == self._n_islands:
                         for gen_handler in list(self._result_handlers):
-                            try:
-                                gen_handler.on_generation_complete(gen, gen_results)
-                            except Exception:
-                                logger.exception("Generation handler raised")
+                            gen_handler.on_generation_complete(gen, gen_results)
                         self._generation_complete_fired.add(gen)
 
             elif isinstance(msg, IslandCompletedMessage):
@@ -384,18 +475,12 @@ class ResultMonitor:
                         f"Duplicate completion for island {msg.island_id}"
                     )
                 self._completed_islands.add(msg.island_id)
-                self._final_by_island[msg.island_id] = (
-                    msg.final_population,
-                    msg.final_logbook,
-                )
+                self._final_by_island[msg.island_id] = msg.result
 
             elif isinstance(msg, ErrorMessage):
                 self._first_error = msg
                 for err_handler in list(self._error_handlers):
-                    try:
-                        err_handler.on_error(msg)
-                    except Exception:
-                        logger.exception("Error handler raised")
+                    err_handler.on_error(msg)
                 _terminate_all()
                 raise RuntimeError(
                     f"Worker for island {msg.island_id} failed:\n{msg.traceback}"
@@ -409,7 +494,7 @@ class ResultMonitor:
         while True:
             try:
                 msg = self._master_queue.get(timeout=0.01)
-            except (mp.queues.Empty, _queue_mod.Empty):
+            except _queue_mod.Empty:
                 break
 
             if isinstance(msg, IslandCompletedMessage):
@@ -419,12 +504,20 @@ class ResultMonitor:
                         f"Duplicate completion for island {msg.island_id}"
                     )
             elif isinstance(msg, ResultMessage):
+                gen_map = self._gens_by_island.setdefault(msg.island_id, {})
+                if msg.generation in gen_map:
+                    _terminate_all()
+                    raise RuntimeError(
+                        f"Duplicate ResultMessage received for island {msg.island_id} "
+                        f"generation {msg.generation}"
+                    )
                 if msg.island_id in self._completed_islands:
                     _terminate_all()
                     raise RuntimeError(
                         f"ResultMessage received for island {msg.island_id} "
                         "after it was already marked complete"
                     )
+                gen_map[msg.generation] = msg
             elif isinstance(msg, ErrorMessage):
                 _terminate_all()
                 raise RuntimeError(
@@ -432,320 +525,359 @@ class ResultMonitor:
                 )
 
         for evo_handler in list(self._result_handlers):
-            try:
-                evo_handler.on_evolution_complete(self._results_by_island)
-            except Exception:
-                logger.exception("Evolution-complete handler raised")
+            evo_handler.on_evolution_complete(self._results_by_island)
 
     def get_results(self) -> dict[int, list[ResultMessage]]:
         return dict(self._results_by_island)
 
-    def get_final_results(self) -> dict[int, tuple[list[Any], tools.Logbook]]:
-        return dict(self._final_by_island)
-
-
-# ---------------------------------------------------------------------------
-# Evaluation helper
-# ---------------------------------------------------------------------------
-
-
-def _evaluate_population(
-    population: list[TreeIndividualBase],
-    evaluator: BaseEvaluator[Any],
-    train_data: list[pd.DataFrame],
-    train_entry_labels: list[pd.Series] | None,
-    train_exit_labels: list[pd.Series] | None,
-) -> int:
-    n = 0
-    for ind in population:
-        if not ind.fitness.valid:
-            fitness = evaluator.evaluate(
-                ind,
-                ohlcvs=train_data,
-                entry_labels=train_entry_labels,
-                exit_labels=train_exit_labels,
-                aggregate=True,
-            )
-            ind.fitness.values = fitness
-            n += 1
-    return n
+    def get_final_results(
+        self,
+    ) -> list[AlgorithmResult[IndividualT]]:
+        return [
+            self._final_by_island[island_id]
+            for island_id in sorted(self._final_by_island)
+        ]
 
 
 # ---------------------------------------------------------------------------
 # Logical island per-island evolution loop
 # ---------------------------------------------------------------------------
+Message = ResultMessage | ErrorMessage | IslandCompletedMessage[IndividualT]
 
 
-class LogicalIsland:
+class LogicalIsland(Generic[IndividualT, PopulationT]):
+    """Per-island evolution loop with migration hooks.
+
+    Runs within a worker process, managing local generational execution using
+    its configured :class:`BaseAlgorithm`. It pulls immigrants from its assigned
+    neighbors before running an evaluation generation, and pushes emigrants to
+    its own depot afterward, respecting the bounds dictated by the
+    ``migration_rate``.
+    """
+
     def __init__(
         self,
         descriptor: _IslandDescriptor,
+        topology: MigrationTopology,
+        stop_event: mp_sync.Event,
+        algorithm: BaseAlgorithm[IndividualT, PopulationT],
         toolbox: base.Toolbox,
-        evaluator: BaseEvaluator[Any],
-        mu: int,
-        lambda_: int,
-        cxpb: float,
-        mutpb: float,
-        ngen: int,
+        master_queue: mp.Queue[Message[IndividualT]],
+        *,
         migration_rate: int,
         migration_count: int,
         pull_timeout: float,
         pull_max_retries: int,
-        stats: tools.Statistics | None,
-        replace_selection_op: "SelectionOp[Any]",
-        select_best_op: "SelectionOp[Any]",
-        val_callback: "Callable[..., None] | None",
-        verbose: bool,
-        master_queue: mp.Queue[object] | None = None,
+        push_timeout: float,
+        verbose: bool = True,
     ) -> None:
+
         self.descriptor = descriptor
+        self.topology = topology
+        self.stop_event = stop_event
+        self.algorithm = algorithm
         self.toolbox = toolbox
-        self.evaluator = evaluator
-        self.mu = mu
-        self.lambda_ = lambda_
-        self.cxpb = cxpb
-        self.mutpb = mutpb
-        self.ngen = ngen
+        self.master_queue = master_queue
         self.migration_rate = migration_rate
         self.migration_count = migration_count
         self.pull_timeout = pull_timeout
         self.pull_max_retries = pull_max_retries
-        self.stats = stats
-        self.replace_selection_op = replace_selection_op
-        self.select_best_op = select_best_op
-        self.val_callback = val_callback
+        self.push_timeout = push_timeout
         self.verbose = verbose
-        self.master_queue = master_queue
+
+        self.depot = descriptor.depot
+
+        self.evaluator = algorithm.evaluator
+        self.val_evaluator = algorithm.val_evaluator
+        self.n_gen = algorithm.n_gen
+        self._validate_args()
+
+    def _validate_args(self) -> None:
+        if self.migration_rate <= 0:
+            raise ValueError("migration_rate must be > 0")
+        if self.migration_count <= 0:
+            raise ValueError("migration_count must be > 0")
+        if self.pull_timeout <= 0:
+            raise ValueError("pull_timeout must be > 0")
+        if self.pull_max_retries < 0:
+            raise ValueError("pull_max_retries must be >= 0")
+        if self.evaluator is None:
+            raise ValueError("evaluator must be provided")
 
     def run(
         self,
+        toolbox: base.Toolbox,
         train_data: list[pd.DataFrame],
         train_entry_labels: list[pd.Series] | None,
         train_exit_labels: list[pd.Series] | None,
-        topology: MigrationTopology,
-        stop_event: mp_sync.Event,
-    ) -> tuple[list[Any], tools.Logbook]:
-        island_id = self.descriptor.island_id
-        logbook = tools.Logbook()
-        logbook.header = ["gen", "nevals"] + (self.stats.fields if self.stats else [])
-
-        population: list[Any] = self.toolbox.population(n=self.mu)
-        _evaluate_population(
-            population,
-            self.evaluator,
+        *,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+        hof_factory: Callable[[], tools.HallOfFame] | None = None,
+    ) -> AlgorithmResult[IndividualT]:
+        """Execute the per-island local evolution."""
+        # Run algorithm is one job => No multiprocessing created.
+        handler = self._create_migration_handler()
+        self.algorithm.register_handler(handler)
+        result = self.algorithm.run_sp(
+            toolbox,
             train_data,
-            train_entry_labels,
-            train_exit_labels,
+            train_entry_labels=train_entry_labels,
+            train_exit_labels=train_exit_labels,
+            val_data=val_data,
+            val_entry_labels=val_entry_labels,
+            val_exit_labels=val_exit_labels,
+            hof_factory=hof_factory,
+            verbose=False,
+        )
+        self.algorithm.remove_handler(handler)
+        return result
+
+    def _create_migration_handler(self) -> AlgorithmLifecycleHandler[PopulationT]:
+        return _IslandMigrationHandler[IndividualT, PopulationT](
+            algorithm=self.algorithm,
+            descriptor=self.descriptor,
+            topology=self.topology,
+            stop_event=self.stop_event,
+            master_queue=self.master_queue,
+            migration_rate=self.migration_rate,
+            migration_count=self.migration_count,
+            pull_timeout=self.pull_timeout,
+            pull_max_retries=self.pull_max_retries,
+            push_timeout=self.push_timeout,
         )
 
-        record = self.stats.compile(population) if self.stats is not None else {}
-        logbook.record(gen=0, nevals=len(population), **record)
-        if self.verbose:
-            logger.info("[Island %d] Gen 0: %d evals", island_id, len(population))
-
-        if self.migration_rate > 0:
-            emigrants = self.select_best_op(population, self.migration_count)
-            self.descriptor.depot.push([self.toolbox.clone(e) for e in emigrants])
-
-        # publish gen0
-        if self.master_queue is not None:
-            try:
-                self.master_queue.put(
-                    ResultMessage(
-                        island_id=island_id,
-                        generation=0,
-                        best_individual=None,
-                        best_fitness_val=None,
-                        best_fit=None,
-                        mean_fit=None,
-                        n_evaluated=len(population),
-                        eval_time=0.0,
-                        generation_time=0.0,
-                        population_size=len(population),
-                        n_emigrants=len(emigrants) if self.migration_rate > 0 else 0,
-                        n_immigrants=0,
-                    )
-                )
-            except Exception:
-                logger.exception("Failed to publish gen0 result")
-
-        for gen in range(1, self.ngen + 1):
-            if stop_event.is_set():
-                break
-
-            gen_start = time.time()
-            n_emigrants_this_gen = 0
-            n_immigrants_this_gen = 0
-            eval_time_acc = 0.0
-
-            if self.migration_rate > 0 and gen % self.migration_rate == 0:
-                depots = self.descriptor.neighbor_depots
-                plan = topology.get_immigrants(island_id, depot_count=len(depots))
-                immigrants: list[Any] = []
-                expected_count = sum(pull_n for _, pull_n in plan)
-                for src_idx, pull_n in plan:
-                    src_depot = depots[src_idx]
-                    try:
-                        immigrant = src_depot.pull(
-                            pull_n,
-                            timeout=self.pull_timeout,
-                            max_retries=self.pull_max_retries,
-                        )
-                        immigrants.extend(immigrant)
-                    except MigrationTimeoutError:
-                        logger.warning(
-                            "Island %d: pull from depot %d failed at gen %d. Continuing without immigrants.",
-                            island_id,
-                            src_idx,
-                            gen,
-                        )
-                        continue
-
-                if len(immigrants) != expected_count:
-                    logger.warning(
-                        f"Expected {expected_count} immigrants, received {len(immigrants)} at gen {gen} for island {island_id}."
-                    )
-
-                n_immigrants_this_gen = len(immigrants)
-                immigrants = [self.toolbox.clone(im) for im in immigrants]
-                for im in immigrants:
-                    del im.fitness.values
-
-                start_eval_imm = time.time()
-                _evaluate_population(
-                    immigrants,
-                    self.evaluator,
-                    train_data,
-                    train_entry_labels,
-                    train_exit_labels,
-                )
-                eval_time_acc += time.time() - start_eval_imm
-
-                worst = self.replace_selection_op(population, n_immigrants_this_gen)
-                for w, im in zip(worst, immigrants, strict=True):
-                    idx = population.index(w)
-                    population[idx] = im
-                logger.info(
-                    "Island %d: Immigrated %d individuals at gen %d (expected %d).",
-                    island_id,
-                    n_immigrants_this_gen,
-                    gen,
-                    expected_count,
-                )
-
-            if stop_event.is_set():
-                break
-
-            offspring = varOr(
-                population, self.toolbox, self.lambda_, self.cxpb, self.mutpb
-            )
-            start_eval_off = time.time()
-            nevals = _evaluate_population(
-                offspring,
-                self.evaluator,
-                train_data,
-                train_entry_labels,
-                train_exit_labels,
-            )
-            eval_time_acc += time.time() - start_eval_off
-
-            population[:] = self.toolbox.select(population + offspring, self.mu)
-
-            if self.migration_rate > 0 and gen % self.migration_rate == 0:
-                emigrants = self.select_best_op(population, self.migration_count)
-                self.descriptor.depot.push([self.toolbox.clone(e) for e in emigrants])
-                n_emigrants_this_gen = len(emigrants)
-
-            record = self.stats.compile(population) if self.stats is not None else {}
-            logbook.record(gen=gen, nevals=nevals, **record)
-            if self.verbose:
-                logger.info("[Island %d] Gen %d: %d evals", island_id, gen, nevals)
-
-            if self.val_callback is not None:
-                best_ind = self.select_best_op(population, k=1)[0]
-                self.val_callback(
-                    gen, self.ngen, population, best_ind, island_id=island_id
-                )
-
-            gen_time = time.time() - gen_start
-
-            if self.master_queue is not None:
-                try:
-                    best_fit = None
-                    mean_fit = None
-                    try:
-                        best = self.select_best_op(population, k=1)[0]
-                        best_fit = (
-                            tuple(best.fitness.values) if best is not None else None
-                        )
-                    except Exception:
-                        best_fit = None
-                    try:
-                        mean_fit = tuple(
-                            np.mean([ind.fitness.values for ind in population], axis=0)
-                        )
-                    except Exception:
-                        mean_fit = None
-
-                    self.master_queue.put(
-                        ResultMessage(
-                            island_id=island_id,
-                            generation=gen,
-                            best_individual=best,
-                            best_fitness_val=None,
-                            best_fit=best_fit,
-                            mean_fit=mean_fit,
-                            n_evaluated=nevals,
-                            eval_time=eval_time_acc,
-                            generation_time=gen_time,
-                            population_size=len(population),
-                            n_emigrants=n_emigrants_this_gen,
-                            n_immigrants=n_immigrants_this_gen,
-                        )
-                    )
-                except Exception:
-                    logger.exception("Failed to publish ResultMessage for gen %d", gen)
-
-        logger.debug("Island %d finished evolution loop.", island_id)
-        return population, logbook
-
 
 # ---------------------------------------------------------------------------
-# Worker process entry point
+# Lifecycle handlers
 # ---------------------------------------------------------------------------
+
+
+class _IslandMigrationHandler(
+    NullAlgorithmLifecycleHandler[PopulationT], Generic[IndividualT, PopulationT]
+):
+    """Shared migration + reporting logic executed around generations."""
+
+    def __init__(
+        self,
+        *,
+        algorithm: BaseAlgorithm[IndividualT, PopulationT],
+        descriptor: _IslandDescriptor,
+        topology: MigrationTopology,
+        stop_event: mp_sync.Event,
+        master_queue: mp.Queue[Message[IndividualT]],
+        migration_rate: int,
+        migration_count: int,
+        pull_timeout: float,
+        pull_max_retries: int,
+        push_timeout: float,
+    ) -> None:
+        self._algorithm = algorithm
+        self._topology = topology
+        self._descriptor = descriptor
+        self._topology = topology
+        self._stop_event = stop_event
+        self._master_queue = master_queue
+        self._migration_rate = migration_rate
+        self._migration_count = migration_count
+        self._pull_timeout = pull_timeout
+        self._pull_max_retries = pull_max_retries
+        self._push_timeout = push_timeout
+        self._validate_args()
+
+    def _validate_args(self) -> None:
+        if self._migration_rate <= 0:
+            raise ValueError("migration_rate must be > 0")
+        if self._migration_count <= 0:
+            raise ValueError("migration_count must be > 0")
+        if self._pull_timeout <= 0:
+            raise ValueError("pull_timeout must be > 0")
+        if self._pull_max_retries < 0:
+            raise ValueError("pull_max_retries must be >= 0")
+
+    def pre_generation(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        # Change in logic: Instead of pushing emigrants after generation completion, we
+        # emigrate before the immigration step. This way we can avoid the need for
+        # initial export of individuals from the island at generation 0, which was
+        # previously needed to populate the depots before the first pull at generation n
+        if state.generation % self._migration_rate == 0:
+            emmigrant_count = self._emigrate_individuals(population, state, toolbox)
+            state.n_emigrants = emmigrant_count
+
+            immigrant_count, population_new = self._immigrate_individuals(
+                population, state, toolbox
+            )
+            state.n_immigrants = immigrant_count
+            return population_new
+        return population
+
+    def post_generation(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        self._publish_result(population, state)
+        return population
+
+    def _emigrate_individuals(
+        self, population: PopulationT, state: AlgorithmState, toolbox: base.Toolbox
+    ) -> int:
+        # Prefer algorithm hook, otherwise fall back to toolbox
+        migration_packets = self._algorithm.prepare_emigrants(
+            population, toolbox, self._migration_count, state.generation
+        )
+
+        self._descriptor.depot.push(migration_packets, push_timeout=self._push_timeout)
+        logger.info(
+            "Island %d: Emigrated %d individuals at gen %d (expected %d).",
+            self._descriptor.island_id,
+            len(migration_packets),
+            state.generation,
+            self._migration_count,
+        )
+
+        return len(migration_packets)
+
+    def _immigrate_individuals(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> tuple[int, PopulationT]:
+        if self._stop_event.is_set():
+            raise StopEvolution
+        try:
+            immigrant_packets = self._pull_immigrants()
+        except MigrationTimeoutError:
+            logger.warning(
+                "Island %d: Failed to pull immigrants at gen %d after %d retries. "
+                "Continuing without  immigrants.",
+                self._descriptor.island_id,
+                state.generation,
+                self._pull_max_retries,
+            )
+            return 0, population
+
+        if len(immigrant_packets) == 0:
+            return 0, population
+
+        if len(immigrant_packets) != self._migration_count:
+            logger.warning(
+                "Incomplete immigration on island %d at gen %d: Only %d / %d "
+                "individuals received.",
+                self._descriptor.island_id,
+                state.generation,
+                len(immigrant_packets),
+                self._migration_count,
+            )
+
+        immigrant_count, population_new = self._algorithm.accept_immigrants(
+            population, immigrant_packets, toolbox, state.generation
+        )
+        logger.info(
+            "Island %d: Immigrated %d / %d individuals at gen %d.",
+            self._descriptor.island_id,
+            immigrant_count,
+            len(immigrant_packets),
+            state.generation,
+        )
+        return immigrant_count, population_new
+
+    def _pull_immigrants(self) -> list[MigrationPacket]:
+        """
+        Raises:
+            MigrationTimeoutError: If pull from depots exhausts all retries without
+                receiving enough individuals.
+            RuntimeError: If the total number of immigrants received is less than
+                the expected migration count after pulling from all neighbors.
+        """
+        plan = self._topology.get_immigrants(self._descriptor.island_id)
+        depots = self._descriptor.neighbor_depots
+        immigrants: list[MigrationPacket] = []
+
+        for src_idx, pull_n in plan:
+            src_depot = depots[src_idx]
+            if self._stop_event.is_set():
+                raise StopEvolution
+            pulled = src_depot.pull(
+                pull_n,
+                timeout=self._pull_timeout,
+                max_retries=self._pull_max_retries,
+            )
+
+            immigrants.extend(pulled)
+        return immigrants
+
+    def _publish_result(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+    ) -> None:
+        best_individual = state.best_individual
+        best_fit = state.best_fit
+        best_val = state.best_fitness_val
+        eval_time = state.eval_time or 0.0
+        gen_time = state.generation_time or 0.0
+        n_evaluated = state.n_evaluated or 0
+        # Get flattened items for tree statistics
+        items = self._algorithm.population_items(population)
+        trees_flat = list(itertools.chain.from_iterable(items))
+        tree_height_mean = float(np.mean([tree.height for tree in trees_flat]))
+
+        self._master_queue.put(
+            ResultMessage(
+                island_id=self._descriptor.island_id,
+                generation=state.generation,
+                best_individual=best_individual,
+                best_fitness_val=best_val,
+                best_fit=best_fit,
+                tree_height_mean=tree_height_mean,
+                n_evaluated=n_evaluated,
+                eval_time=eval_time,
+                generation_time=gen_time,
+                population_size=len(items),
+                n_emigrants=state.n_emigrants,
+                n_immigrants=state.n_immigrants,
+            )
+        )
 
 
 def _worker_target(
     assigned_descriptors: list[_IslandDescriptor],
+    algorithm: BaseAlgorithm[IndividualT, PopulationT],
+    master_queue: mp.Queue[Message[IndividualT]],
+    stop_event: mp_sync.Event,
     toolbox: base.Toolbox,
-    evaluator: BaseEvaluator[Any],
+    topology: MigrationTopology,
     train_data: list[pd.DataFrame],
     train_entry_labels: list[pd.Series] | None,
     train_exit_labels: list[pd.Series] | None,
-    mu: int,
-    lambda_: int,
-    cxpb: float,
-    mutpb: float,
-    ngen: int,
+    val_data: list[pd.DataFrame] | None,
+    val_entry_labels: list[pd.Series] | None,
+    val_exit_labels: list[pd.Series] | None,
     migration_rate: int,
     migration_count: int,
     pull_timeout: float,
     pull_max_retries: int,
-    seed: int,
-    stats: tools.Statistics | None,
-    weights: tuple[float, ...] | None,
-    replace_selection_op: "SelectionOp[Any]",
-    select_best_op: "SelectionOp[Any]",
-    val_callback: "Callable[..., None] | None",
+    push_timeout: float,
+    hof_factory: Callable[[], tools.HallOfFame] | None,
     verbose: bool,
-    topology: MigrationTopology,
-    master_queue: mp.Queue[object],
-    stop_event: mp_sync.Event,
+    seed: int,
 ) -> None:
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
 
+    # Ensure fitness is registered with creator to avoid pickling issues in workers.
+    evaluator = algorithm.evaluator
+    weights = tuple(m.weight for m in evaluator.metrics)
     if weights is not None:
         ensure_creator_fitness_class(weights)
 
@@ -753,39 +885,34 @@ def _worker_target(
         if stop_event.is_set():
             break
         try:
-            island = LogicalIsland(
+            island = LogicalIsland[IndividualT, PopulationT](
                 descriptor=descriptor,
+                topology=topology,
+                stop_event=stop_event,
+                algorithm=algorithm,
                 toolbox=toolbox,
-                evaluator=evaluator,
-                mu=mu,
-                lambda_=lambda_,
-                cxpb=cxpb,
-                mutpb=mutpb,
-                ngen=ngen,
+                master_queue=master_queue,
                 migration_rate=migration_rate,
                 migration_count=migration_count,
                 pull_timeout=pull_timeout,
                 pull_max_retries=pull_max_retries,
-                stats=stats,
-                replace_selection_op=replace_selection_op,
-                select_best_op=select_best_op,
-                val_callback=val_callback,
+                push_timeout=push_timeout,
                 verbose=verbose,
-                master_queue=master_queue,
             )
-            pop, logbook = island.run(
+            result = island.run(
+                toolbox=toolbox,
                 train_data=train_data,
                 train_entry_labels=train_entry_labels,
                 train_exit_labels=train_exit_labels,
-                topology=topology,
-                stop_event=stop_event,
+                val_data=val_data,
+                val_entry_labels=val_entry_labels,
+                val_exit_labels=val_exit_labels,
+                hof_factory=hof_factory,
             )
-            master_queue.put(IslandCompletedMessage(descriptor.island_id, pop, logbook))
-        except Exception:
+            master_queue.put(IslandCompletedMessage(descriptor.island_id, result))
+        except Exception as e:
             tb = traceback.format_exc()
-            master_queue.put(
-                ErrorMessage(descriptor.island_id, type(Exception()).__name__, tb)
-            )
+            master_queue.put(ErrorMessage(descriptor.island_id, type(e).__name__, tb))
             stop_event.set()
             return
 
@@ -795,45 +922,52 @@ def _worker_target(
 # ---------------------------------------------------------------------------
 
 
-class IslandEaMuPlusLambda(Generic[IndividualT]):
+class IslandMigration(Generic[IndividualT, PopulationT]):
+    """Orchestrator for island-model distributed evolution.
+
+    This coordinator uses multiprocessing to distribute instances of a provided
+    :class:`BaseAlgorithm` across multiple independent islands, interconnecting
+    them through bounded queues (depots) guided by a specified migration
+    topology.
+
+    Args:
+        algorithm: An instance of an evolutionary algorithm (e.g.,
+            :class:`~gentrade.algorithms.EaMuPlusLambda`) to run on each island.
+        topology: Migration network defining neighbor relationships between
+            islands.
+        n_islands: Total number of islands to create.
+        migration_rate: Number of generations between migrations. For ex., ``5``
+            means migration runs every 5 generations.
+        migration_count: Exact number of individuals requested from each
+            neighbor during a pull phase.
+        depot_capacity: Max individuals stored in an island's egress queue.
+        pull_timeout: Attempt to pull migrants up to this many seconds.
+        pull_max_retries: Times to re-attempt pulling.
+        push_timeout: Timeout for pushing migrants to queue. Should be small
+            since queue auto-evicts.
+        n_jobs: Concurrency capacity limit.
+        verbose: Print per-generation statistics.
+        seed: Random seed used to initiate reproducible trajectories for
+            worker sub-processes.
+    """
+
     def __init__(
         self,
-        toolbox: base.Toolbox,
-        evaluator: BaseEvaluator[Any],
-        n_jobs: int,
-        mu: int,
-        lambda_: int,
-        cxpb: float,
-        mutpb: float,
-        ngen: int,
-        stats: tools.Statistics | None = None,
-        halloffame: tools.HallOfFame | None = None,
-        verbose: bool = True,
-        n_islands: int = 4,
-        migration_rate: int = 10,
-        migration_count: int = 5,
-        depot_capacity: int = 50,
-        pull_timeout: float = 1.0,
-        pull_max_retries: int = 3,
-        push_timeout: float = 2.0,
+        algorithm: BaseAlgorithm[IndividualT, PopulationT]
+        | type[BaseAlgorithm[IndividualT, PopulationT]],
+        topology: MigrationTopology,
+        n_islands: int,
+        migration_rate: int,
+        migration_count: int,
+        depot_capacity: int,
+        pull_timeout: float,
+        pull_max_retries: int,
+        push_timeout: float,
+        algorithm_kwargs: dict[str, Any] | list[dict[str, Any]] | None = None,
+        n_jobs: int | None = None,
         seed: int | None = None,
-        weights: tuple[float, ...] | None = None,
-        val_callback: Callable[..., None] | None = None,
-        topology: MigrationTopology | None = None,
-        replace_selection_op: "SelectionOp[Any] | None" = None,
-        select_best_op: "SelectionOp[Any] | None" = None,
     ) -> None:
-        self.toolbox = toolbox
-        self.evaluator = evaluator
-        self.n_jobs = n_jobs
-        self.mu = mu
-        self.lambda_ = lambda_
-        self.cxpb = cxpb
-        self.mutpb = mutpb
-        self.ngen = ngen
-        self.stats = stats
-        self.halloffame = halloffame
-        self.verbose = verbose
+        self.topology = topology
         self.n_islands = n_islands
         self.migration_rate = migration_rate
         self.migration_count = migration_count
@@ -841,30 +975,46 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         self.pull_timeout = pull_timeout
         self.pull_max_retries = pull_max_retries
         self.push_timeout = push_timeout
+        self.n_jobs = n_jobs or mp.cpu_count()
         self.seed = seed
-        self.weights = weights
-        self.val_callback = val_callback
-        self.topology: MigrationTopology = topology or RingTopology(
-            island_count=n_islands, migration_count=migration_count
-        )
-        self.replace_selection_op: SelectionOp[Any] = (
-            replace_selection_op
-            if replace_selection_op is not None
-            else _tools.selWorst  # type: ignore[assignment]
-        )
-        self.select_best_op: SelectionOp[Any] = (
-            select_best_op if select_best_op is not None else _tools.selBest  # type: ignore[assignment]
-        )
 
-        self.demes_: list[list[Any]] | None = None
-
-        if n_islands > n_jobs:
+        if self.n_islands > self.n_jobs:
             raise ValueError(
-                f"n_islands ({n_islands}) must not exceed n_jobs ({n_jobs})"
+                f"n_islands ({self.n_islands}) must not exceed n_jobs ({self.n_jobs})"
             )
+        self.algorithms = self._init_algorithms(algorithm, algorithm_kwargs)
 
-    def _create_depots(self) -> list[QueueDepot]:
-        return [QueueDepot(maxlen=self.depot_capacity) for _ in range(self.n_islands)]
+    def _init_algorithms(
+        self,
+        algorithm: BaseAlgorithm[IndividualT, PopulationT]
+        | type[BaseAlgorithm[IndividualT, PopulationT]],
+        algorithm_kwargs: dict[str, Any] | list[dict[str, Any]] | None = None,
+    ) -> list[BaseAlgorithm[IndividualT, PopulationT]]:
+        if isinstance(algorithm, type):
+            if algorithm_kwargs is None:
+                kwargs_list: list[dict[str, Any]] = [{} for _ in range(self.n_islands)]
+            elif isinstance(algorithm_kwargs, dict):
+                kwargs_list = [algorithm_kwargs for _ in range(self.n_islands)]
+            elif (
+                isinstance(algorithm_kwargs, list)
+                and len(algorithm_kwargs) == self.n_islands
+                and all(isinstance(kwargs, dict) for kwargs in algorithm_kwargs)
+            ):
+                kwargs_list = algorithm_kwargs
+            else:
+                raise ValueError(
+                    "algorithm_kwargs must be None, a dict, or a list of dicts "
+                    f"with length equal to n_islands ({self.n_islands})"
+                )
+            return [algorithm(**kw) for kw in kwargs_list]
+        else:
+            return [copy.copy(algorithm) for _ in range(self.n_islands)]
+
+    def _create_depots(self, stop_event: mp_sync.Event | None) -> list[QueueDepot]:
+        return [
+            QueueDepot(maxlen=self.depot_capacity, stop_event=stop_event)
+            for _ in range(self.n_islands)
+        ]
 
     def _create_descriptors(self, depots: list[QueueDepot]) -> list[_IslandDescriptor]:
         descriptors: list[_IslandDescriptor] = []
@@ -887,74 +1037,82 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
         seeds: list[int] = rng.integers(0, 2**31 - 1, size=self.n_jobs).tolist()
         return seeds
 
-    def _merge_results(
-        self, results: dict[int, tuple[list[Any], tools.Logbook]]
-    ) -> tuple[list[Any], tools.Logbook]:
-        all_individuals: list[Any] = []
-        merged_logbook = tools.Logbook()
-        merged_logbook.header = ["gen", "island_id", "nevals"] + (
-            self.stats.fields if self.stats else []
-        )
-        self.demes_ = []
-        for island_id in sorted(results):
-            pop, lb = results[island_id]
-            all_individuals.extend(pop)
-            self.demes_.append(pop)
-            for record in lb:
-                entry = dict(record)
-                entry["island_id"] = island_id
-                merged_logbook.record(**entry)
-
-        if self.halloffame is not None:
-            self.halloffame.update(all_individuals)
-        return all_individuals, merged_logbook
+    def _validate_toolbox(self, toolbox: base.Toolbox) -> None:
+        required_ops = ["select_replace", "select_emigrants"]
+        for op in required_ops:
+            if not hasattr(toolbox, op):
+                raise ValueError(f"Toolbox must have '{op}' operator defined")
 
     def run(
         self,
+        toolbox: base.Toolbox,
         train_data: list[pd.DataFrame],
         train_entry_labels: list[pd.Series] | None,
         train_exit_labels: list[pd.Series] | None,
-    ) -> tuple[list[IndividualT], tools.Logbook]:
-        depots = self._create_depots()
+        *,
+        val_data: list[pd.DataFrame] | None = None,
+        val_entry_labels: list[pd.Series] | None = None,
+        val_exit_labels: list[pd.Series] | None = None,
+        hof_factory: Callable[[], tools.HallOfFame] | None = None,
+        verbose: bool = True,
+    ) -> AlgorithmResult[IndividualT]:
+        """Start parallel orchestration dispatching evaluation processes.
+
+        Spawns sub-processes for each set of islands and waits to join them
+        synchronously. Re-raises exceptions caught continuously and integrates
+        logbooks together.
+        """
+        stop_event = mp.Event()
+        self._validate_toolbox(toolbox)
+        depots = self._create_depots(stop_event)
         descriptors = self._create_descriptors(depots)
         buckets = self._partition_descriptors(descriptors)
         worker_seeds = self._create_worker_seeds()
 
-        monitor = ResultMonitor(n_islands=self.n_islands)
+        monitor = ResultMonitor[IndividualT](n_islands=self.n_islands)
+        val_evaluator = self.algorithms[0].val_evaluator
+        if val_data and val_evaluator:
+            toolbox.register(
+                "evaluate_val",
+                val_evaluator.evaluate,
+                ohlcvs=val_data,
+                entry_labels=val_entry_labels,
+                exit_labels=val_exit_labels,
+                aggregate=True,
+            )
+
+        monitor.register_result_handler(OnGenerationEndHandler(toolbox))
         monitor.register_result_handler(LoggingResultHandler())
+
         monitor.register_error_handler(FailFastErrorHandler())
 
         processes: list[mp.Process] = []
-        stop_event = mp.Event()
 
-        for worker_idx, bucket in enumerate(buckets):
+        for worker_idx, (bucket, alg) in enumerate(
+            zip(buckets, self.algorithms, strict=True)
+        ):
             p = mp.Process(
                 target=_worker_target,
                 kwargs={
                     "assigned_descriptors": bucket,
-                    "toolbox": self.toolbox,
-                    "evaluator": self.evaluator,
+                    "algorithm": alg,
+                    "master_queue": monitor.master_queue,
+                    "stop_event": stop_event,
+                    "toolbox": toolbox,
+                    "topology": self.topology,
                     "train_data": train_data,
                     "train_entry_labels": train_entry_labels,
                     "train_exit_labels": train_exit_labels,
-                    "mu": self.mu,
-                    "lambda_": self.lambda_,
-                    "cxpb": self.cxpb,
-                    "mutpb": self.mutpb,
-                    "ngen": self.ngen,
+                    "val_data": val_data,
+                    "val_entry_labels": val_entry_labels,
+                    "val_exit_labels": val_exit_labels,
                     "migration_rate": self.migration_rate,
                     "migration_count": self.migration_count,
                     "pull_timeout": self.pull_timeout,
                     "pull_max_retries": self.pull_max_retries,
-                    "stats": self.stats,
-                    "weights": self.weights,
-                    "replace_selection_op": self.replace_selection_op,
-                    "select_best_op": self.select_best_op,
-                    "val_callback": self.val_callback,
-                    "verbose": self.verbose,
-                    "topology": self.topology,
-                    "master_queue": monitor.master_queue,
-                    "stop_event": stop_event,
+                    "push_timeout": self.push_timeout,
+                    "hof_factory": hof_factory,
+                    "verbose": verbose,
                     "seed": worker_seeds[worker_idx],
                 },
             )
@@ -964,13 +1122,15 @@ class IslandEaMuPlusLambda(Generic[IndividualT]):
             p.start()
 
         try:
-            monitor.wait(processes)
+            monitor.wait(processes, timeout=0.01)
             results = monitor.get_final_results()
         finally:
             for p in processes:
-                p.join(timeout=5.0)
+                p.join(timeout=0.1)
                 if p.is_alive():
                     p.terminate()
+                    logger.warning(
+                        "Worker process %d did not exit in time; terminating.", p.pid
+                    )
 
-        results_merged = self._merge_results(results)
-        return results_merged
+        return AlgorithmResult.from_results(results)
