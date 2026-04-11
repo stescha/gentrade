@@ -28,6 +28,7 @@ dependencies = [
     # local wheel checked in under vendor/dist
     "zigzag @ file:vendor/dist/zigzag-0.3.2-cp311-cp311-manylinux_2_42_x86_64.whl",
     "mlflow (>=3.10.1,<4.0.0)",
+    "pymoo (>=0.6.1.6,<0.7.0.0)",
 ]
 
 
