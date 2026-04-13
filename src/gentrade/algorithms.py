@@ -461,17 +461,22 @@ class BaseAlgorithm(ABC, Generic[IndividualT, PopulationT]):
                     toolbox,
                     gen,
                 )
-                best_ind = self.select_best(toolbox, population)
-                state.best_individual = best_ind
-                state.best_fit = best_ind.fitness.values
+
                 state.n_evaluated = n_evals
                 state.eval_time = duration_eval
+
+                self.update_tracking(population, state)
+                if halloffame is not None and len(halloffame) > 0:
+                    best_ind = halloffame[0]
+                else:
+                    best_ind = self.select_best(toolbox, population)
 
                 if hasattr(toolbox, "evaluate_val"):
                     val_fitness = toolbox.evaluate_val(best_ind)
                     state.best_fitness_val = val_fitness
 
-                self.update_tracking(population, state)
+                state.best_individual = best_ind
+                state.best_fit = best_ind.fitness.values
                 state.generation_time = time.perf_counter() - start
                 if verbose:
                     self.stream_logbook(population, state)

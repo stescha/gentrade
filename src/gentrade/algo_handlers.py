@@ -52,7 +52,7 @@ class ThreasholdedStopHandler(AlgorithmLifecycleHandler[list[PairTreeIndividual]
             raise RuntimeError(
                 "Best individual has invalid fitness during post_generation"
             )
-        if self.threshold_check(state.best_individual.fitness):
+        if all(self.threshold_check(state.best_individual.fitness)):
             # TODO: pass msg to StopEvolution
             print("Fitness threshold met, stopping evolution.")
             raise StopEvolution
@@ -68,7 +68,9 @@ class ThreasholdedStopHandler(AlgorithmLifecycleHandler[list[PairTreeIndividual]
         for i, (f, w, t) in enumerate(
             zip(fitness.values, fitness.weights, self.min_fitness, strict=True)
         ):
-            if t is not None:
+            if t is None:
+                exceeds[i] = True
+            else:
                 if w > 0 and f < t:
                     exceeds[i] = True
                 elif w < 0 and f > t:

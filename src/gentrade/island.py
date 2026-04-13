@@ -257,12 +257,8 @@ class IslandCompletedMessage(Generic[IndividualT]):
 
     island_id: int
     result: AlgorithmResult[IndividualT]
-    # final_population: PopulationT
-    # final_logbook: tools.Logbook
-    # final_hof: tools.HallOfFame | None
 
 
-@runtime_checkable
 class ResultHandler(Protocol):
     def on_island_generation_complete(self, result: ResultMessage) -> None: ...
 
@@ -274,6 +270,10 @@ class ResultHandler(Protocol):
         self, all_results: dict[int, list[ResultMessage]]
     ) -> None: ...
 
+    def on_island_complete(
+        self, island_id: int, result: AlgorithmResult[IndividualT]
+    ) -> None: ...
+
 
 @runtime_checkable
 class ErrorHandler(Protocol):
@@ -283,6 +283,133 @@ class ErrorHandler(Protocol):
 # ---------------------------------------------------------------------------
 # Concrete handlers
 # ---------------------------------------------------------------------------
+
+
+# Control plane message types and control actor
+@dataclass(frozen=True)
+class ControlCommand:
+    """Base class for control commands sent from monitor to islands."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class StopCommand(ControlCommand):
+    """Command to stop an island's evolution early."""
+
+    pass
+
+
+class IslandActor:
+    """Proxy interface for GlobalControlHandler to send commands to islands.
+
+    Encapsulates control queue dictionary and provides methods for issuing
+    commands. Raises RuntimeError on queue-full to ensure fail-fast semantics.
+    """
+
+    def __init__(self, queues: dict[int, mp.Queue[ControlCommand]]):
+        self._queues = queues
+
+    def send_stop(self, island_id: int, command: StopCommand) -> None:
+        """Send a StopCommand to the specified island.
+
+        Args:
+            island_id: ID of the island to stop.
+
+        Raises:
+            RuntimeError: If no queue exists for the island or if queue is full.
+        """
+        queue = self._queues.get(island_id)
+        if queue is None:
+            raise RuntimeError(f"No control queue found for island {island_id}")
+        try:
+            logging.debug(f"Sending StopCommand to island {island_id}")
+            queue.put_nowait(command)
+        except _queue_mod.Full as exc:
+            raise RuntimeError(
+                f"Failed to enqueue control command for island {island_id}: "
+                "queue is full"
+            ) from exc
+
+    def get_active_islands(self) -> list[int]:
+        """Return list of currently active island IDs.
+
+        Active islands are those that still have a live control queue.
+        Completed or stopped islands have their queues removed by ResultMonitor.
+        """
+        return list(self._queues)
+
+
+@runtime_checkable
+class GlobalControlHandler(Protocol):
+    """Protocol for global policies that can issue control commands to islands.
+
+    Handlers are invoked after each generation completes across all islands,
+    with access to per-island results and an IslandActor for sending commands.
+    """
+
+    def on_generation_complete(
+        self, gen: int, gen_results: dict[int, ResultMessage], actor: IslandActor
+    ) -> None:
+        """Called when all islands complete a generation.
+
+        Args:
+            gen: The generation number that completed.
+            gen_results: Mapping of island_id to ResultMessage for this generation.
+            actor: Interface for sending control commands to islands.
+        """
+        ...
+
+    def on_island_generation_complete(
+        self, result: ResultMessage, actor: IslandActor
+    ) -> None: ...
+
+
+class ToleranceEarlyStopPolicy:
+    """GlobalControlHandler that stops lagging islands when most have finished.
+
+    Monitors cross-island generation completion rates. When the number of
+    active islands drops to or below `island_tolerance` and the remaining
+    generations exceed `generation_tolerance`, stops all remaining islands.
+
+    This prevents slow islands from blocking the entire evolution when most
+    of the population has already converged.
+    """
+
+    def __init__(
+        self,
+        island_tolerance: int,
+    ):
+        self.island_tolerance = island_tolerance
+        # TODO: remove stopped islands ?
+        self.stopped_islands: set[int] = set()
+
+    def on_island_generation_complete(
+        self, result: ResultMessage, actor: IslandActor
+    ) -> None:
+        return
+
+    def on_generation_complete(
+        self, gen: int, gen_results: dict[int, ResultMessage], actor: IslandActor
+    ) -> None:
+        """Check if lagging islands should be stopped.
+
+        Args:
+            gen: Current generation number.
+            gen_results: Per-island results for this generation.
+            actor: Interface for issuing stop commands.
+        """
+        active_islands = actor.get_active_islands()
+
+        if len(active_islands) <= self.island_tolerance:
+            for island_id in active_islands:
+                if island_id not in self.stopped_islands:
+                    logger.debug(
+                        f"Stopping island {island_id} due to tolerance policy "
+                        f"at gen: {gen}"
+                    )
+                    actor.send_stop(island_id, StopCommand())
+                    self.stopped_islands.add(island_id)
 
 
 class LoggingResultHandler:
@@ -316,6 +443,15 @@ class LoggingResultHandler:
             "Evolution complete: %d islands, %d total generation records.",
             len(all_results),
             total_gens,
+        )
+
+    def on_island_complete(
+        self, island_id: int, result: AlgorithmResult[IndividualT]
+    ) -> None:
+        logger.info(
+            "+++++ Island %d completed evolution with best individual fitness: %s",
+            island_id,
+            result.best_individual.fitness.values if result.best_individual else None,
         )
 
 
@@ -355,6 +491,11 @@ class OnGenerationEndHandler:
     ) -> None:
         return
 
+    def on_island_complete(
+        self, island_id: int, result: AlgorithmResult[IndividualT]
+    ) -> None:
+        return
+
 
 class FailFastErrorHandler:
     def on_error(self, error: ErrorMessage) -> None:
@@ -374,14 +515,17 @@ class FailFastErrorHandler:
 class ResultMonitor(Generic[IndividualT]):
     """Centralized result and error monitor for island evolution."""
 
-    def __init__(self, n_islands: int) -> None:
+    def __init__(self, n_islands: int, control_queue_size: int = 10) -> None:
         self._n_islands = n_islands
+        self._control_queue_size = control_queue_size
         self._master_queue: mp.Queue[object] = mp.Queue()
         self._results_by_island: dict[int, list[ResultMessage]] = {}
         self._completed_islands: set[int] = set()
         self._final_by_island: dict[int, AlgorithmResult[IndividualT]] = {}
         self._result_handlers: list[ResultHandler] = []
         self._error_handlers: list[ErrorHandler] = []
+        self._control_handlers: list[GlobalControlHandler] = []
+        self._control_queues = self._create_control_queues()
         self._first_error: ErrorMessage | None = None
         self._gens_by_island: dict[int, dict[int, ResultMessage]] = {}
         self._generation_complete_fired: set[int] = set()
@@ -390,11 +534,38 @@ class ResultMonitor(Generic[IndividualT]):
     def master_queue(self) -> mp.Queue[object]:
         return self._master_queue
 
+    @property
+    def control_queues(self) -> dict[int, mp.Queue[ControlCommand]]:
+        return self._control_queues
+
+    def _create_control_queues(self) -> dict[int, mp.Queue[ControlCommand]]:
+        """Create control queues for each island."""
+        return {
+            i: mp.Queue(maxsize=self._control_queue_size)
+            for i in range(self._n_islands)
+        }
+
     def register_result_handler(self, handler: ResultHandler) -> None:
         self._result_handlers.append(handler)
 
     def register_error_handler(self, handler: ErrorHandler) -> None:
         self._error_handlers.append(handler)
+
+    def register_control_handler(self, handler: GlobalControlHandler) -> None:
+        """Register a global control handler for cross-island commands.
+
+        Args:
+            handler: Handler that implements GlobalControlHandler protocol.
+        """
+        self._control_handlers.append(handler)
+
+    def set_control_queues(self, queues: dict[int, mp.Queue[ControlCommand]]) -> None:
+        """Set the control queues dictionary that will be managed by this monitor.
+
+        Args:
+            queues: Mapping of island_id to control command queue.
+        """
+        self._control_queues = queues
 
     def wait(
         self,
@@ -406,11 +577,15 @@ class ResultMonitor(Generic[IndividualT]):
 
         def _terminate_all() -> None:
             for p in processes:
-                try:
-                    p.join(timeout=terminate_timeout)
-                except Exception:
-                    pass
+                p.join(timeout=terminate_timeout)
+                logger.debug(
+                    f"Worker process {p.name} (PID {p.pid}) joined with exit code {p.exitcode}"
+                )
                 if p.is_alive():
+                    logger.warning(
+                        f"Worker process {p.name} (PID {p.pid}) did not terminate within "
+                        "timeout; terminating forcefully."
+                    )
                     p.terminate()
 
         while len(self._completed_islands) < self._n_islands:
@@ -453,9 +628,15 @@ class ResultMonitor(Generic[IndividualT]):
                         f"Duplicate ResultMessage received for island {msg.island_id} "
                         f"generation {msg.generation}"
                     )
+                # TODO:
                 self._results_by_island.setdefault(msg.island_id, []).append(msg)
                 for res_handler in list(self._result_handlers):
                     res_handler.on_island_generation_complete(msg)
+
+                if self._control_handlers:
+                    actor = IslandActor(self._control_queues)
+                    for ctrl_handler in list(self._control_handlers):
+                        ctrl_handler.on_island_generation_complete(msg, actor)
                 gen_map[msg.generation] = msg
                 gen = msg.generation
                 if gen not in self._generation_complete_fired:
@@ -466,7 +647,20 @@ class ResultMonitor(Generic[IndividualT]):
                     if len(gen_results) == self._n_islands:
                         for gen_handler in list(self._result_handlers):
                             gen_handler.on_generation_complete(gen, gen_results)
+                        # Invoke control handlers with actor proxy
+                        if self._control_handlers:
+                            actor = IslandActor(self._control_queues)
+                            for ctrl_handler in list(self._control_handlers):
+                                ctrl_handler.on_generation_complete(
+                                    gen, gen_results, actor
+                                )
                         self._generation_complete_fired.add(gen)
+                else:
+                    # TODO: remove self._generation_complete_fired
+                    raise RuntimeError(
+                        f"Received ResultMessage for generation {gen} after "
+                        "generation_complete event was already fired"
+                    )
 
             elif isinstance(msg, IslandCompletedMessage):
                 if msg.island_id in self._completed_islands:
@@ -474,8 +668,14 @@ class ResultMonitor(Generic[IndividualT]):
                     raise RuntimeError(
                         f"Duplicate completion for island {msg.island_id}"
                     )
+                # TODO: remove _completed_islands if rendundant (self._final_by_island presence may be sufficient)
                 self._completed_islands.add(msg.island_id)
                 self._final_by_island[msg.island_id] = msg.result
+                for gen_handler in list(self._result_handlers):
+                    gen_handler.on_island_complete(msg.island_id, msg.result)
+                # Remove control queue for completed island
+                if msg.island_id in self._control_queues:
+                    del self._control_queues[msg.island_id]
 
             elif isinstance(msg, ErrorMessage):
                 self._first_error = msg
@@ -570,6 +770,7 @@ class LogicalIsland(Generic[IndividualT, PopulationT]):
         pull_max_retries: int,
         push_timeout: float,
         verbose: bool = True,
+        control_queue: mp.Queue[ControlCommand] | None = None,
     ) -> None:
 
         self.descriptor = descriptor
@@ -586,6 +787,7 @@ class LogicalIsland(Generic[IndividualT, PopulationT]):
         self.verbose = verbose
 
         self.depot = descriptor.depot
+        self.control_queue = control_queue
 
         self.evaluator = algorithm.evaluator
         self.val_evaluator = algorithm.val_evaluator
@@ -618,20 +820,32 @@ class LogicalIsland(Generic[IndividualT, PopulationT]):
     ) -> AlgorithmResult[IndividualT]:
         """Execute the per-island local evolution."""
         # Run algorithm is one job => No multiprocessing created.
-        handler = self._create_migration_handler()
-        self.algorithm.register_handler(handler)
-        result = self.algorithm.run_sp(
-            toolbox,
-            train_data,
-            train_entry_labels=train_entry_labels,
-            train_exit_labels=train_exit_labels,
-            val_data=val_data,
-            val_entry_labels=val_entry_labels,
-            val_exit_labels=val_exit_labels,
-            hof_factory=hof_factory,
-            verbose=False,
-        )
-        self.algorithm.remove_handler(handler)
+        handlers = [self._create_migration_handler()]
+
+        # Register control handler if a control queue was provided
+        if self.control_queue is not None:
+            handlers.append(IslandControlHandler(self.control_queue))
+
+        for handler in handlers:
+            self.algorithm.register_handler(handler)
+
+        try:
+            result = self.algorithm.run_sp(
+                toolbox,
+                train_data,
+                train_entry_labels=train_entry_labels,
+                train_exit_labels=train_exit_labels,
+                val_data=val_data,
+                val_entry_labels=val_entry_labels,
+                val_exit_labels=val_exit_labels,
+                hof_factory=hof_factory,
+                verbose=False,
+            )
+        finally:
+            # Ensure handlers are removed even if algorithm exits early
+            for handler in handlers:
+                self.algorithm.remove_handler(handler)
+
         return result
 
     def _create_migration_handler(self) -> AlgorithmLifecycleHandler[PopulationT]:
@@ -849,6 +1063,72 @@ class _IslandMigrationHandler(
         )
 
 
+class IslandControlHandler(NullAlgorithmLifecycleHandler[PopulationT]):
+    """Handler that drains control queue and raises StopEvolution on stop.
+
+    This handler runs on the worker process and checks for commands from the
+    global monitor before each generation starts.
+    """
+
+    def __init__(self, control_queue: mp.Queue[ControlCommand]):
+        self._control_queue = control_queue
+
+    def pre_generation(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        """Drain control queue and handle commands.
+
+        Processes all pending commands. If a StopCommand is encountered,
+        drains remaining commands (logging them as warnings) then raises
+        StopEvolution to cleanly terminate the generational loop.
+
+        Args:
+            population: Current population.
+            state: Algorithm state.
+            toolbox: DEAP toolbox.
+
+        Returns:
+            Unmodified population.
+
+        Raises:
+            StopEvolution: If a StopCommand is received.
+            RuntimeError: If an unknown command type is received.
+        """
+        stop_requested = False
+
+        while True:
+            try:
+                cmd = self._control_queue.get_nowait()
+            except _queue_mod.Empty:
+                break
+
+            if isinstance(cmd, StopCommand):
+                stop_requested = True
+                # Drain remaining commands and log them
+                while True:
+                    try:
+                        skipped = self._control_queue.get_nowait()
+                        logger.warning(
+                            "Skipping command %s after StopCommand received",
+                            type(skipped).__name__,
+                        )
+                    except _queue_mod.Empty:
+                        break
+                break
+            else:
+                raise RuntimeError(
+                    f"Unexpected control command received: {type(cmd).__name__}"
+                )
+
+        if stop_requested:
+            raise StopEvolution("Received StopCommand from control plane.")
+
+        return population
+
+
 def _worker_target(
     assigned_descriptors: list[_IslandDescriptor],
     algorithm: BaseAlgorithm[IndividualT, PopulationT],
@@ -870,6 +1150,7 @@ def _worker_target(
     hof_factory: Callable[[], tools.HallOfFame] | None,
     verbose: bool,
     seed: int,
+    control_queues: dict[int, mp.Queue[ControlCommand]] | None = None,
 ) -> None:
     if seed is not None:
         random.seed(seed)
@@ -898,6 +1179,11 @@ def _worker_target(
                 pull_max_retries=pull_max_retries,
                 push_timeout=push_timeout,
                 verbose=verbose,
+                control_queue=(
+                    control_queues.get(descriptor.island_id)
+                    if control_queues is not None
+                    else None
+                ),
             )
             result = island.run(
                 toolbox=toolbox,
@@ -964,6 +1250,7 @@ class IslandMigration(Generic[IndividualT, PopulationT]):
         pull_max_retries: int,
         push_timeout: float,
         algorithm_kwargs: dict[str, Any] | list[dict[str, Any]] | None = None,
+        island_handlers: list[GlobalControlHandler] | None = None,
         n_jobs: int | None = None,
         seed: int | None = None,
     ) -> None:
@@ -977,6 +1264,8 @@ class IslandMigration(Generic[IndividualT, PopulationT]):
         self.push_timeout = push_timeout
         self.n_jobs = n_jobs or mp.cpu_count()
         self.seed = seed
+        self._control_queue_size = 10
+        self.island_handlers = island_handlers or []
 
         if self.n_islands > self.n_jobs:
             raise ValueError(
@@ -1086,6 +1375,10 @@ class IslandMigration(Generic[IndividualT, PopulationT]):
 
         monitor.register_error_handler(FailFastErrorHandler())
 
+        # Setup control plane queues and handlers if any global handlers were provided
+        for handler in self.island_handlers:
+            monitor.register_control_handler(handler)
+
         processes: list[mp.Process] = []
 
         for worker_idx, (bucket, alg) in enumerate(
@@ -1114,6 +1407,7 @@ class IslandMigration(Generic[IndividualT, PopulationT]):
                     "hof_factory": hof_factory,
                     "verbose": verbose,
                     "seed": worker_seeds[worker_idx],
+                    "control_queues": monitor.control_queues,
                 },
             )
             processes.append(p)

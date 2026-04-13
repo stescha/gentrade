@@ -10,16 +10,24 @@ Tests cover:
 from __future__ import annotations
 
 import multiprocessing as mp
+import queue as _queue_mod
+import time
 from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
+from gentrade.algorithms import StopEvolution
 from gentrade.individual import TreeIndividualBase
 from gentrade.island import (
+    ControlCommand,
+    IslandActor,
+    IslandControlHandler,
     IslandMigration,
     MigrationTimeoutError,
     QueueDepot,
+    StopCommand,
+    ToleranceEarlyStopPolicy,
 )
 from gentrade.migration import SinglePopMigrationPacket
 from gentrade.topologies import MigrateRandom, RingTopology
@@ -383,3 +391,136 @@ class TestIslandSeedDerivation:
         s1 = algo._create_worker_seeds()
         s2 = algo._create_worker_seeds()
         assert s1 != s2
+
+
+@pytest.mark.unit
+class TestIslandControlPlane:
+    """Test control plane components in isolation."""
+
+    def test_island_actor_send_stop_to_valid_island(self) -> None:
+        """IslandActor.send_stop enqueues StopCommand for valid island."""
+
+        queues: dict[int, mp.Queue[ControlCommand]] = {
+            0: mp.Queue(maxsize=10),
+            1: mp.Queue(maxsize=10),
+        }
+        actor = IslandActor(queues)
+        actor.send_stop(0, StopCommand())
+
+        cmd = queues[0].get(timeout=1.0)  # Use blocking get with timeout
+        assert isinstance(cmd, StopCommand)
+
+    def test_island_actor_send_stop_to_invalid_island_raises(self) -> None:
+        """IslandActor.send_stop raises RuntimeError for unknown island."""
+
+        queues: dict[int, mp.Queue[ControlCommand]] = {0: mp.Queue(maxsize=10)}
+        actor = IslandActor(queues)
+
+        with pytest.raises(RuntimeError, match="No control queue found"):
+            actor.send_stop(99, StopCommand())
+
+    def test_island_actor_send_stop_to_full_queue_raises(self) -> None:
+        """IslandActor.send_stop raises RuntimeError when queue is full."""
+
+        queue: mp.Queue[ControlCommand] = mp.Queue(maxsize=1)
+        queue.put_nowait(StopCommand())  # Fill the queue
+
+        queues = {0: queue}
+        actor = IslandActor(queues)
+
+        with pytest.raises(RuntimeError, match="queue is full"):
+            actor.send_stop(0, StopCommand())
+
+    def test_island_actor_get_active_islands(self) -> None:
+        """IslandActor.get_active_islands returns list of queue keys."""
+
+        queues: dict[int, mp.Queue[ControlCommand]] = {
+            0: mp.Queue(),
+            2: mp.Queue(),
+            5: mp.Queue(),
+        }
+        actor = IslandActor(queues)
+
+        active = actor.get_active_islands()
+        assert sorted(active) == [0, 2, 5]
+
+    def test_island_control_handler_empty_queue(self) -> None:
+        """IslandControlHandler with empty queue returns population unchanged."""
+
+        queue: mp.Queue[ControlCommand] = mp.Queue()
+        handler = IslandControlHandler[Any](queue)
+
+        population = [MagicMock()]
+        state = MagicMock()
+        toolbox = MagicMock()
+
+        result = handler.pre_generation(population, state, toolbox)
+        assert result is population
+
+    def test_island_control_handler_stop_command_raises(self) -> None:
+        """IslandControlHandler raises StopEvolution on StopCommand."""
+
+        queue: mp.Queue[ControlCommand] = mp.Queue()
+        queue.put_nowait(StopCommand())
+        time.sleep(0.01)  # Let queue process the put
+
+        handler = IslandControlHandler[Any](queue)
+
+        with pytest.raises(StopEvolution):
+            handler.pre_generation([], MagicMock(), MagicMock())
+
+    def test_island_control_handler_unknown_command_raises(self) -> None:
+        """IslandControlHandler raises RuntimeError for unknown command."""
+
+        queue: mp.Queue[ControlCommand] = mp.Queue()
+        queue.put_nowait(ControlCommand())  # Base class, not StopCommand
+        time.sleep(0.01)  # Let queue process the put
+
+        handler = IslandControlHandler[Any](queue)
+
+        with pytest.raises(RuntimeError, match="Unexpected control command"):
+            handler.pre_generation([], MagicMock(), MagicMock())
+
+    def test_tolerance_policy_triggers_stop(self) -> None:
+        """ToleranceEarlyStopPolicy triggers stops when conditions met."""
+
+        # Policy triggers when current generation >= min_generations and
+        # active islands <= island_tolerance. Use min_generations=30 so a
+        # call with gen=30 will trigger stopping.
+        policy = ToleranceEarlyStopPolicy(island_tolerance=2)
+        queues: dict[int, mp.Queue[ControlCommand]] = {0: mp.Queue(), 1: mp.Queue()}
+        actor = IslandActor(queues)
+
+        # Gen 30: 2 active islands -> should trigger stop since gen >= 30
+        gen_results = {0: MagicMock(), 1: MagicMock()}
+        policy.on_generation_complete(30, gen_results, actor)  # type: ignore
+
+        # Both islands should receive stop command (use blocking get with timeout)
+        cmd0 = queues[0].get(timeout=1.0)
+        cmd1 = queues[1].get(timeout=1.0)
+        assert isinstance(cmd0, StopCommand)
+        assert isinstance(cmd1, StopCommand)
+
+    def test_tolerance_policy_no_stop_when_tolerance_not_met(self) -> None:
+        """ToleranceEarlyStopPolicy doesn't stop when island count > tolerance."""
+
+        # Use min_generations that would allow stopping at gen=30, but
+        # ensure the active island count (3) is above the tolerance (2).
+        policy = ToleranceEarlyStopPolicy(island_tolerance=2)
+        queues: dict[int, mp.Queue[ControlCommand]] = {
+            0: mp.Queue(),
+            1: mp.Queue(),
+            2: mp.Queue(),
+        }
+        actor = IslandActor(queues)
+
+        gen_results = {0: MagicMock(), 1: MagicMock(), 2: MagicMock()}
+        policy.on_generation_complete(30, gen_results, actor)  # type: ignore
+
+        # No stops should be issued (3 active > tolerance of 2)
+        with pytest.raises(_queue_mod.Empty):
+            queues[0].get_nowait()
+        with pytest.raises(_queue_mod.Empty):
+            queues[1].get_nowait()
+        with pytest.raises(_queue_mod.Empty):
+            queues[2].get_nowait()

@@ -25,6 +25,7 @@ from gentrade.individual import (
     PairTreeIndividual,
     TreeIndividualBase,
 )
+from gentrade.island import GlobalControlHandler
 from gentrade.optimizer.tree import BaseTreeOptimizer
 from gentrade.topologies import MigrationTopology
 from gentrade.types import (
@@ -74,6 +75,7 @@ class CoopMuPlusLambdaOptimizer(BaseTreeOptimizer):
         metrics_val: tuple[Metric, ...] | None = None,
         callbacks: list[Callback] | None = None,
         handlers: list[AlgorithmLifecycleHandler[TreeIndividualBase]] | None = None,
+        island_handlers: list[GlobalControlHandler] | None = None,
         # Island migration params (0 = disabled)
         migration_rate: int = 0,
         migration_count: int = 5,
@@ -120,6 +122,7 @@ class CoopMuPlusLambdaOptimizer(BaseTreeOptimizer):
             metrics_val=metrics_val,
             callbacks=callbacks,
             handlers=handlers,
+            island_handlers=island_handlers,
             # Island migration params (0 = disabled)
             migration_rate=migration_rate,
             migration_count=migration_count,
@@ -289,6 +292,7 @@ class CoopMuPlusLambdaOptimizer(BaseTreeOptimizer):
                 pull_timeout=self.pull_timeout,
                 pull_max_retries=self.pull_max_retries,
                 push_timeout=self.push_timeout,
+                island_handlers=self.island_handlers,
                 n_jobs=self.n_jobs,
                 seed=self.seed,
             )

@@ -180,6 +180,21 @@ class TradeReturnMaxLoss(CppBacktestMetricBase):
         return float(np.min(neg_rets)) if len(neg_rets) > 0 else 0.0
 
 
+class TradeReturnMedianLoss(CppBacktestMetricBase):
+    """ """
+
+    _FAIL_SCORE = -1.0
+
+    def __call__(self, bt_result: BtResult) -> float:
+        if (
+            len(bt_result.trade_returns) < self.min_trades
+            or len(bt_result.trade_returns) == 0
+        ):
+            return self._FAIL_SCORE
+        neg_rets = bt_result.trade_returns[bt_result.trade_returns < 0]
+        return float(np.median(neg_rets)) if len(neg_rets) > 0 else 0.0
+
+
 class TradeCount(CppBacktestMetricBase):
     _FAIL_SCORE = -1.0
 
@@ -197,4 +212,5 @@ class TradeCount(CppBacktestMetricBase):
             return self._FAIL_SCORE
         if len(bt_result.trade_returns) < self.min_trades:
             return self._FAIL_SCORE
+
         return len(bt_result.trade_returns)

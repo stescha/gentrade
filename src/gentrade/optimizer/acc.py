@@ -140,6 +140,7 @@ class AccOptimizer(BaseTreeOptimizer):
                 pull_timeout=self.pull_timeout,
                 pull_max_retries=self.pull_max_retries,
                 push_timeout=self.push_timeout,
+                island_handlers=self.island_handlers,
                 n_jobs=self.n_jobs,
                 seed=self.seed,
             )

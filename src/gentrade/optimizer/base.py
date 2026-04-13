@@ -33,6 +33,7 @@ from gentrade.individual import (
     TreeIndividualBase,
     ensure_creator_fitness_class,
 )
+from gentrade.island import GlobalControlHandler
 from gentrade.types import Algorithm, DataInput, LabelInput, Metric
 
 logger = logging.getLogger(__name__)
@@ -260,6 +261,7 @@ class BaseOptimizer(ABC):
         metrics_val: tuple[Metric, ...] | None = None,
         callbacks: list[Callback] | None = None,
         handlers: list[AlgorithmLifecycleHandler[Any]] | None = None,
+        island_handlers: list[GlobalControlHandler] | None = None,
     ) -> None:
         """Initialize the base optimizer.
 
@@ -293,6 +295,9 @@ class BaseOptimizer(ABC):
         self.callbacks = callbacks
         self.handlers: list[AlgorithmLifecycleHandler[Any]] = (
             [] if handlers is None else handlers
+        )
+        self.island_handlers: list[GlobalControlHandler] = (
+            [] if island_handlers is None else island_handlers
         )
 
         # Fitted attributes (set during fit)
