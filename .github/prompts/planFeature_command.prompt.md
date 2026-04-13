@@ -28,7 +28,7 @@ Before your first response, run these checks. Do not ask the user about them.
 
 ### 1. Read project instructions
 
-Check if `.github/instructions/` exists and read all `*.instructions.md` files. Internalize them — they shape your questions and the final plan.
+Check if `.github/instructions/` exists and read the `INDEX.md` and all `*.instructions.md` files. Internalize them — they shape your questions and the final plan.
 
 If missing or empty:
 ```

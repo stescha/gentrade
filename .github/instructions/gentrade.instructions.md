@@ -8,56 +8,106 @@ These instructions cover the domain, architecture, and conventions specific to t
 
 ## Project Goal
 
-Evolve trading strategies using genetic programming (GP) on historical OHLCV cryptocurrency data. This is an experimentation project — the algorithm, fitness functions, and strategy representation are under active research.
+Evolve trading strategies using genetic programming (GP) on historical OHLCV data. This repo is an experimental research project: optimizer logic, fitness functions, and strategy representation are under active development.
 
-**Note on imports**: All Python imports are performed as `import gentrade` (or `from gentrade import …`) from outside the `src` directory. Internal imports within `src` are relative. No `sys.path` manipulation.
+**Note on imports**: External code should import `gentrade` from outside `src` (for example `import gentrade` or `from gentrade import ...`). Internal imports within `src/gentrade` are ordinary package imports. Avoid `sys.path` manipulation.
 
 ## Optimizer Architecture
 
-The project uses an object-oriented optimizer system. The core logic is encapsulated in subclasses of `BaseOptimizer`.
+The project uses an object-oriented optimizer system. Core logic is implemented in `BaseOptimizer` and tree optimizer subclasses.
 
 ### Key Components
 
-- **Optimizers** (`BaseOptimizer`, `TreeOptimizer`, `PairTreeOptimizer`): Core orchestrators for GP optimization. They implement primitive-set construction, toolbox wiring, and evaluator creation. They produce instances of `TreeIndividual` or `PairTreeIndividual`.
-- **Algorithms** (`BaseAlgorithm`, `EaMuPlusLambda`): Expose the inner evolutionary loops. Any `BaseAlgorithm` subtype can be run **standalone** (where `multiprocessing` parallelizes strategy evaluation across the population).
-- **Island Migration** (`IslandMigration`): An orchestrator capable of wrapping any `BaseAlgorithm` subtype to run an "island migration" topology. It uses `multiprocessing` to parallelize the process at the *island level*. Each island executes an independent evolutionary run (evaluating sequentially or semi-sequentially) and exchanges individuals with neighbors via bounded push/pull depots.
- - **Evaluators**: Concrete evaluator classes (`TreeEvaluator`, `PairEvaluator`) perform compilation, simulation, and metric aggregation. Evaluators detect whether labels or backtest configs are required based on metric types.
- - **Callbacks**: Lifecycle hooks (`on_fit_start`, `on_fit_end`) for custom logic.
+- **Optimizers** (`BaseOptimizer`, `BaseTreeOptimizer`, `TreeOptimizer`, `PairTreeOptimizer`, `AccOptimizer`, `CoopMuPlusLambdaOptimizer`): Orchestrate GP setup, toolbox wiring, and evaluator creation. They generate `TreeIndividual` or `PairTreeIndividual` objects.
+- **Algorithms** (`BaseAlgorithm`, `EaMuPlusLambda`, `AccEa`, `CoopMuPlusLambda`, `BaseSinglePopulationAlgorithm`, `BaseMultiPopulationAlgorithm`): Implement evolutionary loops, located in `gentrade.algorithms`. These algorithms are designed to run standalone.
+- **Island Migration** (`IslandMigration`): Wraps an algorithm to run a migration topology across islands using multiprocessing at the island level. Each island runs its own evolutionary algorithm and exchanges individuals through depots.
+- **Evaluators** (`BaseEvaluator`, `TreeEvaluator`, `PairEvaluator`): Compile GP trees and compute fitness from metrics. They enforce whether labels or backtest configs are required by the configured metrics.
+- **Callbacks**: Lifecycle hooks in `gentrade.callbacks` for `on_fit_start` and `on_fit_end`.
 
 ## Core Concept: GP Trees as Trading Strategies
 
-- **Strategy Representation**: Candidate solutions are instances of `TreeIndividualBase` (e.g., `TreeIndividual` or `PairTreeIndividual`) which wrap one or two `deap.gp.PrimitiveTree` objects. Callers and operators should prefer the wrapper types and use helper adapters rather than manipulating raw `PrimitiveTree` objects directly. They transform OHLCV data into boolean signals (`pd.Series`).
-- **Primitives**: Trees are composed of TA-Lib indicators, arithmetic/comparison operators, and boolean logic.
-- **Type Safety**: The primitive set (`pset.py`) enforces strict typing (e.g., ADX receives High/Low/Close).
-- **Generation**: Custom generators (`genFull`, `genGrow`, `genHalfAndHalf` in `growtree.py`) must be used over DEAP defaults to handle the typed hierarchy.
-- **Serialization**: String representations can be parsed back into `PrimitiveTree` objects via `parse_individual`.
+- **Strategy Representation**: Individuals are wrapper objects around DEAP trees. `TreeIndividual` contains one tree; `PairTreeIndividual` contains buy and sell trees. Prefer these wrappers and `apply_operators` instead of operating on raw `deap.gp.PrimitiveTree` objects directly. The wrappers are list subclasses and carry a `.fitness` attribute.
+- **Primitives**: Trees use TA-Lib indicator primitives, arithmetic/comparison operators, and boolean logic.
+- **Type Safety**: Primitives are registered in `gentrade.pset` with strict typed signatures (for example, `ADX` receives `High`, `Low`, `Close`).
+- **Generation**: Use `gentrade.growtree.genFull`, `genGrow`, or `genHalfAndHalf` instead of DEAP defaults to handle typed GP.
+- **Serialization**: DEAP tree string output is available, but there is no active dedicated `parse_individual` helper in the current codebase.
 
 ## Strategy Paradigms
 
-1. **Pair Strategy**: Two trees per individual (buy tree + sell tree). Evaluated via the **C++ backtester** (`eval_signals.cpp`) for high-performance order simulation.
-2. **Single-tree Strategy**: One buy tree, exits via stop-loss / take-profit parameters. Evaluated via the **VectorBT backend**.
+1. **Pair strategy**: `PairTreeIndividual` evolves buy and sell trees together. Evaluation typically uses the C++ backtester and `BtResult`.
+2. **Single-tree strategy**: `TreeIndividual` evolves a single entry/exit tree. Exits can be applied through VectorBT stop-loss / take-profit parameters and evaluated via `vbt.Portfolio`.
 
 ## Evaluation & Metrics
 
-- **Performance**: Use vectorized computation only. Primitives and metrics must operate on full `pd.Series` / `np.ndarray`.
-- **Metrics**: Metrics consume simulator outputs (`BtResult` for C++, `vbt.Portfolio` for VectorBT) or true labels to produce a fitness tuple.
-- **Multi-objective**: Providing multiple metrics triggers multi-objective optimization (e.g., NSGA-II).
- - **Validation**: Providing `X_val` and `y_val` to `fit()` triggers periodic validation via an optional validation evaluator (configured from `metrics_val` / `val_evaluator`).
+- **Performance**: Avoid row-by-row loops. Primitives and metrics should operate on full `pd.Series` / `np.ndarray` inputs.
+- **Metrics**: Metrics consume simulator outputs (`BtResult` or `vbt.Portfolio`) or label data and return fitness values.
+- **Multi-objective**: Providing multiple metrics enables multi-objective optimization.
+- **Validation**: Passing `X_val`, `entry_label_val`, or `exit_label_val` to `fit()` triggers validation evaluation using `metrics_val`.
 
 ## Genetic Operators & Constraints
 
-- **Mutation & Crossover**: Operators should retry (up to 10 times) to ensure offspring differs from parents.
-- **Bloat Control**: `gp.staticLimit` is mandatory on mate/mutate to cap tree height.
-- **Signal Validation**: Reject invalid signal patterns (all-true, all-false, too few signals) before simulation to save computation time.
+- **Operator wrapping**: Raw DEAP tree operators are lifted to individual-level operators with `apply_operators`.
+- **Bloat control**: `gp.staticLimit` is used on crossover and mutation operators to enforce maximum tree height.
+- **Signal validation**: Invalid signal patterns (all-true, all-false, too few signals) should be rejected before running the simulator.
 
 ## Performance Requirements
 
-- **Multiprocessing**: Population evaluation must support `multiprocessing.Pool.map`. All individuals and data must be picklable.
-- **C++ Backend**: Performance-critical inner loop. Keep it lean and type-safe.
+- **Multiprocessing**: Population evaluation must work with `multiprocessing.Pool.map`. Individuals and data must be picklable.
+- **C++ backend**: Keep C++ backtest integration lean and type-safe.
+
+## Common Development Workflows
+
+### Adding a New Metric
+
+1. Define a metric class in `gentrade/config.py` or `gentrade/backtest_metrics.py` (for backtest metrics).
+2. Inherit from the appropriate base: `ClassificationMetric` for labels, `BacktestMetric` for simulator output.
+3. Implement `__call__` to return a single float scalar (the fitness value).
+4. Pass metric instances (not configs) directly to optimizer via `metrics=(my_metric,)`.
+
+### Using TreeOptimizer for Single-Tree Evolution
+
+```python
+from gentrade.optimizer import TreeOptimizer
+opt = TreeOptimizer(pset=my_pset, metrics=(my_metric,), mu=100, lambda_=200, generations=30)
+opt.fit(X=ohlcv_df, entry_label=labels)
+best_individual = opt.best_individual_  # type: TreeIndividual
+```
+
+### Using PairTreeOptimizer for Buy+Sell Evolution
+
+```python
+from gentrade.optimizer import PairTreeOptimizer
+opt = PairTreeOptimizer(pset=my_pset, metrics=(cpp_metric,), mu=100, lambda_=200, generations=30)
+opt.fit(X=ohlcv_df)
+best_individual = opt.best_individual_  # type: PairTreeIndividual
+```
+
+### Enabling Island Migration
+
+Set `migration_rate > 0` when creating the optimizer:
+
+```python
+opt = TreeOptimizer(
+    pset=my_pset,
+    metrics=(metric,),
+    migration_rate=5,
+    n_islands=4,
+    n_jobs=4,  # typically equals n_islands
+)
+opt.fit(X=data)
+```
+
+### Multiprocessing & Pickling
+
+- All data passed to `fit()` is pickled for workers. Use `multiprocessing.Pool.map` internally.
+- Call `ensure_creator_fitness_class(weights)` before creating pools if using custom fitness configurations.
+- Workers evaluate individuals in parallel; set `n_jobs > 1` to enable.
 
 ## What NOT to do
 
-- Do not use the legacy `run_evolution` function or the `RunConfig` for orchestration.
-- Do not build complex factory hierarchies; prefer direct instantiation of optimizers.
+- Do not add active orchestration that depends on legacy `RunConfig` or on old `run_evolution`-style wiring. `RunConfig` still exists in `config.py` as a legacy artifact/template only.
+- Do not build complex factory hierarchies; prefer direct optimizer instantiation.
 - Avoid row-by-row loops in primitives, metrics, or evaluation logic.
-- Never store fitness separately; it must remain on the individual's `.fitness` attribute.
+- Keep fitness attached to the individual object via `.fitness`.
+- Do not modify optimizer internals after calling `fit()`; always create a new optimizer instance.
+- Do not pass raw `deap.gp.PrimitiveTree` objects to genetic operators; use `TreeIndividual` or `PairTreeIndividual` wrappers.

@@ -45,7 +45,7 @@ The coding agent will work in a local git worktree or remote clone of the reposi
 2. Identify:
    - Which files will be **created** vs. **modified**.
    - Which existing files the agent needs to **read** to understand patterns and conventions.
-   - Which `.github/instructions/*.instructions.md` files exist and apply based on their `applyTo` glob patterns and the files being touched.
+   - Which `.github/instructions/*.instructions.md` files exist. Start with the `INDEX.md` to understand the purpose of each instruction file and which ones apply to the files being created/modified. Note their key rules and patterns.
    - Which types, models, helpers, and utilities are relevant.
 
 ### Phase 2 — Gather codebase context
@@ -79,6 +79,11 @@ Missing file warning format (place at the top of the output prompt, before the G
 
 Write a single Markdown file following the structure defined in the **Output Template** section below.
 
+The generated agent prompt must instruct the implementation agent to:
+- run the targeted tests for the feature first, then broader regression tests only after the related tests pass,
+- iterate between implementation and testing until all relevant tests pass,
+- ignore `TODO` comments in the code while implementing.
+
 ---
 
 ## Rules for the Output Prompt
@@ -91,9 +96,11 @@ Write a single Markdown file following the structure defined in the **Output Tem
 - **Code snippets over prose**: show concrete method signatures, query shapes, and test class outlines. The agent is a coder, not a reader.
 - **One task per prompt**: each prompt covers a single atomic feature or change. If the user's plan contains multiple independent features, produce one prompt per feature and note this to the user.
 - **Tests are mandatory**: every prompt must include a test plan (see Test Plan rules below).
+- **Iterative validation**: the prompt should require the implementation agent to run related tests first, fix any failures, and repeat until the implementation is correct and all tests pass.
+- **Ignorable TODOs**: the implementation agent should ignore `TODO` comments in the code while implementing.
 - **Commit guidance**: instruct the agent to make atomic commits (one logical change per commit). Reference `.github/commands/commit-messages.md` for message format — the agent **must** read that file before making any commits.
 - **PR description**: reference `.github/commands/pr-description.md` for PR format — the agent **must** read that file if it creates a PR.
-- **Branch from `main`**: the agent should create a feature branch from `main` unless the user specifies otherwise.
+
 
 ### Required reading for the coding agent
 
@@ -101,14 +108,14 @@ The output prompt **must** contain an explicit instruction for the agent to read
 
 1. `.github/commands/commit-messages.md` — commit message format
 2. `.github/commands/pr-description.md` — PR description format
-3. All `.github/instructions/*.instructions.md` files whose `applyTo` patterns match files being created or modified
+3. The `.github/instructions/INDEX.md` and all `.github/instructions/*.instructions.md` files whose `applyTo` patterns match files being created or modified
 
 Include this as a dedicated section in the output prompt (see Output Template).
 
 ### What to include from `.github/instructions/`
 
 The `.github/instructions/*.instructions.md` files are **automatically injected** by VS Code when the agent edits files matching their `applyTo` patterns. You do **not** need to paste their contents into the prompt. However:
-- **Do** list which instruction files exist, their `applyTo` patterns, and a one-line summary of what they cover.
+- **Do** mention the `.github/instructions/INDEX.md` and key instruction files.
 - **Do** read them yourself to ensure the prompt doesn't contradict them.
 - **Do not** duplicate rules already covered by those instruction files — reference them instead.
 
@@ -230,9 +237,8 @@ This is the exception, not the norm. Default to a single self-contained prompt.
 ## Final Instructions
 
 - **Output location**: write the prompt file to `.github/prompts/active/` with a descriptive filename (e.g., `implement-ohlcv-end-times.md`).
-- **Review before writing**: present the prompt content to the user for review before creating the file. Ask if anything should be adjusted.
 - **Do not execute the plan**: your job is to produce the prompt, not to implement the feature.
-- **Quality check**: before presenting the prompt, verify:
+- **Quality check**: After writing the prompt file, verify:
   - Every file listed in "Files to Read" actually exists in the repository.
   - Every file listed in "Files to Create / Modify" is accounted for in the implementation steps.
   - The test plan covers both success and error cases.

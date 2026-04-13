@@ -33,7 +33,8 @@ Commands:
 
 # Optimizer specifics for copilot
 - When working on optimizer or evaluator code prefer `BaseOptimizer` and
-  the concrete subclasses `TreeOptimizer` and `PairTreeOptimizer`.
+  the concrete subclasses `TreeOptimizer`, `PairTreeOptimizer`, `AccOptimizer`,
+  and `CoopMuPlusLambdaOptimizer`.
 - Avoid assumptions that individuals are raw `deap.gp.PrimitiveTree` objects;
   code uses wrapper types (`TreeIndividual`, `PairTreeIndividual`) that
   contain one or two trees. Use `apply_operators` helpers and existing

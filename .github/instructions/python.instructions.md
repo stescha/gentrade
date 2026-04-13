@@ -32,3 +32,8 @@ General Python conventions for all code in this repository.
  - **Class/function docstrings**: Google style; focus on intent. Include Args, Returns, Raises as needed. When documenting optimizer/evaluator APIs mention the concrete public types `TreeIndividual` / `PairTreeIndividual` and `BaseEvaluator`/`PairEvaluator` where relevant.
  - **Type hints preferred** over docstring type annotations.
  - **Inline comments**: explain *why*, not *what*. Add comments for non-obvious logic.
+
+## Error Handling
+
+ - **Fail fast**: raise exceptions as soon as an unexpected condition is detected. Avoid fallback behavior that masks bugs or leaves the system in an invalid state.
+ - **Do not swallow exceptions**: do not catch exceptions only to `pass`. If a catch is required, handle the error explicitly or re-raise it so failures are not hidden.
