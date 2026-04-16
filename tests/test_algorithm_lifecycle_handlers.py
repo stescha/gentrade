@@ -8,13 +8,11 @@ from typing import Any, cast
 import pytest
 from deap import base, tools
 
-from gentrade.algo_res import AlgorithmResult
 from gentrade.algorithms import (
     AlgorithmLifecycleHandler,
-    AlgorithmState,
-    BaseAlgorithm,
-    StopEvolution,
 )
+from gentrade.algorithms.base import BaseAlgorithm, StopEvolution
+from gentrade.algorithms.state import AlgorithmResult, AlgorithmState
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.individual import TreeIndividualBase
 from gentrade.migration import MigrationPacket

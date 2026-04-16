@@ -1,7 +1,73 @@
+from typing import Generic, Protocol
+
 from deap import base
 
-from gentrade.algorithms import AlgorithmLifecycleHandler, AlgorithmState, StopEvolution
 from gentrade.individual import PairTreeIndividual
+from gentrade.types import PopulationT
+
+from .base import StopEvolution
+from .state import AlgorithmState
+
+
+class AlgorithmLifecycleHandler(Protocol[PopulationT]):
+    """Protocol describing per-generation lifecycle hooks.
+
+    Handler methods accept and return population in its natural shape.
+    The PopulationT type parameter allows type-safe population handling
+    while remaining flexible for both flat and nested population structures.
+    """
+
+    def post_initialization(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        """Hook executed after initialization and tracking."""
+
+    def pre_generation(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        """Hook executed before each generation."""
+
+    def post_generation(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        """Hook executed after each generation."""
+
+
+class NullAlgorithmLifecycleHandler(Generic[PopulationT]):
+    """No-op lifecycle handler that works with any population type."""
+
+    def post_initialization(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        return population
+
+    def pre_generation(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        return population
+
+    def post_generation(
+        self,
+        population: PopulationT,
+        state: AlgorithmState,
+        toolbox: base.Toolbox,
+    ) -> PopulationT:
+        return population
 
 
 class ThreasholdedStopHandler(AlgorithmLifecycleHandler[list[PairTreeIndividual]]):
@@ -71,8 +137,8 @@ class ThreasholdedStopHandler(AlgorithmLifecycleHandler[list[PairTreeIndividual]
             if t is None:
                 exceeds[i] = True
             else:
-                if w > 0 and f < t:
+                if w > 0 and f > t:
                     exceeds[i] = True
-                elif w < 0 and f > t:
+                elif w < 0 and f < t:
                     exceeds[i] = True
         return tuple(exceeds)

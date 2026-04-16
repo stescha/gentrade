@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gentrade.algorithms import StopEvolution
+from gentrade.algorithms.base import StopEvolution
 from gentrade.individual import TreeIndividualBase
 from gentrade.island import (
     ControlCommand,

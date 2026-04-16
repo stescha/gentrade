@@ -7,12 +7,14 @@ construction, toolbox wiring, and evaluator creation for either
 ``TreeIndividual`` or ``PairTreeIndividual`` workflows.
 """
 
+from __future__ import annotations
+
 import logging
 import operator
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -23,8 +25,12 @@ from gentrade._defaults import (
     SELECTION_MULTI_OBJ,
     SELECTION_SINGLE_OBJ,
 )
-from gentrade.algo_res import AlgorithmResult
-from gentrade.algorithms import AlgorithmLifecycleHandler
+
+if TYPE_CHECKING:
+    from gentrade.algorithms import AlgorithmLifecycleHandler
+    from gentrade.island import GlobalControlHandler
+
+from gentrade.algorithms.state import AlgorithmResult
 from gentrade.callbacks import Callback
 from gentrade.eval_ind import BaseEvaluator
 from gentrade.individual import (
@@ -33,7 +39,6 @@ from gentrade.individual import (
     TreeIndividualBase,
     ensure_creator_fitness_class,
 )
-from gentrade.island import GlobalControlHandler
 from gentrade.types import Algorithm, DataInput, LabelInput, Metric
 
 logger = logging.getLogger(__name__)

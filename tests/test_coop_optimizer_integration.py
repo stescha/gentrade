@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from deap import tools
 
+from gentrade.algorithms.coop import CoopMuPlusLambda
 from gentrade.backtest_metrics import TradeReturnMean
-from gentrade.coop import CoopMuPlusLambda
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.individual import PairTreeIndividual
 from gentrade.minimal_pset import create_pset_default_large, create_pset_zigzag_minimal

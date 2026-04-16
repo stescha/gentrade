@@ -1,5 +1,7 @@
-from functools import cached_property
-from typing import Any, Generic, Self, Sequence, cast
+import time
+from dataclasses import dataclass
+from functools import cached_property, wraps
+from typing import Any, Callable, Generic, Self, Sequence, cast
 
 from deap import tools
 
@@ -18,6 +20,55 @@ def _assert_pop_dim(populations: Any, dim: int) -> None:
         f"Expected population dimension {dim} but got non-list at depth {d}."
     )
     return
+
+
+def timed(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a callable and print its wall-clock execution duration."""
+
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        duration = time.perf_counter() - start
+        print(f"Execution of {func.__name__} took {duration:.4f} seconds")
+        return result
+
+    return wrapper
+
+
+@dataclass
+class AlgorithmState:
+    """State object holding iteration and metric data passed between hooks
+    during the generational evolutionary loop.
+
+    Attributes:
+        generation: Current generation index (0 for baseline initialization).
+        logbook: Used to store and print aggregated progression metrics per gen.
+        halloffame: Tracks the all-time best overall individuals.
+        best_individual: Top performer dynamically found inside the current gen.
+        best_fitness_val: Associated validation fitness.
+        best_fit: Fitness metrics vector for `best_individual` on training runs.
+        n_evaluated: Distinct individuals mapped / computed this generation.
+        eval_time: Number of seconds elapsed inside the parallel evaluator.
+        generation_time: Total elapsed duration, factoring in variations / stats.
+        n_emigrants: Number of emigrants pushed during current generation.
+        n_immigrants: Number of immigrants integrated during current generation.
+        loop_start_time: Internal timing marker used to compute generation duration.
+    """
+
+    generation: int
+    # gen_start_time: float
+    logbook: tools.Logbook
+    halloffame: tools.HallOfFame | None
+    best_individual: TreeIndividualBase | None = None
+    best_fitness_val: tuple[float, ...] | None = None
+    best_fit: tuple[float, ...] | None = None
+    n_evaluated: int | None = None
+    eval_time: float | None = None
+    generation_time: float | None = None
+    n_emigrants: int = 0
+    n_immigrants: int = 0
+    loop_start_time: float | None = None
 
 
 class AlgorithmResult(Generic[IndividualT]):

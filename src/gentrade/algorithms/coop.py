@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 # Naming conventions and data structure:
 #
 # Individual: A fully assembled solution candidate, subtype of a library specific
@@ -43,24 +41,23 @@ from __future__ import annotations
 #
 #
 # the components must be full individuals for the
+from __future__ import annotations
+
 import logging
 from typing import Sequence, cast
 
 from deap import base, gp, tools
 
-from gentrade.algorithms import (
-    AlgorithmLifecycleHandler,
-    BaseMultiPopulationAlgorithm,
-    varOr,
-)
-from gentrade.eval_ind import BaseEvaluator
-from gentrade.individual import (
+from ..eval_ind import BaseEvaluator
+from ..individual import (
     PairTreeIndividual,
     TreeIndividual,
     TreeIndividualBase,
 )
-from gentrade.migration import MigrationPacket, MultiPopMigrationPacket
-from gentrade.types import PairTreeComponent
+from ..migration import MigrationPacket, MultiPopMigrationPacket
+from ..types import PairTreeComponent
+from .base import BaseMultiPopulationAlgorithm, varOr
+from .handlers import AlgorithmLifecycleHandler
 
 logger = logging.getLogger(__name__)
 

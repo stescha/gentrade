@@ -20,21 +20,20 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Sequence, cast
+from typing import TYPE_CHECKING, Sequence, cast
 
 from deap import base, gp, tools
 
-from gentrade.algorithms import (
-    AlgorithmLifecycleHandler,
-    BaseMultiPopulationAlgorithm,
-    varOr,
-)
-from gentrade.eval_ind import BaseEvaluator
-from gentrade.individual import (
+from ..eval_ind import BaseEvaluator
+from ..individual import (
     PairTreeIndividual,
     TreeIndividual,
 )
-from gentrade.migration import MigrationPacket, MultiPopMigrationPacket
+from ..migration import MigrationPacket, MultiPopMigrationPacket
+from .base import BaseMultiPopulationAlgorithm, varOr
+
+if TYPE_CHECKING:
+    from .handlers import AlgorithmLifecycleHandler
 
 logger = logging.getLogger(__name__)
 

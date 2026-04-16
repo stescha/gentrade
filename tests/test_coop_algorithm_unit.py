@@ -2,14 +2,6 @@
 
 from __future__ import annotations
 
-import random
-
-import numpy as np
-
-random.seed(42)
-np.random.seed(42)
-
-
 import copy
 from typing import Any, Callable, cast
 from unittest.mock import MagicMock
@@ -17,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from deap import base, gp, tools
 
-from gentrade.coop import CoopMuPlusLambda
+from gentrade.algorithms import CoopMuPlusLambda
 from gentrade.individual import PairTreeIndividual
 from gentrade.migration import MultiPopMigrationPacket
 from gentrade.minimal_pset import create_pset_zigzag_minimal

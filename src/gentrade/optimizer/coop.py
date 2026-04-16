@@ -12,20 +12,17 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, Callable, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast, overload
 
 from deap import gp, tools
 
-from gentrade.algorithms import AlgorithmLifecycleHandler
 from gentrade.callbacks import Callback
 from gentrade.config import BacktestConfig
-from gentrade.coop import CoopMuPlusLambda
 from gentrade.eval_ind import BaseEvaluator, PairEvaluator
 from gentrade.individual import (
     PairTreeIndividual,
     TreeIndividualBase,
 )
-from gentrade.island import GlobalControlHandler
 from gentrade.optimizer.tree import BaseTreeOptimizer
 from gentrade.topologies import MigrationTopology
 from gentrade.types import (
@@ -37,6 +34,12 @@ from gentrade.types import (
     SelectionOp,
     TradeSide,
 )
+
+if TYPE_CHECKING:
+    from gentrade.algorithms import AlgorithmLifecycleHandler
+    from gentrade.island import GlobalControlHandler
+
+from gentrade.algorithms import CoopMuPlusLambda
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,7 @@ class CoopMuPlusLambdaOptimizer(BaseTreeOptimizer):
         validation_interval: int = 1,
         metrics_val: tuple[Metric, ...] | None = None,
         callbacks: list[Callback] | None = None,
-        handlers: list[AlgorithmLifecycleHandler[TreeIndividualBase]] | None = None,
+        handlers: list["AlgorithmLifecycleHandler[TreeIndividualBase]"] | None = None,
         island_handlers: list[GlobalControlHandler] | None = None,
         # Island migration params (0 = disabled)
         migration_rate: int = 0,
@@ -235,10 +238,12 @@ class CoopMuPlusLambdaOptimizer(BaseTreeOptimizer):
         val_evaluator: BaseEvaluator[PairTreeIndividual] | None,
         stats: tools.Statistics,
     ) -> Algorithm[PairTreeIndividual]:
-        """Create :class:`~gentrade.acc.AccEa`, optionally wrapped in island migration.
+        """Create :class:`~gentrade.algorithms.coop.CoopMuPlusLambda`, optionally
+        wrapped in island migration.
 
         When ``migration_rate > 0`` an :class:`~gentrade.island.IslandMigration`
-        wrapping :class:`~gentrade.acc.AccEa` is returned; otherwise the
+        wrapping :class:`~gentrade.algorithms.coop.CoopMuPlusLambda` is returned;
+        otherwise the
         algorithm runs standalone.
 
         Args:
@@ -248,7 +253,7 @@ class CoopMuPlusLambdaOptimizer(BaseTreeOptimizer):
             halloffame: DEAP hall of fame.
 
         Returns:
-            Configured :class:`~gentrade.acc.AccEa` or
+            Configured :class:`~gentrade.algorithms.coop.CoopMuPlusLambda` or
             :class:`~gentrade.island.IslandMigration`.
         """
         algo_kwargs: dict[str, Any] = {

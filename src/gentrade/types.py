@@ -18,7 +18,7 @@ from deap import base, gp, tools
 from gentrade.individual import TreeIndividualBase
 
 if TYPE_CHECKING:
-    from gentrade.algo_res import AlgorithmResult
+    from gentrade.algorithms import AlgorithmResult
     from gentrade.backtest_metrics import BacktestMetricBase
     from gentrade.classification_metrics import ClassificationMetricBase
 

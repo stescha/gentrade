@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from deap import tools
 
-from gentrade.algo_res import AlgorithmResult
+from gentrade.algorithms import AlgorithmResult
 from gentrade.island import (
     ErrorMessage,
     IslandCompletedMessage,

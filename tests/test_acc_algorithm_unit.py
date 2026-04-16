@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from deap import base, gp, tools
 
-from gentrade.acc import AccEa
+from gentrade.algorithms import AccEa
 from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.individual import PairTreeIndividual, TreeIndividual
 from gentrade.minimal_pset import create_pset_zigzag_minimal

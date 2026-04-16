@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from deap import gp
 
+from gentrade.algorithms.acc import AccEa
 from gentrade.eval_ind import BaseEvaluator, PairEvaluator
 from gentrade.individual import PairTreeIndividual
 from gentrade.optimizer.tree import BaseTreeOptimizer
@@ -105,8 +106,6 @@ class AccOptimizer(BaseTreeOptimizer):
             :class:`~gentrade.island.IslandMigration`.
         """
         # Deferred import to avoid circular dependencies.
-        from gentrade.acc import AccEa  # noqa: PLC0415
-
         algorithm = AccEa(
             mu=self.mu,
             lambda_=self.lambda_,

@@ -1,12 +1,14 @@
+from __future__ import annotations
+
 import logging
 import operator
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from deap import base, gp, tools
 
-from gentrade.algorithms import AlgorithmLifecycleHandler, EaMuPlusLambda
+from gentrade.algorithms import EaMuPlusLambda
 from gentrade.callbacks import Callback
 from gentrade.config import BacktestConfig
 from gentrade.eval_ind import BaseEvaluator, PairEvaluator, TreeEvaluator
@@ -17,7 +19,6 @@ from gentrade.individual import (
     TreeIndividualBase,
     apply_operators,
 )
-from gentrade.island import GlobalControlHandler
 from gentrade.optimizer.base import BaseOptimizer
 from gentrade.topologies import MigrationTopology, RingTopology
 from gentrade.types import (
@@ -31,6 +32,11 @@ from gentrade.types import (
     SelectionOp,
     TradeSide,
 )
+
+if TYPE_CHECKING:
+    from gentrade.algorithms import AlgorithmLifecycleHandler
+    from gentrade.island import GlobalControlHandler
+
 
 logger = logging.getLogger(__name__)
 

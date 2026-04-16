@@ -65,14 +65,12 @@ import numpy as np
 import pandas as pd
 from deap import base, tools
 
-from gentrade.algo_res import AlgorithmResult
 from gentrade.algorithms import (
     AlgorithmLifecycleHandler,
-    AlgorithmState,
-    BaseAlgorithm,
     NullAlgorithmLifecycleHandler,
-    StopEvolution,
 )
+from gentrade.algorithms.base import BaseAlgorithm, StopEvolution
+from gentrade.algorithms.state import AlgorithmResult, AlgorithmState
 from gentrade.individual import TreeIndividualBase, ensure_creator_fitness_class
 from gentrade.migration import MigrationPacket
 from gentrade.topologies import MigrationTopology

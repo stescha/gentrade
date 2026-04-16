@@ -66,7 +66,7 @@ class TestEaSmokeCreateAlgorithm:
         """create_algorithm() passes optimizer hyperparams to EaMuPlusLambda."""
         from unittest.mock import MagicMock
 
-        from gentrade.algorithms import EaMuPlusLambda
+        from gentrade.algorithms.mpl import EaMuPlusLambda
 
         labels = _zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
