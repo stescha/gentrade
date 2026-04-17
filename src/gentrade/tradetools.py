@@ -3,11 +3,13 @@ from glob import glob
 from os import path
 from typing import Literal, Optional, cast, overload
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import tables
 from deap import gp
-from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+
+from gentrade.eval_ind import TreeEvaluator
 
 DATAFOLDER = "~/PyProj/tradetools/data"
 
@@ -219,32 +221,18 @@ def get_pairs() -> list[str]:
 
 
 def plot_tree_signals(
-    tree: gp.PrimitiveTree,
+    signals: pd.Series,
     data: pd.DataFrame,
-    pset: gp.PrimitiveSetTyped,
     marker: str,
     color: str,
     ax: Optional[Axes] = None,
 ) -> None:
-    func = gp.compile(tree, pset=pset)
-    try:
-        sig = func(
-            data["open"],
-            data["high"],
-            data["low"],
-            data["close"],
-            data["volume"],
-        )
-    except Exception as exc:  # pragma: no cover - plotting convenience
-        raise RuntimeError("failed to execute tree on data") from exc
-    sig_bool = pd.Series(sig, index=data.index).astype(bool)
     if ax is None:
         ax = plt.gca()
+    ax.plot(data.index[signals], data["close"][signals], marker, color=color)
 
-    ax.plot(data.index[sig_bool], data["close"][sig_bool], marker, color=color)
 
-
-def plot_signals(
+def plot_trees(
     pset: gp.PrimitiveSetTyped,
     train_data: pd.DataFrame,
     val_data: Optional[pd.DataFrame],
@@ -252,54 +240,89 @@ def plot_signals(
     exit_tree: gp.PrimitiveTree | None = None,
     # trade_direction: int = 1,
 ) -> None:
-    """Visualise a GP signal tree against price data.
+    entry_signals_train = TreeEvaluator.compile_tree_to_signals(
+        entry_tree, pset, train_data
+    )
+    entry_signals_val = (
+        TreeEvaluator.compile_tree_to_signals(entry_tree, pset, val_data)
+        if val_data is not None
+        else None
+    )
+    exit_signals_train = (
+        TreeEvaluator.compile_tree_to_signals(exit_tree, pset, train_data)
+        if exit_tree is not None
+        else None
+    )
+    exit_signals_val = (
+        TreeEvaluator.compile_tree_to_signals(exit_tree, pset, val_data)
+        if exit_tree is not None and val_data is not None
+        else None
+    )
 
-    The close price is drawn as a line and the boolean signal produced by
-    ``tree`` is shown as markers (green upward for buy when ``buy_sell`` is
-    ``1``, red downward for sell when ``buy_sell`` is ``-1``).  If
-    ``val_data`` is provided a vertical dashed line marks the transition
-    from training to validation data.
+    plot_signals(
+        train_data,
+        entry_signals_train,
+        exit_signals_train,
+        val_data,
+        entry_signals_val,
+        exit_signals_val,
+    )
 
-    Args:
-        train_data: OHLCV DataFrame used for training.
-        val_data: Optional validation DataFrame; used only for drawing the
-            split line and to extend the signal plot when present.
-        tree: A DEAP ``PrimitiveTree`` that takes an OHLCV DataFrame and
-            returns a boolean ``pd.Series`` signal when compiled.
-        pset: The primitive set that was used to construct ``tree``.  It
-            is required for compilation.
-        buy_sell: +1 interpret ``True`` as buy signals, -1 as sell signals.
-    """
+
+def plot_signals(
+    train_data: pd.DataFrame,
+    entries_train: pd.Series,
+    exits_train: pd.Series | None = None,
+    val_data: Optional[pd.DataFrame] | None = None,
+    entries_val: pd.Series | None = None,
+    exits_val: pd.Series | None = None,
+    # trade_direction: int = 1,
+) -> None:
+    """ """
     # local import to avoid a top‑level matplotlib dependency unless used
-    import matplotlib.pyplot as plt
+    assert train_data.index.equals(entries_train.index)
+    assert exits_train is None or train_data.index.equals(exits_train.index)
+    assert (
+        val_data is None
+        or entries_val is None
+        or val_data.index.equals(entries_val.index)
+    )
+    assert (
+        val_data is None or exits_val is None or val_data.index.equals(exits_val.index)
+    )
 
     # combine data so signals cover both train and validation if available
+    if exits_train is None:
+        exits_train = pd.Series(False, index=train_data.index)
+
     if val_data is not None:
+        entries_val, exits_val = [
+            pd.Series(False, index=val_data.index) if s is None else s
+            for s in (entries_val, exits_val)
+        ]
+
         data = pd.concat([train_data, val_data])
+        entries = pd.concat([entries_train, entries_val])
+        exits = pd.concat([exits_train, exits_val])
     else:
         data = train_data
-
-    # compile and execute tree; use same interface as evaluator
-
-    # convert output to boolean Series same as _compile_tree_to_signals
+        entries = entries_train
+        exits = exits_train
 
     price = data["close"]
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(data.index, price, label="close price", color="blue", alpha=0.6)
+    ax.plot(price.index, price, label="close price", color="blue", alpha=0.6)
 
     # determine marker style based on buy_sell flag
-    if entry_tree:
-        plot_tree_signals(entry_tree, data, pset, marker="^", color="lightgreen", ax=ax)
-    if exit_tree:
-        plot_tree_signals(exit_tree, data, pset, marker="v", color="red", ax=ax)
+    ax.plot(price.index[entries], price[entries], "^", color="lightgreen")
+    ax.plot(price.index[exits], price[exits], "v", color="red")
 
-    if val_data is not None and not val_data.empty:
+    if val_data is not None:
         split_x = val_data.index[0]
         ax.axvline(x=split_x, color="k", linestyle="--", label="train/val split")
 
     ax.legend()
-    ax.set_title("Strategy signals vs close price")
     ax.set_xlabel("date")
     ax.set_ylabel("price")
     plt.tight_layout()
