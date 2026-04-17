@@ -168,7 +168,7 @@ class TradeReturnMaxLoss(CppBacktestMetricBase):
     Therefore the weight should be positive to maximize this metric.
     """
 
-    _FAIL_SCORE = -1.0
+    _FAIL_SCORE = -10.0
 
     def __call__(self, bt_result: BtResult) -> float:
         if (
@@ -183,7 +183,7 @@ class TradeReturnMaxLoss(CppBacktestMetricBase):
 class TradeReturnMedianLoss(CppBacktestMetricBase):
     """ """
 
-    _FAIL_SCORE = -1.0
+    _FAIL_SCORE = -10.0
 
     def __call__(self, bt_result: BtResult) -> float:
         if (

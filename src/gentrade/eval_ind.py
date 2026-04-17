@@ -94,8 +94,9 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
     # Shared helpers
     # ------------------------------------------------------------------
 
+    @classmethod
     def _compile_tree(
-        self, individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
+        cls, individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
     ) -> Callable[..., pd.Series]:
         """Compile a GP tree to a callable Python function.
 
@@ -120,8 +121,9 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
                 err=e,
             ) from e
 
-    def _compile_tree_to_signals(
-        self,
+    @classmethod
+    def compile_tree_to_signals(
+        cls,
         individual: gp.PrimitiveTree,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
@@ -140,7 +142,7 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
             TreeEvaluationError: On compilation failure, wrong output type, or
                 non-boolean result.
         """
-        func = self._compile_tree(individual, pset)
+        func = cls._compile_tree(individual, pset)
         raw: object = None
         try:
             raw = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
@@ -550,7 +552,7 @@ class TreeEvaluator(BaseEvaluator[TreeIndividual]):
             MetricCalculationError: If any metric returns NaN, Inf, or raises.
         """
         tree = individual.tree
-        signals = self._compile_tree_to_signals(tree, self.pset, df)
+        signals = self.compile_tree_to_signals(tree, self.pset, df)
 
         # Map labels to classification/backtest roles based on trade_side.
         class_labels: pd.Series | None
@@ -695,10 +697,8 @@ class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
             TreeEvaluationError: If tree compilation or execution fails.
             MetricCalculationError: If any metric returns NaN, Inf, or raises.
         """
-        buy_signals = self._compile_tree_to_signals(individual.buy_tree, self.pset, df)
-        sell_signals = self._compile_tree_to_signals(
-            individual.sell_tree, self.pset, df
-        )
+        buy_signals = self.compile_tree_to_signals(individual.buy_tree, self.pset, df)
+        sell_signals = self.compile_tree_to_signals(individual.sell_tree, self.pset, df)
 
         bt_result: BtResult | None = None
         pf: Any = None

@@ -14,7 +14,7 @@ import operator
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Self, Sequence, overload
 
 import numpy as np
 import pandas as pd
@@ -48,8 +48,8 @@ logger = logging.getLogger(__name__)
 
 def _normalize_data_and_labels(
     data: DataInput,
-    entry_labels: LabelInput,
-    exit_labels: LabelInput,
+    entry_labels: LabelInput | None,
+    exit_labels: LabelInput | None,
     dataset_name: str,
 ) -> tuple[
     list[pd.DataFrame], list[pd.Series] | None, list[pd.Series] | None, list[str]
@@ -310,7 +310,7 @@ class BaseOptimizer(ABC):
         self.population_: Sequence[TreeIndividualBase] = []
         self.logbook_: tools.Logbook
         self.hall_of_fame_: tools.HallOfFame
-        self.pset_: gp.PrimitiveSetTyped
+        self.pset_: gp.PrimitiveSetTyped | None = None
         self.toolbox_: base.Toolbox
         self.best_individual_: TreeIndividual | None = None
         self.duration_: float = -1
@@ -410,12 +410,12 @@ class BaseOptimizer(ABC):
     def fit(
         self,
         X: DataInput,
-        X_val: DataInput = None,
-        entry_label: LabelInput = None,
-        exit_label: LabelInput = None,
-        entry_label_val: LabelInput = None,
-        exit_label_val: LabelInput = None,
-    ) -> "BaseOptimizer":
+        X_val: DataInput | None = None,
+        entry_label: LabelInput | None = None,
+        exit_label: LabelInput | None = None,
+        entry_label_val: LabelInput | None = None,
+        exit_label_val: LabelInput | None = None,
+    ) -> Self:
         """Run GP evolution on training data and return self.
 
         Args:
@@ -449,6 +449,7 @@ class BaseOptimizer(ABC):
         self.population_ = []
         self.logbook_ = tools.Logbook()
         self.best_individual_ = None
+        self.pset_ = None
 
         # 1. Normalize and validate datasets (single call for data+labels)
         (
@@ -461,6 +462,8 @@ class BaseOptimizer(ABC):
         val_data_list: list[pd.DataFrame] = []
         val_entry_list: list[pd.Series] | None = None
         val_exit_list: list[pd.Series] | None = None
+
+        # TODO
         val_names: list[str] = []
 
         if X_val is not None:
@@ -491,6 +494,7 @@ class BaseOptimizer(ABC):
             val_needs_classification = any(
                 isinstance(m, ClassificationMetricBase) for m in val_metrics
             )
+            # TODO: Move to BaseTreeOptimizer
             trade_side = getattr(self, "trade_side", "buy")
 
             if val_needs_classification:

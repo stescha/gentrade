@@ -4,7 +4,7 @@ import logging
 import operator
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Self
 
 from deap import base, gp, tools
 
@@ -168,6 +168,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         pset: gp.PrimitiveSetTyped | Callable[[], gp.PrimitiveSetTyped],
         metrics: tuple[Metric, ...],
         backtest: BacktestConfig | None = None,
+        # TODO: Use literal
         trade_side: TradeSide = "buy",
         mutation: MutationOp[gp.PrimitiveTree] = gp.mutUniform,  # type: ignore[assignment]
         mutation_params: OperatorKwargs | None = None,
@@ -180,6 +181,7 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
         tree_min_depth: int = 2,
         tree_max_depth: int = 6,
         tree_max_height: int = 17,
+        # TODO: Move to types
         tree_gen: Literal["half_and_half", "full", "grow"] = "grow",
         # BaseOptimizer params
         mu: int = 200,
@@ -414,12 +416,12 @@ class BaseTreeOptimizer(BaseOptimizer, ABC):
     def fit(
         self,
         X: DataInput,
-        X_val: DataInput = None,
-        entry_label: LabelInput = None,
-        exit_label: LabelInput = None,
-        entry_label_val: LabelInput = None,
-        exit_label_val: LabelInput = None,
-    ) -> BaseOptimizer:
+        X_val: DataInput | None = None,
+        entry_label: LabelInput | None = None,
+        exit_label: LabelInput | None = None,
+        entry_label_val: LabelInput | None = None,
+        exit_label_val: LabelInput | None = None,
+    ) -> Self:
         """Fit the optimizer to the training data and labels."""
         ret = super().fit(
             X=X,

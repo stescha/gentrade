@@ -40,12 +40,7 @@ PopulationT = TypeVar(
     "PopulationT",
     # bound=Sequence[TreeIndividualBase] | Sequence[Sequence[TreeIndividualBase]],
 )
-# PopulationRetT = TypeVar("PopulationRetT", covariant=True)
 
-# PopulationT = TypeVar(
-#     "PopulationT",
-#     bound=Sequence[TreeIndividualBase] | Sequence[Sequence[PairTreeIndividual]],
-# )
 
 # TODO:
 T_co = TypeVar("T_co", covariant=True)
@@ -53,29 +48,10 @@ T_co = TypeVar("T_co", covariant=True)
 OperatorKwargs = Dict[str, Any]
 
 
-DataInput = pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame] | None
-LabelInput = pd.Series | dict[str, pd.Series] | list[pd.Series] | None
-
-# IndividualRetT = TypeVar("IndividualRetT", covariant=True, bound=TreeIndividualBase)
+DataInput = pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame]
+LabelInput = pd.Series | dict[str, pd.Series] | list[pd.Series]
 
 PairTreeComponent = gp.PrimitiveTree
-
-
-# class AlgorithmResult(Protocol[IndividualRetT]):
-#     @cached_property
-#     def population(self) -> Sequence[IndividualRetT]: ...
-
-#     @cached_property
-#     def logbook(self) -> tools.Logbook: ...
-
-#     @cached_property
-#     def halloffame(self) -> tools.HallOfFame | None: ...
-
-#     @cached_property
-#     def best_individual(self) -> IndividualRetT | None:
-#         if self.halloffame and len(self.halloffame) > 0:
-#             return cast(IndividualRetT, self.halloffame[0])
-#         return None
 
 
 class Algorithm(Protocol[IndividualT]):
