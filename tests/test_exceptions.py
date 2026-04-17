@@ -13,8 +13,8 @@ from deap import gp
 from deap import gp as deap_gp
 
 from gentrade.backtest_metrics import (
-    SharpeRatioMetric,
-    VbtBacktestMetricBase,
+    CppBacktestMetricBase,
+    TradeReturnMean,
 )
 from gentrade.classification_metrics import ClassificationMetricBase, F1Metric
 from gentrade.config import BacktestConfig
@@ -82,7 +82,7 @@ class TestTreeEvaluationError:
         """Empty PrimitiveTree raises TreeEvaluationError (backtest path)."""
         individual = TreeIndividual([gp.PrimitiveTree([])], weights=(1.0,))
         evaluator = TreeEvaluator(
-            pset=pset, backtest=BacktestConfig(), metrics=(SharpeRatioMetric(),)
+            pset=pset, backtest=BacktestConfig(), metrics=(TradeReturnMean(),)
         )
         with pytest.raises(TreeEvaluationError) as excinfo:
             evaluator.evaluate(individual, ohlcvs=[df], exit_labels=[labels])
@@ -132,8 +132,8 @@ class TestMetricCalculationError:
         )
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
-        assert excinfo.value.tree is valid_individual.tree
-        assert excinfo.value.metric is not None
+        assert excinfo.value.individual is valid_individual
+        assert excinfo.value._metric is not None
         assert "non-finite" in str(excinfo.value).lower()
 
     def test_inf_classification_metric_raises(
@@ -189,7 +189,7 @@ class TestMetricCalculationError:
         evaluator = TreeEvaluator(pset=pset, metrics=(_NanMetric(),))
         with pytest.raises(MetricCalculationError) as excinfo:
             evaluator.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
-        assert excinfo.value.signals is not None
+        assert excinfo.value._signals is not None
 
     def test_nan_backtest_metric_raises(
         self,
@@ -200,7 +200,7 @@ class TestMetricCalculationError:
     ) -> None:
         """Backtest evaluator raises MetricCalculationError for NaN result."""
 
-        class _NanMetric(VbtBacktestMetricBase):
+        class _NanMetric(CppBacktestMetricBase):
             def __call__(self, pf: object) -> float:
                 return float("nan")
 

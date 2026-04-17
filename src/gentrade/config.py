@@ -23,7 +23,7 @@ Extending with new components:
 """
 
 import re
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, Self, cast
+from typing import Any, Callable, ClassVar, Literal, Self, cast
 
 import pandas as pd
 from deap import gp, tools
@@ -36,14 +36,8 @@ from pydantic import (
     model_validator,
 )
 
-from gentrade.backtest_metrics import (
-    CalmarRatioMetric,
-    MeanPnlMetric,
-    SharpeRatioMetric,
-    SortinoRatioMetric,
-    TotalReturnMetric,
-    TradeReturnMean,
-)
+from gentrade.backtest import BtResult
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.classification_metrics import (
     BalancedAccuracyMetric,
     F1Metric,
@@ -60,10 +54,6 @@ from gentrade.minimal_pset import (
     create_pset_zigzag_large,
     create_pset_zigzag_medium,
 )
-
-if TYPE_CHECKING:
-    import vectorbt as vbt
-
 
 # -- Helpers ----------------------------------------------------
 
@@ -136,11 +126,15 @@ class BacktestConfig(_ComponentConfig):
 
     _type_suffix: ClassVar[str] = "Config"
 
-    tp_stop: float = Field(0.02, gt=0.0, le=1.0, description="Take-profit fraction")
-    sl_stop: float = Field(0.01, gt=0.0, le=1.0, description="Stop-loss fraction")
-    sl_trail: bool = Field(True, description="Use trailing stop-loss")
+    tp_stop: float | None = Field(
+        None, gt=0.0, le=1.0, description="Take-profit fraction"
+    )
+    sl_stop: float | None = Field(
+        None, gt=0.0, le=1.0, description="Stop-loss fraction"
+    )
+    sl_trail: bool | None = Field(False, description="Use trailing stop-loss")
     fees: float = Field(0.001, ge=0.0, description="Trading fee fraction")
-    init_cash: float = Field(100_000.0, gt=0.0, description="Initial portfolio cash")
+    # init_cash: float = Field(100_000.0, gt=0.0, description="Initial portfolio cash")
 
 
 # -- Metric configs (callable) ----------------------------------
@@ -209,19 +203,7 @@ class CppBacktestMetricConfigBase(BacktestMetricConfigBase):
     single float score.
     """
 
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        raise NotImplementedError
-
-
-class VbtBacktestMetricConfigBase(BacktestMetricConfigBase):
-    """Config base for VectorBT-backed metrics.
-
-    Implementations receive a ``vbt.Portfolio`` instance and should
-    return a single float score. This separates VectorBT-based metrics
-    from the lightweight C++ metric configs.
-    """
-
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
+    def __call__(self, result: BtResult) -> float:
         raise NotImplementedError
 
 
@@ -280,45 +262,10 @@ class JaccardMetricConfig(ClassificationMetricConfigBase):
         return JaccardMetric()(y_true, y_pred)
 
 
-class SharpeMetricConfig(VbtBacktestMetricConfigBase):
-    """Sharpe ratio: risk-adjusted return."""
-
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return SharpeRatioMetric(min_trades=self.min_trades)(portfolio)
-
-
-class SortinoMetricConfig(VbtBacktestMetricConfigBase):
-    """Sortino ratio: downside risk-adjusted return."""
-
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return SortinoRatioMetric(min_trades=self.min_trades)(portfolio)
-
-
-class CalmarMetricConfig(VbtBacktestMetricConfigBase):
-    """Calmar ratio: annualised return divided by maximum drawdown."""
-
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return CalmarRatioMetric(min_trades=self.min_trades)(portfolio)
-
-
-class TotalReturnMetricConfig(VbtBacktestMetricConfigBase):
-    """Total return: cumulative portfolio return over the evaluation period."""
-
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return TotalReturnMetric(min_trades=self.min_trades)(portfolio)
-
-
-class MeanPnlMetricConfig(VbtBacktestMetricConfigBase):
-    """Mean PnL: average profit and loss per closed trade."""
-
-    def __call__(self, portfolio: "vbt.Portfolio") -> float:
-        return MeanPnlMetric(min_trades=self.min_trades)(portfolio)
-
-
-class MeanPnlCppMetricConfig(CppBacktestMetricConfigBase):
+class TradeReturnMeanMetricConfig(CppBacktestMetricConfigBase):
     """Configuration wrapper for the C++ Mean PnL metric.
 
-    Delegates to ``MeanPnlCppMetric`` which operates on a ``BtResult``.
+    Delegates to ``TradeReturnMean`` which operates on a ``BtResult``.
     """
 
     """Mean PnL: average profit and loss per closed trade."""

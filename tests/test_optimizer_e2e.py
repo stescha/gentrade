@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from deap import tools
 
-from gentrade.backtest_metrics import MeanPnlMetric, TradeReturnMean
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import (
     BacktestConfig,
@@ -109,7 +109,7 @@ class TestE2ECppBacktestSingleObjective:
     """E2E tests for C++ backtest single-objective optimization."""
 
     def test_evolution_completes_cpp(self) -> None:
-        """fit() with MeanPnlCppMetric completes."""
+        """fit() with TradeReturnMean completes."""
         df = generate_synthetic_ohlcv(2000, 42)
         labels = _get_zigzag_labels(df)
 
@@ -126,8 +126,8 @@ class TestE2ECppBacktestSingleObjective:
         opt.fit(df, entry_label=labels, exit_label=labels)
         assert len(opt.population_) == 30
 
-    def test_with_vbt_validation(self) -> None:
-        """Passing VBT metric in metrics_val runs validation callback."""
+    def test_with_cpp_validation(self) -> None:
+        """Passing C++ metric in metrics_val runs validation callback."""
         df = generate_synthetic_ohlcv(2000, 42)
         labels = _get_zigzag_labels(df)
 
@@ -138,8 +138,8 @@ class TestE2ECppBacktestSingleObjective:
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
             metrics=(TradeReturnMean(min_trades=0),),
-            metrics_val=(MeanPnlMetric(min_trades=0),),
-            # VBT metric: no labels needed for validation
+            metrics_val=(TradeReturnMean(min_trades=0),),
+            # C++ metric: no labels needed for validation
             backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
             selection=tools.selBest,  # type: ignore[arg-type]
             mu=20,
@@ -148,7 +148,7 @@ class TestE2ECppBacktestSingleObjective:
             seed=42,
             verbose=False,
         )
-        # VBT metrics don't need labels for validation
+        # C++ metrics don't need labels for validation
         opt.fit(
             train_df, entry_label=train_labels, exit_label=train_labels, X_val=val_df
         )

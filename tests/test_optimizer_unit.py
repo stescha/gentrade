@@ -1,7 +1,7 @@
 import pytest
 from deap import gp, tools
 
-from gentrade.backtest_metrics import MeanPnlMetric
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import BacktestConfig
 from gentrade.minimal_pset import create_pset_zigzag_minimal
@@ -19,8 +19,8 @@ def classification_metric() -> F1Metric:
 
 
 @pytest.fixture
-def backtest_metric() -> MeanPnlMetric:
-    return MeanPnlMetric()
+def backtest_metric() -> TradeReturnMean:
+    return TradeReturnMean()
 
 
 @pytest.mark.unit
@@ -100,7 +100,7 @@ def test_tree_optimizer_init(
 def test_tree_optimizer_selection_validation(
     pset: gp.PrimitiveSetTyped,
     classification_metric: F1Metric,
-    backtest_metric: MeanPnlMetric,
+    backtest_metric: TradeReturnMean,
 ) -> None:
     """Test validation of selection operators against objective counts."""
     # Single objective with Tournament selection should pass

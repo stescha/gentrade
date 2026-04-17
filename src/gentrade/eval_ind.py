@@ -24,11 +24,10 @@ from typing import (
 
 import numpy as np
 import pandas as pd
-import vectorbt as vbt
 from deap import gp
 
 from gentrade.backtest import BtResult, backtest_signals_cpp
-from gentrade.backtest_metrics import CppBacktestMetricBase, VbtBacktestMetricBase
+from gentrade.backtest_metrics import CppBacktestMetricBase
 from gentrade.classification_metrics import ClassificationMetricBase
 from gentrade.config import BacktestConfig
 from gentrade.exceptions import MetricCalculationError, TreeEvaluationError
@@ -75,33 +74,35 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
         self._needs_backtest: bool = any(
             isinstance(m, CppBacktestMetricBase) for m in metrics
         )
-        self._needs_backtest_vbt: bool = any(
-            isinstance(m, VbtBacktestMetricBase) for m in metrics
-        )
         self._needs_classification: bool = any(
             isinstance(m, ClassificationMetricBase) for m in metrics
         )
         # _needs_labels is True if any metric requires ground-truth labels
         self._needs_labels: bool = any(
-            isinstance(m, (ClassificationMetricBase, CppBacktestMetricBase))
-            for m in metrics
+            isinstance(m, (ClassificationMetricBase)) for m in metrics
         )
 
-        if (self._needs_backtest or self._needs_backtest_vbt) and self.backtest is None:
+        if self._needs_backtest and self.backtest is None:
             raise ValueError("Backtest configuration is required for backtest metrics.")
+
+    @property
+    def is_sltp_set(self) -> bool:
+        """Check if stop-loss or take-profit parameters are set in the backtest config."""
+        return self.backtest is not None and (
+            bool(self.backtest.sl_stop) or bool(self.backtest.tp_stop)
+        )
 
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
-
     @classmethod
-    def _compile_tree(
-        cls, individual: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
+    def compile_tree(
+        cls, tree: gp.PrimitiveTree, pset: gp.PrimitiveSetTyped
     ) -> Callable[..., pd.Series]:
         """Compile a GP tree to a callable Python function.
 
         Args:
-            individual: GP tree to compile.
+            tree: GP tree to compile.
             pset: Primitive set for compilation.
 
         Returns:
@@ -112,26 +113,26 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
             TreeEvaluationError: On compilation failure.
         """
         try:
-            func = gp.compile(individual, pset)
+            func = gp.compile(tree, pset)
             return cast(Callable[..., pd.Series], func)
         except Exception as e:
             raise TreeEvaluationError(
                 "Failed to compile tree.",
-                tree=individual,
+                tree=tree,
                 err=e,
             ) from e
 
     @classmethod
     def compile_tree_to_signals(
         cls,
-        individual: gp.PrimitiveTree,
+        tree: gp.PrimitiveTree,
         pset: gp.PrimitiveSetTyped,
         df: pd.DataFrame,
     ) -> pd.Series:
         """Compile and execute a GP tree on OHLCV data.
 
         Args:
-            individual: GP tree to compile.
+            tree: GP tree to compile.
             pset: Primitive set for compilation.
             df: OHLCV DataFrame providing the input arrays.
 
@@ -142,14 +143,14 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
             TreeEvaluationError: On compilation failure, wrong output type, or
                 non-boolean result.
         """
-        func = cls._compile_tree(individual, pset)
+        func = cls.compile_tree(tree, pset)
         raw: object = None
         try:
             raw = func(df["open"], df["high"], df["low"], df["close"], df["volume"])
         except Exception as e:
             raise TreeEvaluationError(
                 "Failed to execute tree.",
-                tree=individual,
+                tree=tree,
                 err=e,
             ) from e
 
@@ -160,107 +161,51 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
         if not isinstance(raw, pd.Series):
             raise TreeEvaluationError(
                 f"Expected tree execution to return a pd.Series, got {type(raw)}",
-                tree=individual,
+                tree=tree,
             )
 
         if not pd.api.types.is_bool_dtype(raw):
             raise TreeEvaluationError(
                 f"Expected boolean Series, got dtype {raw.dtype}",
-                tree=individual,
+                tree=tree,
                 signals=raw,
             )
 
         return raw
 
-    def run_vbt_backtest(
-        self,
-        individual: gp.PrimitiveTree,
-        ohlcv: pd.DataFrame,
-        entries: pd.Series,
-        exits: pd.Series | None = None,
-    ) -> vbt.Portfolio:
-        """Run a vectorbt backtest from entry signals and stop parameters.
-
-        Args:
-            individual: GP tree that produced the signals.
-            ohlcv: OHLCV DataFrame with open, high, low, close columns.
-            entries: Boolean buy signal series.
-            exits: Optional boolean sell/exit signal series.
-
-        Returns:
-            VectorBT Portfolio object.
-
-        Raises:
-            TreeEvaluationError: On backtest execution failure.
-        """
-        if self.backtest is None:
-            raise ValueError("Backtest configuration is required for backtest metrics.")
-
-        try:
-            return vbt.Portfolio.from_signals(
-                close=ohlcv["close"],
-                open=ohlcv["open"],
-                high=ohlcv["high"],
-                low=ohlcv["low"],
-                entries=entries,
-                exits=exits,
-                tp_stop=self.backtest.tp_stop,
-                sl_stop=self.backtest.sl_stop,
-                sl_trail=self.backtest.sl_trail,
-                size=1.0,
-                accumulate=False,
-                fees=self.backtest.fees,
-                init_cash=self.backtest.init_cash,
-            )
-        except Exception as e:
-            raise TreeEvaluationError(
-                f"Failed to run backtest: {e}",
-                tree=individual,
-                signals=entries,
-                err=e,
-            ) from e
-
     def run_cpp_backtest(
         self,
-        individual: gp.PrimitiveTree,
         ohlcv: pd.DataFrame,
         entries: pd.Series,
-        exits: pd.Series,
+        exits: pd.Series | None,
     ) -> BtResult:
-        """Run the C++ backtest and return a lightweight result wrapper.
+        """Run the C++ SL/TP backtest and return a lightweight result wrapper.
 
         Args:
-            individual: GP tree that produced the entry signals.
             ohlcv: OHLCV DataFrame with open, high columns.
             entries: Boolean entry signal series.
-            exits: Boolean exit signal series.
+            exits: Optional boolean exit signal series.
 
         Returns:
             :class:`BtResult` wrapping C++ backtest outputs.
 
         Raises:
             ValueError: If no backtest configuration is provided.
-            TreeEvaluationError: On C++ execution failure.
+            CppEvaluationError: If the C++ backtest fails for any reason.
         """
         if self.backtest is None:
             raise ValueError("Backtest configuration is required for backtest metrics.")
 
-        try:
-            return backtest_signals_cpp(
-                ohlcv,
-                entries,
-                exits,
-                self.backtest.fees,
-                self.backtest.fees,
-            )
-
-        except Exception as e:
-            raise TreeEvaluationError(
-                f"Failed to run C++ backtest: {e}",
-                tree=individual,
-                signals=entries,
-                err=e,
-            ) from e
+        return backtest_signals_cpp(
+            ohlcv,
+            entries,
+            exits,
+            self.backtest.fees,
+            self.backtest.fees,
+            tp_stop=self.backtest.tp_stop,
+            sl_stop=self.backtest.sl_stop,
+            sl_trail=self.backtest.sl_trail,
+        )
 
     def aggregate_fitness(
         self, fitnesses: list[tuple[float, ...]]
@@ -301,6 +246,34 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
             )
         if exit_labels is not None and len(exit_labels) != len(ohlcvs):
             raise ValueError("Length of exit_labels list must match number of datasets")
+
+    def _calc_classification_metric(
+        self,
+        metric: ClassificationMetricBase,
+        entries: pd.Series | None = None,
+        exits: pd.Series | None = None,
+        entry_true: pd.Series | None = None,
+        exit_true: pd.Series | None = None,
+    ) -> float:
+        """Calculate a classification metric and handle exceptions."""
+        results = []
+        if entry_true is not None and entries is not None:
+            results.append(metric(entry_true, entries))
+        if exit_true is not None and exits is not None:
+            results.append(metric(exit_true, exits))
+        if not results:
+            raise ValueError(
+                "No valid label pairs provided for classification metric."
+                "Either entry_true/entries or exit_true/exits must be "
+                "provided."
+            )
+        if len(results) == 1:
+            return results[0]
+        return _apply_tree_aggregation(
+            buy_metric=results[0],
+            sell_metric=results[1],
+            tree_agg=metric.tree_aggregation,
+        )
 
     # ------------------------------------------------------------------
     # Abstract interface
@@ -358,6 +331,61 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
     # ------------------------------------------------------------------
     # Concrete orchestration
     # ------------------------------------------------------------------
+
+    def eval_signals(
+        self,
+        df: pd.DataFrame,
+        *,
+        entries: pd.Series | None = None,
+        exits: pd.Series | None = None,
+        classification_entries: pd.Series | None = None,
+        classification_exits: pd.Series | None = None,
+        entry_true: pd.Series | None = None,
+        exit_true: pd.Series | None = None,
+    ) -> tuple[float, ...]:
+        """ """
+        bt_result: BtResult | None = None
+        if self._needs_backtest:
+            # Prevalidated
+            assert entries is not None
+            bt_result = self.run_cpp_backtest(df, entries, exits)
+
+        result: list[float] = []
+        for m in self.metrics:
+            try:
+                if isinstance(m, ClassificationMetricBase):
+                    val = self._calc_classification_metric(
+                        m,
+                        classification_entries,
+                        classification_exits,
+                        entry_true,
+                        exit_true,
+                    )
+
+                elif isinstance(m, CppBacktestMetricBase):
+                    assert bt_result is not None
+                    val = m(bt_result)
+                    assert val is not None
+                else:
+                    raise TypeError(f"Unsupported metric type: {type(m).__name__}.")
+            except Exception as e:
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} calculation failed.",
+                    metric=m,
+                    signals=(entries, exits, entry_true, exit_true),
+                    err=e,
+                ) from e
+
+            if not np.isfinite(val):
+                raise MetricCalculationError(
+                    f"Metric {type(m).__name__} returned non-finite value.",
+                    metric=m,
+                    value=val,
+                    signals=(entries, exits, entry_true, exit_true),
+                )
+            result.append(float(val))
+
+        return tuple(result)
 
     @overload
     def evaluate(
@@ -431,6 +459,7 @@ class BaseEvaluator(ABC, Generic[IndividualT]):
         return self.aggregate_fitness(results) if aggregate else results
 
 
+# TODO: Transfer to metric class.
 def _apply_tree_aggregation(
     buy_metric: float,
     sell_metric: float,
@@ -515,18 +544,16 @@ class TreeEvaluator(BaseEvaluator[TreeIndividual]):
                     "when trade_side='sell'."
                 )
 
-        # Only C++ backtest requires explicit exit/entry labels; VBT uses
-        # stop-loss/take-profit from BacktestConfig and does not need labels.
-        if self._needs_backtest:
+        if self._needs_backtest and not self.is_sltp_set:
             if self.trade_side == "buy" and exit_labels is None:
                 raise ValueError(
                     "exit_labels must be provided for C++ backtest metrics "
-                    "when trade_side='buy'."
+                    "when trade_side='buy' and no SL/TP parameters are set."
                 )
             if self.trade_side == "sell" and entry_labels is None:
                 raise ValueError(
                     "entry_labels must be provided for C++ backtest metrics "
-                    "when trade_side='sell'."
+                    "when trade_side='sell' and no SL/TP parameters are set."
                 )
 
     def _eval_dataset(
@@ -555,64 +582,33 @@ class TreeEvaluator(BaseEvaluator[TreeIndividual]):
         signals = self.compile_tree_to_signals(tree, self.pset, df)
 
         # Map labels to classification/backtest roles based on trade_side.
-        class_labels: pd.Series | None
         backtest_exits: pd.Series | None
         backtest_entries: pd.Series | None
         if self.trade_side == "buy":
             # buy: signals = entries; exit_true = exits for backtest
-            class_labels = entry_true
             backtest_exits = exit_true
             backtest_entries = signals
         else:
-            # sell: signals = exits; entry_true = entries for backtest
-            class_labels = exit_true
             backtest_exits = signals
+            if entry_true is None:
+                raise ValueError(
+                    "entry_true labels are required for backtest metrics when trade_side='sell'."
+                )
             backtest_entries = entry_true
 
-        bt_result: BtResult | None = None
-        pf: vbt.Portfolio | None = None
-        if self._needs_backtest:
-            assert backtest_entries is not None
-            assert backtest_exits is not None
-            bt_result = self.run_cpp_backtest(
-                tree, df, backtest_entries, backtest_exits
+        try:
+            return self.eval_signals(
+                df,
+                entries=backtest_entries,
+                exits=backtest_exits,
+                classification_entries=signals if self.trade_side == "buy" else None,
+                classification_exits=signals if self.trade_side == "sell" else None,
+                entry_true=entry_true,
+                exit_true=exit_true,
             )
-        if self._needs_backtest_vbt:
-            assert backtest_entries is not None
-            pf = self.run_vbt_backtest(tree, df, backtest_entries, backtest_exits)
-
-        result: list[float] = []
-        for m in self.metrics:
-            try:
-                if isinstance(m, ClassificationMetricBase):
-                    assert class_labels is not None
-                    val = m(class_labels, signals)
-                elif isinstance(m, CppBacktestMetricBase):
-                    val = m(bt_result)
-                elif isinstance(m, VbtBacktestMetricBase):
-                    val = m(pf)
-                else:
-                    raise TypeError(f"Unsupported metric type: {type(m).__name__}.")
-            except Exception as e:
-                raise MetricCalculationError(
-                    f"Metric {type(m).__name__} calculation failed.",
-                    tree=tree,
-                    metric=m,
-                    signals=signals,
-                    err=e,
-                ) from e
-
-            if not np.isfinite(val):
-                raise MetricCalculationError(
-                    f"Metric {type(m).__name__} returned non-finite value.",
-                    tree=tree,
-                    metric=m,
-                    value=val,
-                    signals=signals,
-                )
-            result.append(float(val))
-
-        return tuple(result)
+        except MetricCalculationError as e:
+            e.individual = individual
+            raise e
 
 
 class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
@@ -669,8 +665,6 @@ class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
                         "statistical aggregations."
                     )
 
-        # Backtest metrics use the two tree signals directly — no label override.
-
     def _eval_dataset(
         self,
         individual: PairTreeIndividual,
@@ -706,13 +700,7 @@ class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
             # TODO: Both run_*_backtest calls receive buy_tree for error reporting.
             # The tree argument is only used in error messages, not for computation.
             # A future task should pass the individual itself or both trees.
-            bt_result = self.run_cpp_backtest(
-                individual.buy_tree, df, buy_signals, sell_signals
-            )
-        if self._needs_backtest_vbt:
-            pf = self.run_vbt_backtest(
-                individual.buy_tree, df, buy_signals, sell_signals
-            )
+            bt_result = self.run_cpp_backtest(df, buy_signals, sell_signals)
 
         result: list[float] = []
         for m in self.metrics:
@@ -732,15 +720,14 @@ class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
                         assert exit_true is not None
                         val = m(exit_true, sell_signals)
                 elif isinstance(m, CppBacktestMetricBase):
+                    assert bt_result is not None
                     val = m(bt_result)
-                elif isinstance(m, VbtBacktestMetricBase):
-                    val = m(pf)
                 else:
                     raise TypeError(f"Unsupported metric type: {type(m).__name__}.")
             except Exception as e:
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} calculation failed.",
-                    tree=individual.buy_tree,
+                    individual=individual,
                     metric=m,
                     signals=buy_signals,
                     err=e,
@@ -749,7 +736,7 @@ class PairEvaluator(BaseEvaluator[PairTreeIndividual]):
             if not np.isfinite(val):
                 raise MetricCalculationError(
                     f"Metric {type(m).__name__} returned non-finite value.",
-                    tree=individual.buy_tree,
+                    individual=individual,
                     metric=m,
                     value=val,
                     signals=buy_signals,

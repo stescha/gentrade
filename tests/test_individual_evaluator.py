@@ -17,9 +17,8 @@ import pytest
 from deap import gp as deap_gp
 
 from gentrade.backtest_metrics import (
-    SharpeRatioMetric,
+    CppBacktestMetricBase,
     TradeReturnMean,
-    VbtBacktestMetricBase,
 )
 from gentrade.classification_metrics import (
     ClassificationMetricBase,
@@ -87,7 +86,7 @@ class _ConstClassMetric(ClassificationMetricBase):
         return self._value
 
 
-class _ConstBacktestMetric(VbtBacktestMetricBase):
+class _ConstBacktestMetric(CppBacktestMetricBase):
     """Always returns a fixed constant value regardless of portfolio."""
 
     def __init__(self, value: float = 0.5) -> None:
@@ -111,14 +110,14 @@ class TestConstructorFlags:
         """Only classification metrics → _needs_labels=True, _needs_backtest=False."""
         ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
         assert ev._needs_labels is True
-        assert ev._needs_backtest_vbt is False
+        assert ev._needs_backtest is False
 
     def test_pure_backtest_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
         """Only backtest metrics → _needs_backtest=True, _needs_labels=False."""
         ev = TreeEvaluator(
-            pset=pset, backtest=BacktestConfig(), metrics=(SharpeRatioMetric(),)
+            pset=pset, backtest=BacktestConfig(), metrics=(TradeReturnMean(),)
         )
-        assert ev._needs_backtest_vbt is True
+        assert ev._needs_backtest is True
         assert ev._needs_labels is False
 
     def test_mixed_flags(self, pset: deap_gp.PrimitiveSetTyped) -> None:
@@ -128,7 +127,7 @@ class TestConstructorFlags:
             backtest=BacktestConfig(),
             metrics=(_ConstClassMetric(), _ConstBacktestMetric()),
         )
-        assert ev._needs_backtest_vbt is True
+        assert ev._needs_backtest is True
         assert ev._needs_labels is True
 
     def test_backtest_params_stored(self, pset: deap_gp.PrimitiveSetTyped) -> None:
@@ -142,7 +141,7 @@ class TestConstructorFlags:
         )
         ev = TreeEvaluator(
             pset=pset,
-            metrics=(SharpeRatioMetric(),),
+            metrics=(TradeReturnMean(),),
             backtest=backtest,
         )
         assert ev.backtest is backtest
@@ -150,7 +149,6 @@ class TestConstructorFlags:
         assert ev.backtest.sl_stop == 0.02
         assert ev.backtest.sl_trail is False
         assert ev.backtest.fees == 0.0005
-        assert ev.backtest.init_cash == 50_000.0
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +316,7 @@ class TestDictEvaluation:
         """List backtest input: fitness is the mean across all dataset scores."""
         call_count = 0
 
-        class _CountingMetric(VbtBacktestMetricBase):
+        class _CountingMetric(CppBacktestMetricBase):
             def __call__(self, pf: object) -> float:
                 nonlocal call_count
                 call_count += 1
@@ -342,7 +340,7 @@ class TestDictEvaluation:
 
 @pytest.mark.unit
 class TestBacktestGating:
-    """run_vbt_backtest is only called when backtest metrics are present."""
+    """run_cpp_backtest is only called when backtest metrics are present."""
 
     def test_backtest_not_called_for_classification_only(
         self,
@@ -351,8 +349,8 @@ class TestBacktestGating:
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
-        """run_vbt_backtest is never invoked for a classification-only evaluator."""
-        with patch.object(TreeEvaluator, "run_vbt_backtest") as mock_bt:
+        """run_cpp_backtest is never invoked for a classification-only evaluator."""
+        with patch.object(TreeEvaluator, "run_cpp_backtest") as mock_bt:
             ev = TreeEvaluator(pset=pset, metrics=(F1Metric(),))
             ev.evaluate(valid_individual, ohlcvs=[df], entry_labels=[labels])
         mock_bt.assert_not_called()
@@ -364,8 +362,8 @@ class TestBacktestGating:
         df: pd.DataFrame,
         labels: pd.Series,
     ) -> None:
-        """run_vbt_backtest is called exactly once even with two backtest metrics."""
-        with patch.object(TreeEvaluator, "run_vbt_backtest") as mock_bt:
+        """run_cpp_backtest is called exactly once even with two backtest metrics."""
+        with patch.object(TreeEvaluator, "run_cpp_backtest") as mock_bt:
             ev = TreeEvaluator(
                 pset=pset,
                 backtest=BacktestConfig(),

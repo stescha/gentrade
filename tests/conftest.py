@@ -4,10 +4,7 @@ import pandas as pd
 import pytest
 from deap import gp, tools
 
-from gentrade.backtest_metrics import (
-    SharpeRatioMetric,
-    TradeReturnMean,
-)
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import (
     BacktestConfig,
@@ -97,7 +94,7 @@ def opt_backtest_unit() -> TreeOptimizer:
     """Minimal TreeOptimizer with Sharpe backtest fitness for unit-level tests."""
     return TreeOptimizer(
         pset=create_pset_zigzag_medium,
-        metrics=(SharpeRatioMetric(),),
+        metrics=(TradeReturnMean(),),
         backtest=BacktestConfig(),
         mu=10,
         lambda_=20,

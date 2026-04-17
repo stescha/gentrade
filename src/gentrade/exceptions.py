@@ -5,13 +5,58 @@ These exceptions preserve the full context (individual tree, signals, etc.)
 for debugging and allow the caller to decide how to handle failures.
 """
 
-from typing import Any
-
 import pandas as pd
 from deap import gp
 
+from gentrade.individual import TreeIndividualBase
+from gentrade.types import Metric
 
-class TreeErrorBase(Exception):
+
+class GentradeError(Exception):
+    """Base class for all gentrade exceptions."""
+
+    pass
+
+
+class CppEvaluationError(GentradeError):
+    def __init__(
+        self,
+        ohlcv: pd.DataFrame,
+        entries: pd.Series,
+        exits: pd.Series | None,
+        entry_fee: float,
+        exit_fee: float,
+        *,
+        tp_stop: float | None = None,
+        sl_stop: float | None = None,
+        sl_trail: bool | None = None,
+    ) -> None:
+        self.ohlcv = ohlcv
+        self.entries = entries
+        self.exits = exits
+        self.entry_fee = entry_fee
+        self.exit_fee = exit_fee
+        self.tp_stop = tp_stop
+        self.sl_stop = sl_stop
+        self.sl_trail = sl_trail
+
+        super().__init__(self._format_message())
+
+    def _format_message(self) -> str:
+        return (
+            "C++ backtest failed with the following parameters:\n"
+            f"OHLCV shape: {self.ohlcv.shape}\n"
+            f"Entries count: {self.entries.sum()}\n"
+            f"Exits count: {self.exits.sum() if self.exits is not None else 'N/A'}\n"
+            f"Entry fee: {self.entry_fee}\n"
+            f"Exit fee: {self.exit_fee}\n"
+            f"TP stop: {self.tp_stop}\n"
+            f"SL stop: {self.sl_stop}\n"
+            f"SL trail: {self.sl_trail}"
+        )
+
+
+class TreeErrorBase(GentradeError):
     """Base class for tree related exceptions.
 
     Attributes:
@@ -65,7 +110,7 @@ class TreeEvaluationError(TreeErrorBase):
     """
 
 
-class MetricCalculationError(TreeErrorBase):
+class MetricCalculationError(GentradeError):
     """Raised when metric calculation fails or returns invalid result.
 
     Attributes:
@@ -79,10 +124,10 @@ class MetricCalculationError(TreeErrorBase):
         self,
         message: str,
         *,
-        tree: gp.PrimitiveTree | None = None,
-        metric: Any | None = None,
+        individual: TreeIndividualBase | None = None,
+        metric: Metric | None = None,
         value: float | int | None = None,
-        signals: pd.Series | None = None,
+        signals: pd.Series | tuple[pd.Series | None, ...] | None = None,
         err: Exception | None = None,
     ) -> None:
         """Initialize MetricCalculationError.
@@ -94,16 +139,33 @@ class MetricCalculationError(TreeErrorBase):
             value: The calculated metric value.
             signals: The entry signals used for evaluation.
         """
-        message = self._append_value_info_to_message(message, value)
-        super().__init__(message, tree=tree, signals=signals, err=err)
-        self.tree = tree
-        self.metric = metric
-        self.value = value
-        self.signals = signals
+        self._message = message
+        self._individual = individual
+        self._metric = metric
+        self._value = value
+        self._signals = signals
+        self._err = err
 
-    def _append_value_info_to_message(
-        self, message: str, value: float | int | None
-    ) -> str:
-        """Append metric value information to the error message."""
-        # Always print value, even if it's None, to provide full context for debugging
-        return f"{message}\nCalculated value: {value}"
+    @property
+    def individual(self) -> TreeIndividualBase | None:
+        """The individual whose evaluation caused the error."""
+        return self._individual
+
+    @individual.setter
+    def individual(self, value: TreeIndividualBase) -> None:
+        """Set the individual after initialization."""
+        self._individual = value
+
+    def __str__(self) -> str:
+        return self._format_message()
+
+    def _format_message(self) -> str:
+        """Format the error message with individual and error details."""
+        msgs = [
+            self._message,
+            f"Individual: {self._individual}",
+            f"Metric: {self._metric}",
+            f"Value: {self._value}",
+            f"Signals: {self._signals}",
+        ]
+        return "\n".join(msgs)

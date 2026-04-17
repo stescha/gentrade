@@ -121,7 +121,7 @@ class TestPairEvaluatorConstructor:
         """Classification metric sets _needs_classification=True."""
         ev = PairEvaluator(pset=pset, metrics=(F1Metric(),))
         assert ev._needs_classification is True
-        assert ev._needs_backtest_vbt is False
+        assert ev._needs_backtest is False
 
 
 # ---------------------------------------------------------------------------

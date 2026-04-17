@@ -5,18 +5,16 @@ portfolio with take-profit and stop-loss exits using vectorbt.
 ``BacktestMetricBase`` defines the callable interface; subclasses implement
 metric extraction from the resulting portfolio.
 
-``run_vbt_backtest`` is the sole entry point for the simulation. It accepts
-OHLCV data, boolean entry signals, and stop parameters, and returns a
-vectorbt ``Portfolio`` object ready for metric extraction.
 """
 
+from abc import ABC, abstractmethod
+
 import numpy as np
-import vectorbt as vbt
 
 from gentrade.backtest import BtResult
 
 
-class BacktestMetricBase:
+class BacktestMetricBase(ABC):
     """Abstract base for backtest metric functions.
 
     Callable interface: ``metric_fn(portfolio) -> float``.
@@ -38,7 +36,8 @@ class BacktestMetricBase:
         self.min_trades = min_trades
         self.weight = weight
 
-    def __call__(self, portfolio: vbt.Portfolio) -> float:
+    @abstractmethod
+    def __call__(self, bt_result: BtResult) -> float:
         """Compute metric score from a backtest portfolio.
 
         Args:
@@ -47,7 +46,7 @@ class BacktestMetricBase:
         Returns:
             Float fitness score (higher is better).
         """
-        raise NotImplementedError
+        ...
 
 
 class CppBacktestMetricBase(BacktestMetricBase):
@@ -55,69 +54,11 @@ class CppBacktestMetricBase(BacktestMetricBase):
 
     Subclasses should accept a ``BtResult`` instance (defined in
     ``gentrade.types``) produced by the compiled C++ backtest and return a
-    single scalar score. This separates the lightweight C++ backtest output
-    from the VectorBT-based metrics which operate on ``vbt.Portfolio``.
+    single scalar score.
     """
 
-    pass
-
-
-class VbtBacktestMetricBase(BacktestMetricBase):
-    def _fails_min_trades(self, portfolio: vbt.Portfolio) -> bool:
-        """Return ``True`` if the portfolio does not meet the minimum trades.
-
-        A zero ``min_trades`` value disables the check (always ``False``).
-        """
-        return self.min_trades > 0 and portfolio.trades.count() < self.min_trades
-
-
-class SharpeRatioMetric(VbtBacktestMetricBase):
-    """Sharpe ratio: risk-adjusted return (mean return / return std deviation)."""
-
-    def __call__(self, portfolio: vbt.Portfolio) -> float:
-        if self._fails_min_trades(portfolio):
-            return 0.0
-        return float(portfolio.sharpe_ratio())
-
-
-class SortinoRatioMetric(VbtBacktestMetricBase):
-    """Sortino ratio: downside risk-adjusted return."""
-
-    def __call__(self, portfolio: vbt.Portfolio) -> float:
-        if self._fails_min_trades(portfolio):
-            return 0.0
-        return float(portfolio.sortino_ratio())
-
-
-class CalmarRatioMetric(VbtBacktestMetricBase):
-    """Calmar ratio: annualised return divided by maximum drawdown."""
-
-    def __call__(self, portfolio: vbt.Portfolio) -> float:
-        if self._fails_min_trades(portfolio):
-            return 0.0
-        return float(portfolio.calmar_ratio())
-
-
-class TotalReturnMetric(VbtBacktestMetricBase):
-    """Total return: cumulative portfolio return over the evaluation period."""
-
-    def __call__(self, portfolio: vbt.Portfolio) -> float:
-        if self._fails_min_trades(portfolio):
-            return 0.0
-        return float(portfolio.total_return())
-
-
-class MeanPnlMetric(VbtBacktestMetricBase):
-    """Mean PnL per trade: average profit/loss across all closed trades.
-
-    Returns ``0.0`` when there are no trades to avoid division-by-zero errors.
-    """
-
-    def __call__(self, portfolio: vbt.Portfolio) -> float:
-        if self._fails_min_trades(portfolio):
-            return 0.0
-        trades = portfolio.trades.records_readable
-        return float(trades["PnL"].mean()) if len(trades) > 0 else 0.0
+    def __init__(self, min_trades: int = 0, weight: float = 1.0) -> None:
+        super().__init__(min_trades, weight)
 
 
 class TradeReturnMean(CppBacktestMetricBase):
@@ -130,10 +71,6 @@ class TradeReturnMean(CppBacktestMetricBase):
         ):
             return self._FAIL_SCORE
         return float(np.mean(bt_result.trade_returns))
-
-
-# TODO: Remove compatibility alias
-MeanPnlCppMetric = TradeReturnMean
 
 
 class TradeReturnMedian(CppBacktestMetricBase):

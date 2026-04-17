@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 from deap import gp, tools
 
-from gentrade.backtest_metrics import MeanPnlMetric, TradeReturnMean
+from gentrade.backtest_metrics import TradeReturnMean, TradeReturnSum
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import BacktestConfig
 from gentrade.data import generate_synthetic_ohlcv
@@ -78,7 +78,7 @@ class TestPairTreeOptimizerInit:
     ) -> None:
         """Multi-objective PairTreeOptimizer rejects single-objective selection."""
         m1 = TradeReturnMean(min_trades=0)
-        m2 = MeanPnlMetric(min_trades=0)
+        m2 = TradeReturnSum(min_trades=0)
         with pytest.raises(ValueError, match="is for single-objective"):
             PairTreeOptimizer(
                 pset=pset,
@@ -92,7 +92,7 @@ class TestPairTreeOptimizerInit:
     ) -> None:
         """NSGA2 is accepted for multi-objective PairTreeOptimizer."""
         m1 = TradeReturnMean(min_trades=0)
-        m2 = MeanPnlMetric(min_trades=0)
+        m2 = TradeReturnSum(min_trades=0)
         opt = PairTreeOptimizer(
             pset=pset,
             metrics=(m1, m2),

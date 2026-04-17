@@ -17,10 +17,7 @@ from deap import gp as deap_gp
 from gentrade.backtest import BtResult
 from gentrade.backtest_metrics import (
     CppBacktestMetricBase,
-    MeanPnlMetric,
-    SharpeRatioMetric,
     TradeReturnMean,
-    VbtBacktestMetricBase,
 )
 from gentrade.classification_metrics import (
     ClassificationMetricBase,
@@ -85,28 +82,6 @@ def valid_individual() -> TreeIndividual:
 # ---------------------------------------------------------------------------
 
 
-class _ConstClassMetric(ClassificationMetricBase):
-    """Always returns a fixed constant value."""
-
-    def __init__(self, value: float = 0.5) -> None:
-        super().__init__()
-        self._value = value
-
-    def __call__(self, y_true: pd.Series, y_pred: pd.Series) -> float:
-        return self._value
-
-
-class _ConstBacktestMetric(VbtBacktestMetricBase):
-    """Always returns a fixed constant value regardless of portfolio."""
-
-    def __init__(self, value: float = 0.5) -> None:
-        super().__init__()
-        self._value = value
-
-    def __call__(self, pf: object) -> float:
-        return self._value
-
-
 class _ConstCppBacktestMetric(CppBacktestMetricBase):
     """Always returns a fixed constant value regardless of BtResult."""
 
@@ -159,7 +134,7 @@ class TestTradeSideBuy:
         assert metric.captured_y_true is not None
         pd.testing.assert_series_equal(metric.captured_y_true, entry_labels)
 
-    def test_vbt_backtest_receives_exits(
+    def test_backtest_receives_exits(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
@@ -167,14 +142,18 @@ class TestTradeSideBuy:
         entry_labels: pd.Series,
         exit_labels: pd.Series,
     ) -> None:
-        """VBT backtest receives exit_labels as exits when trade_side='buy'."""
+        """C++ backtest receives exit_labels as exits when trade_side='buy'."""
         ev = TreeEvaluator(
             pset=pset,
-            metrics=(SharpeRatioMetric(),),
-            backtest=BacktestConfig(),
+            metrics=(TradeReturnMean(),),
+            backtest=BacktestConfig(
+                sl_stop=0.02,
+                tp_stop=0.05,
+                sl_trail=True,
+            ),
             trade_side="buy",
         )
-        with patch.object(ev, "run_vbt_backtest", wraps=ev.run_vbt_backtest) as mock:
+        with patch.object(ev, "run_cpp_backtest", wraps=ev.run_cpp_backtest) as mock:
             ev.evaluate(
                 valid_individual,
                 ohlcvs=[df],
@@ -184,7 +163,7 @@ class TestTradeSideBuy:
         mock.assert_called_once()
         call_kwargs = mock.call_args
         # exits should be exit_labels
-        pd.testing.assert_series_equal(call_kwargs[0][3], exit_labels)
+        pd.testing.assert_series_equal(call_kwargs[0][2], exit_labels)
 
     def test_missing_entry_labels_for_classification_raises(
         self,
@@ -209,7 +188,7 @@ class TestTradeSideBuy:
         df: pd.DataFrame,
         entry_labels: pd.Series,
     ) -> None:
-        """ValueError raised when exit_labels missing for VBT backtest + buy."""
+        """ValueError raised when exit_labels missing for C++ backtest + buy."""
         ev = TreeEvaluator(
             pset=pset,
             metrics=(TradeReturnMean(),),
@@ -255,7 +234,7 @@ class TestTradeSideSell:
         assert metric.captured_y_true is not None
         pd.testing.assert_series_equal(metric.captured_y_true, exit_labels)
 
-    def test_vbt_backtest_uses_entry_as_exits(
+    def test_cpp_backtest_uses_entry_as_exits(
         self,
         pset: deap_gp.PrimitiveSetTyped,
         valid_individual: TreeIndividual,
@@ -263,24 +242,29 @@ class TestTradeSideSell:
         entry_labels: pd.Series,
         exit_labels: pd.Series,
     ) -> None:
-        """VBT backtest receives entry_labels as exits when trade_side='sell'."""
+        """C++ backtest receives entry_labels as exits when trade_side='sell'."""
         ev = TreeEvaluator(
             pset=pset,
-            metrics=(MeanPnlMetric(),),
-            backtest=BacktestConfig(),
+            metrics=(TradeReturnMean(),),
+            backtest=BacktestConfig(
+                sl_stop=0.02,
+                tp_stop=0.05,
+                sl_trail=True,
+                entry_fee=0.001,
+                exit_fee=0.001,
+            ),
             trade_side="sell",
         )
-        with patch.object(ev, "run_vbt_backtest", wraps=ev.run_vbt_backtest) as mock:
+        with patch.object(ev, "run_cpp_backtest", wraps=ev.run_cpp_backtest) as mock:
             ev.evaluate(
                 valid_individual,
                 ohlcvs=[df],
                 entry_labels=[entry_labels],
-                exit_labels=[exit_labels],
+                exit_labels=None,
             )
         mock.assert_called_once()
         call_kwargs = mock.call_args
-        # exits should be entry_labels for sell side
-        pd.testing.assert_series_equal(call_kwargs[0][2], entry_labels)
+        pd.testing.assert_series_equal(call_kwargs[0][1], entry_labels)
 
     def test_missing_exit_labels_for_classification_raises(
         self,
@@ -305,7 +289,7 @@ class TestTradeSideSell:
         df: pd.DataFrame,
         exit_labels: pd.Series,
     ) -> None:
-        """ValueError raised when entry_labels missing for VBT backtest + sell."""
+        """ValueError raised when entry_labels missing for C++ backtest + sell."""
         ev = TreeEvaluator(
             pset=pset,
             metrics=(TradeReturnMean(),),
@@ -318,44 +302,6 @@ class TestTradeSideSell:
                 ohlcvs=[df],
                 exit_labels=[exit_labels],
             )
-
-
-# ---------------------------------------------------------------------------
-# Tests: VBT backtest with stops and exit labels
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestVbtBacktestWithExits:
-    """Verify VBT Portfolio.from_signals receives exits parameter."""
-
-    def test_exits_passed_to_vbt(
-        self,
-        pset: deap_gp.PrimitiveSetTyped,
-        valid_individual: TreeIndividual,
-        df: pd.DataFrame,
-        entry_labels: pd.Series,
-        exit_labels: pd.Series,
-    ) -> None:
-        """Portfolio.from_signals called with exits when exit_labels provided."""
-        ev = TreeEvaluator(
-            pset=pset,
-            metrics=(SharpeRatioMetric(),),
-            backtest=BacktestConfig(sl_stop=0.01, tp_stop=0.02),
-            trade_side="buy",
-        )
-        with patch("gentrade.eval_ind.vbt.Portfolio.from_signals") as mock_pf:
-            mock_pf.return_value.sharpe_ratio.return_value = 1.0
-            ev.evaluate(
-                valid_individual,
-                ohlcvs=[df],
-                entry_labels=[entry_labels],
-                exit_labels=[exit_labels],
-            )
-        mock_pf.assert_called_once()
-        call_kwargs = mock_pf.call_args.kwargs
-        assert "exits" in call_kwargs
-        pd.testing.assert_series_equal(call_kwargs["exits"], exit_labels)
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +445,7 @@ class TestLabelLengthValidation:
         """ValueError raised when exit_labels length doesn't match datasets."""
         ev = TreeEvaluator(
             pset=pset,
-            metrics=(SharpeRatioMetric(),),
+            metrics=(TradeReturnMean(),),
             backtest=BacktestConfig(),
             trade_side="buy",
         )
