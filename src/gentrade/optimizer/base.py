@@ -607,3 +607,56 @@ class BaseOptimizer(ABC):
                 logger.info(f"Best buy tree: {str(best.buy_tree)}...")
                 logger.info(f"Best sell tree: {str(best.sell_tree)}...")
         return self
+
+    @overload
+    def predict(self, X: pd.DataFrame) -> list[pd.Series]: ...
+
+    @overload
+    def predict(self, X: dict[str, pd.DataFrame]) -> dict[str, list[pd.Series]]: ...
+
+    @overload
+    def predict(self, X: list[pd.DataFrame]) -> list[list[pd.Series]]: ...
+
+    @overload
+    def predict(
+        self, X: pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame]
+    ) -> list[pd.Series] | dict[str, list[pd.Series]] | list[list[pd.Series]]: ...
+
+    def predict(
+        self, X: pd.DataFrame | dict[str, pd.DataFrame] | list[pd.DataFrame]
+    ) -> list[pd.Series] | dict[str, list[pd.Series]] | list[list[pd.Series]]:
+        """Make predictions on new data using the best evolved individual.
+
+        Args:
+            X: New OHLCV data to predict on. Must mirror the structure of
+                training data (DataFrame, list of DataFrames, or dict).
+
+        Returns:
+            Predictions in a structure mirroring the input (Series, list of
+            Series, or dict of Series).
+        """
+        if self.best_individual_ is None or self.pset_ is None:
+            raise ValueError("Cannot predict before fitting. Call fit() first.")
+        (
+            X_list,
+            _,
+            _,
+            input_names,
+        ) = _normalize_data_and_labels(X, None, None, "evalulate")
+
+        signals: list[list[pd.Series]] = []
+        if isinstance(self.best_individual_, TreeIndividualBase):
+            for df in X_list:
+                tree_signals = [
+                    BaseEvaluator.compile_tree_to_signals(tree, self.pset_, df)
+                    for tree in self.best_individual_
+                ]
+                signals.append(tree_signals)
+        if isinstance(X, dict):
+            return {n: sig for n, sig in zip(input_names, signals)}
+        elif isinstance(X, list):
+            return signals
+        else:
+            # Single DataFrame input should should return list of
+            # Series (one per tree)
+            return signals[0]
