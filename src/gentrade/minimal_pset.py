@@ -30,6 +30,9 @@ from gentrade.pset.pset_types import (
     Timeperiod,
     VFactor,
     Volume,
+    ZeroHundred,
+    ZeroOneExcl,
+    ZeroOneIncl,
 )
 from gentrade.pset.talib_primitives import (
     BBANDS_lowerband,
@@ -83,6 +86,26 @@ def not_(s: pd.Series) -> pd.Series:
     return ~s
 
 
+def cross_from_above(line_a: pd.Series, line_b: pd.Series) -> pd.Series:
+    return (line_a.shift(1) > line_b.shift(1)) & (line_a < line_b)
+
+
+def cross_from_below(line_a: pd.Series, line_b: pd.Series) -> pd.Series:
+    return (line_a.shift(1) < line_b.shift(1)) & (line_a > line_b)
+
+
+def above_threshold(series: pd.Series, threshold: float) -> pd.Series:
+    return series > threshold
+
+
+def below_threshold(series: pd.Series, threshold: float) -> pd.Series:
+    return series < threshold
+
+
+# def rolling_quant(series, timeperiod, q):
+#     return series.rolling(timeperiod).quantile(q)
+
+
 def create_pset_core(name: str = "core") -> gp.PrimitiveSetTyped:
     """Create base pset with OHLCV inputs, logical/comparison ops, and terminals.
 
@@ -107,10 +130,6 @@ def create_pset_core(name: str = "core") -> gp.PrimitiveSetTyped:
     pset.addTerminal(True, BooleanSeries)
     pset.addTerminal(False, BooleanSeries)
 
-    # Ephemeral constants for zigzag
-    pset.addEphemeralConstant("Threshold", Threshold.sample, Threshold)
-    pset.addEphemeralConstant("Label", Label.sample, Label)
-
     # Rename arguments
     pset.renameArguments(
         ARG0="open", ARG1="high", ARG2="low", ARG3="close", ARG4="volume"
@@ -119,9 +138,24 @@ def create_pset_core(name: str = "core") -> gp.PrimitiveSetTyped:
     return pset
 
 
+def add_custom(pset: gp.PrimitiveSetTyped) -> gp.PrimitiveSetTyped:
+    pset.addPrimitive(cross_from_below, [NumericSeries, NumericSeries], BooleanSeries)
+    pset.addPrimitive(cross_from_above, [NumericSeries, NumericSeries], BooleanSeries)
+    pset.addPrimitive(below_threshold, [NumericSeries, ZeroOneIncl], BooleanSeries)
+    pset.addPrimitive(below_threshold, [NumericSeries, ZeroHundred], BooleanSeries)
+    pset.addPrimitive(above_threshold, [NumericSeries, ZeroOneIncl], BooleanSeries)
+    pset.addPrimitive(above_threshold, [NumericSeries, ZeroHundred], BooleanSeries)
+    pset.addEphemeralConstant("ZeroOneIncl", ZeroOneIncl.sample, ZeroOneIncl)
+    pset.addEphemeralConstant("ZeroHundred", ZeroHundred.sample, ZeroHundred)
+    pset.addEphemeralConstant("ZeroOneExcl", ZeroOneExcl.sample, ZeroOneExcl)
+    return pset
+
+
 def add_zigzag_cheat(pset: gp.PrimitiveSetTyped) -> None:
     """Register the zigzag_pivots cheat primitive on an existing pset."""
     pset.addPrimitive(zigzag_pivots, [Close, Threshold, Label], BooleanSeries)
+    pset.addEphemeralConstant("Threshold", Threshold.sample, Threshold)
+    pset.addEphemeralConstant("Label", Label.sample, Label)
 
 
 def add_features_minimal(pset: gp.PrimitiveSetTyped) -> None:
@@ -216,7 +250,7 @@ def add_features_medium(pset: gp.PrimitiveSetTyped) -> None:
     pset.addPrimitive(talib.TRIX, [PriceSeries, Timeperiod], NumericSeries)
 
 
-def add_features_large(pset: gp.PrimitiveSetTyped) -> None:
+def add_features_large(pset: gp.PrimitiveSetTyped) -> gp.PrimitiveSetTyped:
     """Add all available TA-Lib indicators.
 
     Calls add_features_medium first, then adds remaining indicators via
@@ -241,6 +275,7 @@ def add_features_large(pset: gp.PrimitiveSetTyped) -> None:
     add_statistic_functions(pset)  # type: ignore
     add_volatility_indicators(pset)  # type: ignore
     add_volume_indicators(pset)  # type: ignore
+    return pset
 
 
 def create_pset_zigzag_minimal(name: str = "zigzag_minimal") -> gp.PrimitiveSetTyped:
@@ -277,5 +312,6 @@ def create_pset_default_medium(name: str = "default_medium") -> gp.PrimitiveSetT
 def create_pset_default_large(name: str = "default_large") -> gp.PrimitiveSetTyped:
     """Create large pset with default features."""
     pset = create_pset_core(name)
-    add_features_large(pset)
+    pset = add_features_large(pset)
+    pset = add_custom(pset)
     return pset
