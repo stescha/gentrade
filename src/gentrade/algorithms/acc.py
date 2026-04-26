@@ -93,11 +93,6 @@ class AccEa(BaseMultiPopulationAlgorithm[PairTreeIndividual]):
         self.lambda_ = lambda_
         self.cxpb = cxpb
         self.mutpb = mutpb
-        self.n_gen = n_gen
-        self.evaluator = evaluator
-        self.val_evaluator = val_evaluator
-        self.stats = stats
-        self.n_jobs = n_jobs
         super().__init__(
             evaluator=evaluator,
             val_evaluator=val_evaluator,
@@ -106,8 +101,6 @@ class AccEa(BaseMultiPopulationAlgorithm[PairTreeIndividual]):
             n_jobs=n_jobs,
             handlers=handlers,
         )
-
-        self.handlers = []
         if mu > lambda_:
             raise ValueError("lambda must be greater or equal to mu.")
 
@@ -337,14 +330,35 @@ class AccEa(BaseMultiPopulationAlgorithm[PairTreeIndividual]):
 
         duration = time.perf_counter() - start
 
+        # Select best exit collaborator for building the entry subpopulation.
+        # The entry subpopulation needs a *sell* tree as collaborator, not the
+        # best entry tree — using best_entry here would place an entry-signal
+        # tree in the sell_tree slot of every entry-subpop individual.
+        best_exit = toolbox.select_best(exit_components, 1)[0]
+
         # Build nested pair population:
-        # Entry subpopulation: varying entry, fixed exit collaborator
-        # Exit subpopulation: fixed entry collaborator, varying exit
-        entry_subpop = self._rebuild_entry_subpopulation(entry_components, best_entry)
+        # Entry subpopulation: varying entry, fixed best-exit collaborator
+        # Exit subpopulation: fixed best-entry collaborator, varying exit
+        entry_subpop = self._rebuild_entry_subpopulation(entry_components, best_exit)
         exit_subpop = self._rebuild_exit_subpopulation(best_entry, exit_components)
 
         nested_population = [entry_subpop, exit_subpop]
         return nested_population, n1 + n2, duration
+
+    def population_items(
+        self,
+        population: Sequence[Sequence[PairTreeIndividual]],
+    ) -> list[PairTreeIndividual]:
+        """Return only individuals with valid fitness for tracking and HoF updates.
+
+        After Fix 2, the inactive subpopulation has fitness invalidated each
+        generation (because its collaborator changed).  Returning invalid
+        individuals to ``update_tracking`` would cause ``stats.compile`` to
+        receive a mix of ``(float,)`` and ``()`` tuples, producing a numpy
+        inhomogeneous-shape error.  Filtering to valid individuals ensures only
+        freshly-evaluated individuals contribute to statistics and HoF updates.
+        """
+        return [ind for subpop in population for ind in subpop if ind.fitness.valid]
 
     def create_logbook(self) -> tools.Logbook:
         """Create and return a logbook with standard columns.
@@ -417,19 +431,29 @@ class AccEa(BaseMultiPopulationAlgorithm[PairTreeIndividual]):
             new_entry_subpop = self._rebuild_entry_subpopulation(
                 new_component, collaborator
             )
-            # Keep exit subpopulation unchanged but sync collaborator
+            # Rebuild exit subpopulation with the updated entry collaborator.
+            # The exit components' stored fitness was computed with the *old*
+            # entry collaborator; copying it to pairs that now have a different
+            # buy_tree would produce inconsistent (stale) fitness that can
+            # corrupt HoF updates.  Invalidate fitness on the rebuilt pairs so
+            # the HoF only considers freshly-evaluated individuals.
             new_exit_subpop = self._rebuild_exit_subpopulation(
                 toolbox.select_best(new_component, 1)[0], exit_components
             )
+            for pair in new_exit_subpop:
+                del pair.fitness.values
         else:
             # Exit phase: rebuild exit subpopulation with new components
             new_exit_subpop = self._rebuild_exit_subpopulation(
                 collaborator, new_component
             )
-            # Keep entry subpopulation unchanged but sync collaborator
+            # Same reasoning: entry subpop pairs now have a new sell_tree
+            # collaborator; invalidate stale fitness.
             new_entry_subpop = self._rebuild_entry_subpopulation(
                 entry_components, toolbox.select_best(new_component, 1)[0]
             )
+            for pair in new_entry_subpop:
+                del pair.fitness.values
 
         nested_population = [new_entry_subpop, new_exit_subpop]
         return nested_population, n_evals, duration
