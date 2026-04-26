@@ -262,7 +262,6 @@ class BaseOptimizer(ABC):
         n_jobs: int = 1,
         seed: int | None = None,
         verbose: bool = True,
-        validation_interval: int = 1,
         metrics_val: tuple[Metric, ...] | None = None,
         callbacks: list[Callback] | None = None,
         handlers: list[AlgorithmLifecycleHandler[Any]] | None = None,
@@ -281,7 +280,6 @@ class BaseOptimizer(ABC):
             n_jobs: Number of worker processes for evaluation.
             seed: Random seed for reproducibility.
             verbose: Print per-generation stats.
-            validation_interval: Run validation every N-th generation.
             metrics_val: Metric configs for validation phase.
             callbacks: Custom lifecycle callbacks.
         """
@@ -295,7 +293,6 @@ class BaseOptimizer(ABC):
         self.n_jobs = n_jobs
         self.seed = seed
         self.verbose = verbose
-        self.validation_interval = validation_interval
         self.metrics_val = metrics_val
         self.callbacks = callbacks
         self.handlers: list[AlgorithmLifecycleHandler[Any]] = (

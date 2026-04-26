@@ -558,14 +558,6 @@ class EvolutionConfig(BaseModel):
         ge=1,
         description="Number of worker processes for evaluation (1 = single-process)",
     )
-    validation_interval: int = Field(
-        1,
-        ge=1,
-        description=(
-            "Run validation every N-th generation and always at the last generation. "
-            "1 = every generation."
-        ),
-    )
 
 
 # -- Top-level config -------------------------------------------
