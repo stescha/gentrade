@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from gentrade.backtest_metrics import MeanPnlCppMetric
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.individual import PairTreeIndividual
 from gentrade.minimal_pset import create_pset_zigzag_minimal
@@ -29,7 +29,7 @@ class TestAccOptimizerE2eSmoke:
         df = generate_synthetic_ohlcv(500, 42)
         opt = AccOptimizer(
             pset=create_pset_zigzag_minimal,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             mu=10,
             lambda_=20,
             generations=5,
@@ -50,7 +50,7 @@ class TestAccOptimizerE2eSmoke:
         df = generate_synthetic_ohlcv(500, 42)
         opt = AccOptimizer(
             pset=create_pset_zigzag_minimal,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             mu=8,
             lambda_=16,
             generations=4,

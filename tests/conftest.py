@@ -5,8 +5,8 @@ import pytest
 from deap import gp, tools
 
 from gentrade.backtest_metrics import (
-    MeanPnlCppMetric,
     SharpeRatioMetric,
+    TradeReturnMean,
 )
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import (
@@ -66,7 +66,7 @@ def opt_e2e_cpp() -> TreeOptimizer:
     """TreeOptimizer with C++ backtest metric for e2e tests."""
     return TreeOptimizer(
         pset=create_pset_default_medium,
-        metrics=(MeanPnlCppMetric(min_trades=5),),
+        metrics=(TradeReturnMean(min_trades=5),),
         backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
         mu=20,
         lambda_=40,
@@ -81,7 +81,7 @@ def opt_e2e_multiobjective() -> TreeOptimizer:
     """TreeOptimizer with multi-objective metrics for e2e tests."""
     return TreeOptimizer(
         pset=create_pset_default_medium,
-        metrics=(F1Metric(), MeanPnlCppMetric(min_trades=5)),
+        metrics=(F1Metric(), TradeReturnMean(min_trades=5)),
         backtest=BacktestConfig(),
         selection=tools.selNSGA2,  # type: ignore[attr-defined]
         mu=20,

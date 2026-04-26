@@ -15,7 +15,7 @@ import pytest
 from deap import base, gp, tools
 
 from gentrade.acc import AccEa
-from gentrade.backtest_metrics import MeanPnlCppMetric
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.individual import PairTreeIndividual, TreeIndividual
 from gentrade.minimal_pset import create_pset_zigzag_minimal
 
@@ -31,8 +31,8 @@ def pset() -> gp.PrimitiveSetTyped:
 
 
 @pytest.fixture
-def cpp_metric() -> MeanPnlCppMetric:
-    return MeanPnlCppMetric(min_trades=0)
+def cpp_metric() -> TradeReturnMean:
+    return TradeReturnMean(min_trades=0)
 
 
 @pytest.fixture

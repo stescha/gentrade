@@ -41,8 +41,8 @@ class ClassificationMetricBase:
         """Args:
         weight: DEAP fitness weight.
         tree_aggregation: How to aggregate/interpret pair-tree outputs when used
-            with PairEvaluator. One of: "buy", "sell", "mean", "median",
-            "min", "max". Defaults to "mean" for backward compatibility.
+            with PairEvaluator. One of: "buy", "sell", "mean", "min" and "max".
+            Defaults to "mean".
         """
         self.weight = weight
         self.tree_aggregation = tree_aggregation

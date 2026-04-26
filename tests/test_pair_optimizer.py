@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 from deap import gp, tools
 
-from gentrade.backtest_metrics import MeanPnlCppMetric, MeanPnlMetric
+from gentrade.backtest_metrics import MeanPnlMetric, TradeReturnMean
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import BacktestConfig
 from gentrade.data import generate_synthetic_ohlcv
@@ -31,8 +31,8 @@ def pset() -> gp.PrimitiveSetTyped:
 
 
 @pytest.fixture
-def cpp_metric() -> MeanPnlCppMetric:
-    return MeanPnlCppMetric(min_trades=0)
+def cpp_metric() -> TradeReturnMean:
+    return TradeReturnMean(min_trades=0)
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ class TestPairTreeOptimizerInit:
     """PairTreeOptimizer initializes correctly."""
 
     def test_basic_init_cpp_metric(
-        self, pset: gp.PrimitiveSetTyped, cpp_metric: MeanPnlCppMetric
+        self, pset: gp.PrimitiveSetTyped, cpp_metric: TradeReturnMean
     ) -> None:
         """PairTreeOptimizer constructs without error."""
         opt = PairTreeOptimizer(pset=pset, metrics=(cpp_metric,))
@@ -53,7 +53,7 @@ class TestPairTreeOptimizerInit:
         assert opt.metrics == (cpp_metric,)
 
     def test_default_backtest_config(
-        self, pset: gp.PrimitiveSetTyped, cpp_metric: MeanPnlCppMetric
+        self, pset: gp.PrimitiveSetTyped, cpp_metric: TradeReturnMean
     ) -> None:
         """PairTreeOptimizer uses a default BacktestConfig when none provided."""
         opt = PairTreeOptimizer(pset=pset, metrics=(cpp_metric,))
@@ -61,14 +61,14 @@ class TestPairTreeOptimizerInit:
         assert isinstance(opt._backtest, BacktestConfig)
 
     def test_custom_backtest_config(
-        self, pset: gp.PrimitiveSetTyped, cpp_metric: MeanPnlCppMetric
+        self, pset: gp.PrimitiveSetTyped, cpp_metric: TradeReturnMean
     ) -> None:
         """BacktestConfig passed to PairTreeOptimizer is stored."""
         bt = BacktestConfig(fees=0.002)
         opt = PairTreeOptimizer(pset=pset, metrics=(cpp_metric,), backtest=bt)
         assert opt._backtest.fees == 0.002
 
-    def test_pset_factory_callable(self, cpp_metric: MeanPnlCppMetric) -> None:
+    def test_pset_factory_callable(self, cpp_metric: TradeReturnMean) -> None:
         """PairTreeOptimizer stores callable pset factory."""
         opt = PairTreeOptimizer(pset=create_pset_zigzag_minimal, metrics=(cpp_metric,))
         assert callable(opt._pset_factory)
@@ -77,7 +77,7 @@ class TestPairTreeOptimizerInit:
         self, pset: gp.PrimitiveSetTyped
     ) -> None:
         """Multi-objective PairTreeOptimizer rejects single-objective selection."""
-        m1 = MeanPnlCppMetric(min_trades=0)
+        m1 = TradeReturnMean(min_trades=0)
         m2 = MeanPnlMetric(min_trades=0)
         with pytest.raises(ValueError, match="is for single-objective"):
             PairTreeOptimizer(
@@ -91,7 +91,7 @@ class TestPairTreeOptimizerInit:
         self, pset: gp.PrimitiveSetTyped
     ) -> None:
         """NSGA2 is accepted for multi-objective PairTreeOptimizer."""
-        m1 = MeanPnlCppMetric(min_trades=0)
+        m1 = TradeReturnMean(min_trades=0)
         m2 = MeanPnlMetric(min_trades=0)
         opt = PairTreeOptimizer(
             pset=pset,
@@ -111,7 +111,7 @@ class TestPairTreeIndividualProperties:
     """PairTreeIndividual invariants are maintained."""
 
     def test_pair_individual_has_two_trees(
-        self, pset: gp.PrimitiveSetTyped, cpp_metric: MeanPnlCppMetric
+        self, pset: gp.PrimitiveSetTyped, cpp_metric: TradeReturnMean
     ) -> None:
         """PairTreeOptimizer creates individuals with exactly 2 trees."""
         opt = PairTreeOptimizer(
@@ -160,7 +160,7 @@ class TestPairTreeOptimizerFit:
         df = generate_synthetic_ohlcv(200, 42)
         opt = PairTreeOptimizer(
             pset=create_pset_zigzag_minimal,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             mu=10,
             lambda_=20,
             generations=2,
@@ -199,7 +199,7 @@ class TestPairTreeOptimizerFit:
         df = generate_synthetic_ohlcv(150, 42)
         opt = PairTreeOptimizer(
             pset=create_pset_zigzag_minimal,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             mu=5,
             lambda_=10,
             generations=1,
@@ -217,7 +217,7 @@ class TestPairTreeOptimizerFit:
         df = generate_synthetic_ohlcv(200, 42)
         kwargs: dict[str, Any] = {
             "pset": create_pset_zigzag_minimal,
-            "metrics": (MeanPnlCppMetric(min_trades=0),),
+            "metrics": (TradeReturnMean(min_trades=0),),
             "mu": 8,
             "lambda_": 16,
             "generations": 2,

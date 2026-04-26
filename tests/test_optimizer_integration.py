@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from deap import tools
 
-from gentrade.backtest_metrics import MeanPnlCppMetric
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import (
     BacktestConfig,
@@ -144,7 +144,7 @@ class TestTreeOptimizerFitCppBacktest:
         labels = _get_zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
             mu=10,
             lambda_=20,
@@ -161,7 +161,7 @@ class TestTreeOptimizerFitCppBacktest:
         labels = _get_zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             backtest=BacktestConfig(),
             mu=10,
             lambda_=20,
@@ -236,7 +236,7 @@ class TestMultiObjectiveFit:
         labels = _get_zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
+            metrics=(F1Metric(), TradeReturnMean(min_trades=0)),
             backtest=BacktestConfig(),
             selection=tools.selNSGA2,  # type: ignore[attr-defined]
             mu=10,
@@ -255,7 +255,7 @@ class TestMultiObjectiveFit:
         labels = _get_zigzag_labels(synthetic_df)
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
+            metrics=(F1Metric(), TradeReturnMean(min_trades=0)),
             backtest=BacktestConfig(),
             selection=tools.selNSGA2,  # type: ignore[attr-defined]
             mu=10,

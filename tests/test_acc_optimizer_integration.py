@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from gentrade.backtest_metrics import MeanPnlCppMetric
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.individual import PairTreeIndividual
 from gentrade.minimal_pset import create_pset_zigzag_minimal
@@ -28,7 +28,7 @@ def standalone_fitted() -> AccOptimizer:
     """AccOptimizer fitted in standalone mode; shared across the test class."""
     opt = AccOptimizer(
         pset=create_pset_zigzag_minimal,
-        metrics=(MeanPnlCppMetric(min_trades=0),),
+        metrics=(TradeReturnMean(min_trades=0),),
         mu=6,
         lambda_=12,
         generations=2,
@@ -45,7 +45,7 @@ def island_fitted() -> AccOptimizer:
     """AccOptimizer fitted in island mode; shared across the test class."""
     opt = AccOptimizer(
         pset=create_pset_zigzag_minimal,
-        metrics=(MeanPnlCppMetric(min_trades=0),),
+        metrics=(TradeReturnMean(min_trades=0),),
         mu=6,
         lambda_=12,
         generations=2,

@@ -17,9 +17,9 @@ from deap import gp as deap_gp
 from gentrade.backtest import BtResult
 from gentrade.backtest_metrics import (
     CppBacktestMetricBase,
-    MeanPnlCppMetric,
     MeanPnlMetric,
     SharpeRatioMetric,
+    TradeReturnMean,
     VbtBacktestMetricBase,
 )
 from gentrade.classification_metrics import (
@@ -212,7 +212,7 @@ class TestTradeSideBuy:
         """ValueError raised when exit_labels missing for VBT backtest + buy."""
         ev = TreeEvaluator(
             pset=pset,
-            metrics=(MeanPnlCppMetric(),),
+            metrics=(TradeReturnMean(),),
             backtest=BacktestConfig(),
             trade_side="buy",
         )
@@ -308,7 +308,7 @@ class TestTradeSideSell:
         """ValueError raised when entry_labels missing for VBT backtest + sell."""
         ev = TreeEvaluator(
             pset=pset,
-            metrics=(MeanPnlCppMetric(),),
+            metrics=(TradeReturnMean(),),
             backtest=BacktestConfig(),
             trade_side="sell",
         )

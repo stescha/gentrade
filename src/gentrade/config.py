@@ -38,11 +38,11 @@ from pydantic import (
 
 from gentrade.backtest_metrics import (
     CalmarRatioMetric,
-    MeanPnlCppMetric,
     MeanPnlMetric,
     SharpeRatioMetric,
     SortinoRatioMetric,
     TotalReturnMetric,
+    TradeReturnMean,
 )
 from gentrade.classification_metrics import (
     BalancedAccuracyMetric,
@@ -324,7 +324,7 @@ class MeanPnlCppMetricConfig(CppBacktestMetricConfigBase):
     """Mean PnL: average profit and loss per closed trade."""
 
     def __call__(self, *args: Any, **kwargs: Any) -> float:
-        return MeanPnlCppMetric(min_trades=self.min_trades)(*args, **kwargs)
+        return TradeReturnMean(min_trades=self.min_trades)(*args, **kwargs)
 
 
 # -- Pset configs -----------------------------------------------

@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from deap import tools
 
-from gentrade.backtest_metrics import MeanPnlCppMetric
+from gentrade.backtest_metrics import TradeReturnMean
 from gentrade.coop import CoopMuPlusLambda
 from gentrade.data import generate_synthetic_ohlcv
 from gentrade.individual import PairTreeIndividual
@@ -23,7 +23,7 @@ class TestCoopMuPlusLambdaOptimizerAlgorithmSelection:
         """With migration disabled, optimizer must create a standalone algorithm."""
         opt = CoopMuPlusLambdaOptimizer(
             pset=create_pset_zigzag_minimal,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             mu=4,
             lambda_=8,
             generations=1,
@@ -43,7 +43,7 @@ class TestCoopMuPlusLambdaOptimizerAlgorithmSelection:
         """With migration enabled, optimizer must return island orchestration."""
         opt = CoopMuPlusLambdaOptimizer(
             pset=create_pset_zigzag_minimal,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             mu=4,
             lambda_=8,
             generations=1,
@@ -73,7 +73,7 @@ class TestCoopMuPlusLambdaOptimizerFit:
         df = generate_synthetic_ohlcv(150, 42)
         opt = CoopMuPlusLambdaOptimizer(
             pset=create_pset_zigzag_minimal,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             mu=4,
             lambda_=8,
             generations=2,
@@ -102,7 +102,7 @@ class TestCoopMuPlusLambdaOptimizerFit:
         df = generate_synthetic_ohlcv(150, 77)
         kwargs: dict[str, Any] = {
             "pset": create_pset_default_large(),
-            "metrics": (MeanPnlCppMetric(min_trades=0),),
+            "metrics": (TradeReturnMean(min_trades=0),),
             "mu": 4,
             "lambda_": 8,
             "generations": 2,

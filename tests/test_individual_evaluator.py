@@ -17,8 +17,8 @@ import pytest
 from deap import gp as deap_gp
 
 from gentrade.backtest_metrics import (
-    MeanPnlCppMetric,
     SharpeRatioMetric,
+    TradeReturnMean,
     VbtBacktestMetricBase,
 )
 from gentrade.classification_metrics import (
@@ -185,7 +185,7 @@ class TestYTrueValidation:
         """C++ backtest-only evaluator raises when exit_labels are missing."""
         ev = TreeEvaluator(
             pset=pset,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             backtest=BacktestConfig(),
         )
         with pytest.raises(ValueError, match="exit_labels must be provided"):

@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from deap import tools
 
-from gentrade.backtest_metrics import MeanPnlCppMetric, MeanPnlMetric
+from gentrade.backtest_metrics import MeanPnlMetric, TradeReturnMean
 from gentrade.classification_metrics import F1Metric
 from gentrade.config import (
     BacktestConfig,
@@ -115,7 +115,7 @@ class TestE2ECppBacktestSingleObjective:
 
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
             mu=30,
             lambda_=60,
@@ -137,7 +137,7 @@ class TestE2ECppBacktestSingleObjective:
 
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(MeanPnlCppMetric(min_trades=0),),
+            metrics=(TradeReturnMean(min_trades=0),),
             metrics_val=(MeanPnlMetric(min_trades=0),),
             # VBT metric: no labels needed for validation
             backtest=BacktestConfig(tp_stop=0.02, sl_stop=0.01),
@@ -166,7 +166,7 @@ class TestE2EMultiObjective:
 
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
+            metrics=(F1Metric(), TradeReturnMean(min_trades=0)),
             backtest=BacktestConfig(),
             selection=tools.selNSGA2,  # type: ignore[attr-defined]
             mu=30,
@@ -185,7 +185,7 @@ class TestE2EMultiObjective:
 
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
+            metrics=(F1Metric(), TradeReturnMean(min_trades=0)),
             backtest=BacktestConfig(),
             selection=tools.selNSGA2,  # type: ignore[attr-defined]
             mu=30,
@@ -204,7 +204,7 @@ class TestE2EMultiObjective:
 
         opt = TreeOptimizer(
             pset=create_pset_default_medium,
-            metrics=(F1Metric(), MeanPnlCppMetric(min_trades=0)),
+            metrics=(F1Metric(), TradeReturnMean(min_trades=0)),
             backtest=BacktestConfig(),
             selection=tools.selNSGA2,  # type: ignore[attr-defined]
             mu=30,
