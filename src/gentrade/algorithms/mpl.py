@@ -82,7 +82,7 @@ class EaMuPlusLambda(BaseSinglePopulationAlgorithm[IndividualT]):
         # Convert Sequence to list for operators that expect mutable sequences
         pop_list = list(population)
         offspring = varOr(pop_list, toolbox, self.lambda_, self.cxpb, self.mutpb)
-        n_evals, duration = self.evaluate_individuals(toolbox, offspring, all_=True)
+        n_evals, duration = self.evaluate_individuals(toolbox, offspring)
         # Select next generation: best mu from (parents + offspring)
         new_pop = toolbox.select(pop_list + offspring, self.mu)
         return new_pop, n_evals, duration
