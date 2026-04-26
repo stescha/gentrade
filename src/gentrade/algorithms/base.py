@@ -681,9 +681,9 @@ class BaseSinglePopulationAlgorithm(
                 "Toolbox must have a 'select_replace' method for immigrant integration"
             )
         to_remove = toolbox.select_replace(population, len(immigrants))
-        for ind in to_remove:
-            population.remove(ind)
-        population.extend(immigrants)
+        for replacee, immigrant in zip(to_remove, immigrants, strict=True):
+            idx = next(j for j, ind in enumerate(population) if ind is replacee)
+            population[idx] = immigrant
         return population
 
     def _parse_result(
