@@ -346,17 +346,38 @@ class CoopMuPlusLambda(BaseMultiPopulationAlgorithm[PairTreeIndividual]):
         # 5. Finalize representatives updates
         if any(rep is None for rep in next_representatives):
             raise RuntimeError("Failed to update all species representatives")
-        self._representatives = cast(PairTreeIndividual, next_representatives)
 
-        # # 7. Final sanity check: ensure all individuals in the new population
+        # Store representatives as a real PairTreeIndividual (not a bare list of trees)
+        reps: list[gp.PrimitiveTree] = [
+            cast(gp.PrimitiveTree, r) for r in next_representatives
+        ]
+        self._representatives = PairTreeIndividual(reps, self._weights)
+
+        # 6. Rebuild every species population against the new representatives
+        # and recompute fitness values. This ensures all individuals in the
+        # selection pool were evaluated under the same representative set.
+        for i, species_pop_pair in enumerate(population):
+            # Extract the per-species components (these remain the evolving part)
+            comps = self._extract_component(species_pop_pair, i)
+            # Re-assemble using the updated representatives
+            rebuilt_species = self._assemble_components(comps, i)
+            # Re-evaluate fitness for the rebuilt species population
+            n_evals_i, eval_duration_i = self.evaluate_individuals(
+                toolbox, rebuilt_species, all_=True
+            )
+            n_evals += n_evals_i
+            eval_duration += eval_duration_i
+            population[i] = rebuilt_species
+
+        # 7. Final sanity check: ensure all individuals in the new population
         # have valid fitness
-
         for species_pop_pair in population:
             for ind_pair in species_pop_pair:
                 if not ind_pair.fitness.valid:
                     raise RuntimeError(
                         "Population contains invalid individuals after generation."
                     )
+
         return population, n_evals, eval_duration
 
     # ------------------------------------------------------------------

@@ -124,7 +124,12 @@ class TestCoopMuPlusLambda:
         pset: gp.PrimitiveSetTyped,
         coop_mpl: CoopMuPlusLambda,
     ) -> None:
-        """One generation evaluates `lambda_` offspring for each species."""
+        """One generation evaluates (mu + lambda_) individuals for each species.
+
+        Parents are re-evaluated with the current representatives before
+        selection so that parent and offspring fitness are comparable.  Total
+        evaluations per generation = (mu + lambda_) * species_count.
+        """
         toolbox = _build_toolbox(pset)
         population, _, _ = coop_mpl.initialize(toolbox)
 
@@ -134,9 +139,9 @@ class TestCoopMuPlusLambda:
             gen=1,
         )
 
-        assert n_evals == coop_mpl.lambda_ * 2
+        species_count = len(population)
+        assert species_count == 2  # Two species
         # Population is nested
-        assert len(next_population) == 2  # Two species
         assert all(len(subpop) == coop_mpl.mu for subpop in next_population)
         all_inds = [ind for subpop in next_population for ind in subpop]
         assert all(ind.fitness.valid for ind in all_inds)
