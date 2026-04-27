@@ -649,6 +649,10 @@ class BaseOptimizer(ABC):
                     for tree in self.best_individual_
                 ]
                 signals.append(tree_signals)
+        else:
+            raise TypeError(
+                f"Unsupported individual type: {type(self.best_individual_)}"
+            )
         if isinstance(X, dict):
             return {n: sig for n, sig in zip(input_names, signals)}
         elif isinstance(X, list):

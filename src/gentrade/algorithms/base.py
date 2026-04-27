@@ -352,10 +352,7 @@ class BaseAlgorithm(ABC, Generic[IndividualT, PopulationT]):
                 state.eval_time = duration_eval
 
                 self.update_tracking(population, state)
-                if halloffame is not None and len(halloffame) > 0:
-                    best_ind = halloffame[0]
-                else:
-                    best_ind = self.select_best(toolbox, population)
+                best_ind = self.select_best(toolbox, population)
 
                 if hasattr(toolbox, "evaluate_val"):
                     val_fitness = toolbox.evaluate_val(best_ind)
@@ -697,7 +694,7 @@ class BaseSinglePopulationAlgorithm(
         return AlgorithmResult.from_single_pop(
             population=population,
             logbook=logbook,
-            halloffame=hof if hof is not None else None,
+            halloffame=hof,
         )
 
 
