@@ -119,8 +119,15 @@ class AlgorithmResult(Generic[IndividualT]):
         if len(self._logbooks) == 1:
             return self._logbooks[0]
         else:
-            # TODO: Implement merging for multiple island logbooks.
-            return self._logbooks[0]
+            header = self._logbooks[0].header
+            if any(lb.header != header for lb in self._logbooks):
+                raise ValueError("Cannot merge logbooks with different headers")
+            logbook_merged = tools.Logbook()
+            logbook_merged.header = ["island"] + header
+            for i, lb in enumerate(self._logbooks):
+                for record in lb:
+                    logbook_merged.record(island=i, **record)
+            return logbook_merged
 
     def _merge_halloffames(self) -> tools.HallOfFame | None:
         """Merge hall of fame objects from multiple islands or runs."""
